@@ -1,4 +1,5 @@
-use crate::printer_prelude::*;
+use thiserror::Error;
+use escpos::errors::PrinterError as EscposError;
 
 pub type PrinterLibResult<T = ()> = Result<T, PrinterLibError>;
 
@@ -7,6 +8,9 @@ pub enum PrinterLibError {
     #[error("unable to initialize printer system: {0}")]
     CannotInitialize(String),
 
-    #[error("unknown project error")]
+    #[error("unknown printer error")]
     Unknown,
+
+    #[error(transparent)]
+    Escpos(#[from] EscposError),
 }

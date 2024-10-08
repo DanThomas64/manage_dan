@@ -1,4 +1,6 @@
 use crate::db_prelude::*;
+use rusqlite;
+use tokio_rusqlite;
 
 pub type DbLibResult<T = ()> = Result<T, DbLibError>;
 
@@ -9,4 +11,10 @@ pub enum DbLibError {
 
     #[error("unknown database error")]
     Unknown,
+
+    #[error(transparent)]
+    Sqlite(#[from] rusqlite::Error),
+
+    #[error(transparent)]
+    TokioSqlite(#[from] tokio_rusqlite::Error),
 }

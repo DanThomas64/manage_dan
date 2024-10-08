@@ -1,0 +1,13 @@
+# Default configuration settings for the application
+
+# Application environment (used for environment-specific config loading)
+environment = "development"
+
+[printer]
+# Vendor ID (VID) for the USB ESC/POS printer
+# Default: 0x0fe6
+vendor_id = 4070
+
+# Product ID (PID) for the USB ESC/POS printer
+# Default: 0x811e
+product_id = 33054

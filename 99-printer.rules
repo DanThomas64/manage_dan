@@ -1,0 +1,4 @@
+# Udev rule for ESC/POS Printer (VID: 0x0fe6, PID: 0x811e)
+# This grants read/write access to the device for members of the 'plugdev' group.
+# Replace 'plugdev' with your preferred group if necessary (e.g., 'users', 'lp').
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fe6", ATTR{idProduct}=="811e", MODE="0666", GROUP="plugdev"

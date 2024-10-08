@@ -1,11 +1,11 @@
-pub mod tasks_error;
-pub mod tasks_prelude;
+pub mod printer_error;
+pub mod printer_prelude;
 
-use crate::tasks_prelude::*;
+use crate::printer_prelude::*;
 
-pub fn init() -> TasksLibResult {
-    info!("initializing tasks");
-    // Err(TasksLibError::CannotInitialize(
+pub fn init() -> PrinterLibResult {
+    info!("initializing printer");
+    // Err(PrinterLibError::CannotInitialize(
     //     "i am a failure".to_string(),
     // ))
     Ok(())

@@ -13,7 +13,7 @@ pub enum AppError {
     #[error(transparent)]
     Project(#[from] ProjectLibError),
     #[error(transparent)]
-    Tasks(#[from] TasksLibError),
+    Printer(#[from] PrinterLibError),
     #[error(transparent)]
     Todo(#[from] TodoLibError),
 

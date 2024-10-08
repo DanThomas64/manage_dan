@@ -9,7 +9,7 @@ db = { path = "../db" }
 log = { path = "../log" }
 notes = { path = "../notes" }
 project = { path = "../project" }
-tasks = { path = "../tasks" }
+printer = { path = "../printer" }
 todo = { path = "../todo" }
 tracing-subscriber = { version = "0.3.18", features = ["chrono"] }
 anyhow.workspace = true
@@ -17,3 +17,5 @@ thiserror.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 tokio.workspace = true
+serde = { workspace = true }
+config = { workspace = true }

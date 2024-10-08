@@ -9,3 +9,4 @@ chrono.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+escpos = { version = "0.17.0", features = ["native_usb"] }

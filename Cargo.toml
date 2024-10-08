@@ -6,7 +6,7 @@ members = [
     "log",
     "notes",
     "project",
-    "tasks",
+    "printer",
     "todo",
 ]
 default_members = ["/app"]
@@ -26,4 +26,6 @@ chrono = "0.4.38"
 anyhow = "1.0.89"
 thiserror = "1.0.64"
 tracing = "0.1.40"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1.40.0", features = ["full"] }
+serde = { version = "1.0.203", features = ["derive"] }
+config = { version = "0.15.19", features = ["toml"] }

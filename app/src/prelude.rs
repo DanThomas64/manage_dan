@@ -3,9 +3,10 @@ pub use crate::error::{AppError, AppResult};
 pub use crate::log::log_error::{LogLibError, LogLibResult};
 pub use crate::notes::notes_error::{NotesLibError, NotesLibResult};
 pub use crate::project::project_error::{ProjectLibError, ProjectLibResult};
-pub use crate::tasks::tasks_error::{TasksLibError, TasksLibResult};
+pub use crate::printer::printer_error::{PrinterLibError, PrinterLibResult};
 pub use crate::todo::todo_error::{TodoLibError, TodoLibResult};
 
+pub use crate::config::{AppConfig, PrinterConfig};
 pub use crate::nogo::{Status, SystemsStatus};
 pub use crate::{subsystem_init, system_init};
 
