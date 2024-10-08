@@ -1,0 +1,29 @@
+[workspace]
+
+members = [
+    "app",
+    "db",
+    "log",
+    "notes",
+    "project",
+    "tasks",
+    "todo",
+]
+default_members = ["/app"]
+
+resolver = "2"
+
+[workspace.package]
+
+version = "0.1.0"
+authors = ["DanThomas64"]
+description = "I need to organize my life"
+edition = "2021"
+
+[workspace.dependencies]
+
+chrono = "0.4.38"
+anyhow = "1.0.89"
+thiserror = "1.0.64"
+tracing = "0.1.40"
+tokio = { version = "1", features = ["full"] }
