@@ -2,6 +2,7 @@
 
 use db;
 use log;
+use nogo::SystemsGoNogo;
 use notes;
 use project;
 use tasks;
@@ -11,6 +12,7 @@ pub mod error;
 pub mod macros;
 pub mod nogo;
 pub mod prelude;
+mod test;
 
 use crate::prelude::*;
 
@@ -26,6 +28,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     // initialize all systems
-    let _ = SystemsStatus::init().await;
+    let systems = SystemsStatus::new().init();
+    // Setup monitoring
+    let _ = SystemsGoNogo::new().init(systems).await;
     Ok(())
 }
