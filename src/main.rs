@@ -22,33 +22,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Unable to parse token from auth function response");
 
     // Now that we have the token lets get some info from the api.
-    // Lets get a list of filters projects
-
-    let get_string = format!("{}/projects", api_base_url);
-    let json = datatypes::RequestAllProjects {
+    // Lets get a list of uncompleted tasks.
+    // NOTE: The endpoint is a guess, you may need to adjust it.
+    let get_string = format!("{}/tasks/by-project-identifier/all", api_base_url);
+    let json = datatypes::RequestAllTasks {
         page: 0,
-        per_page: 10,
+        per_page: 50,
         s: "".to_string(),
-        is_archived: false,
+        done: false,
     };
     let json_str = serde_json::to_string(&json).expect("unable to turn struct into string");
 
     println!("{:?}", json_str);
-    let projects: Vec<datatypes::Project> = http_methods::get_request(get_string, auth, json_str)
+    let tasks: Vec<datatypes::Task> = http_methods::get_request(get_string, auth, json_str)
         .await
         .expect("unable to complete get request")
         .json()
         .await
         .expect("Unable to parse the response");
 
-    if let Some(project) = projects.first() {
-        println!("Printing project: {}", project.title);
-        escpos::print_project(project, &printer_device).expect("Failed to print project");
-    } else {
-        println!("No projects found to print.");
-    }
-
-    gui::tui();
+    gui::tui(tasks, printer_device)?;
 
     Ok(())
 }

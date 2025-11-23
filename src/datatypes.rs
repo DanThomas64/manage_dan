@@ -80,3 +80,39 @@ pub struct Project {
     pub updated: String,
     pub views: Vec<View>,
 }
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct RequestAllTasks {
+    pub page: u8,
+    pub per_page: u8,
+    pub s: String,
+    pub done: bool,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Label {
+    pub title: String,
+    pub hex_color: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct TaskUser {
+    pub name: String,
+    pub username: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct ProjectIdentifier {
+    pub title: String,
+    pub identifier: String,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct Task {
+    pub title: String,
+    pub description: String,
+    pub done: bool,
+    pub assignees: Vec<TaskUser>,
+    pub labels: Vec<Label>,
+    pub project: ProjectIdentifier,
+}
