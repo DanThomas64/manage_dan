@@ -1,5 +1,6 @@
 use reqwest::Response;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use serde_json;
 use std::env;
 
 use crate::datatypes::*;
@@ -29,11 +30,12 @@ pub async fn auth(url: String) -> Result<Response, Box<dyn std::error::Error>> {
 
 pub async fn get_request(url: String, auth: Auth, json: String) -> Result<Response, Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
+    let params: serde_json::Value = serde_json::from_str(&json)?;
     let response = client
         .get(url)
+        .query(&params)
         .header(CONTENT_TYPE, "application/json")
         .header(AUTHORIZATION, format!("Bearer {}", auth.token))
-        .body(json)
         .send()
         .await;
     Ok(response?)
