@@ -1,6 +1,18 @@
 use crate::datatypes::{Project, Task};
+use quick_error::quick_error;
 use std::fs::File;
-use std::io::{Result, Write};
+use std::io::{self, Write};
+
+quick_error! {
+    #[derive(Debug)]
+    pub enum PrintError {
+        Io(err: io::Error) {
+            from()
+            display("I/O error: {}", err)
+            cause(err)
+        }
+    }
+}
 
 // ESC/POS Commands
 const ESC: u8 = 0x1B;
@@ -21,32 +33,33 @@ pub struct Printer {
 }
 
 impl Printer {
-    pub fn new(device_path: &str) -> Result<Self> {
+    pub fn new(device_path: &str) -> Result<Self, PrintError> {
         let file = File::create(device_path)?;
         Ok(Printer { writer: file })
     }
 
-    fn write_all(&mut self, buf: &[u8]) -> Result<()> {
-        self.writer.write_all(buf)
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), PrintError> {
+        self.writer.write_all(buf)?;
+        Ok(())
     }
 
-    pub fn init(&mut self) -> Result<()> {
+    pub fn init(&mut self) -> Result<(), PrintError> {
         self.write_all(INIT)
     }
 
-    pub fn cut(&mut self) -> Result<()> {
+    pub fn cut(&mut self) -> Result<(), PrintError> {
         self.write_all(CUT)
     }
 
-    pub fn text(&mut self, text: &str) -> Result<()> {
+    pub fn text(&mut self, text: &str) -> Result<(), PrintError> {
         self.write_all(text.as_bytes())
     }
 
-    pub fn newline(&mut self) -> Result<()> {
+    pub fn newline(&mut self) -> Result<(), PrintError> {
         self.write_all(LF)
     }
 
-    pub fn align(&mut self, align: Align) -> Result<()> {
+    pub fn align(&mut self, align: Align) -> Result<(), PrintError> {
         let align_byte = match align {
             Align::Left => 0,
             Align::Center => 1,
@@ -56,7 +69,7 @@ impl Printer {
     }
 }
 
-pub fn print_project(project: &Project, device_path: &str) -> Result<()> {
+pub fn print_project(project: &Project, device_path: &str) -> Result<(), PrintError> {
     let mut printer = Printer::new(device_path)?;
     printer.init()?;
 
@@ -72,22 +85,11 @@ pub fn print_project(project: &Project, device_path: &str) -> Result<()> {
     printer.newline()?;
     printer.newline()?;
 
-    printer.text(&format!("Owner: {}", project.owner.name))?;
-    printer.newline()?;
-    printer.newline()?;
-
-    printer.text("Views:")?;
-    printer.newline()?;
-    for view in &project.views {
-        printer.text(&format!("- {}", view.title))?;
-        printer.newline()?;
-    }
-
     printer.cut()?;
     Ok(())
 }
 
-pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
+pub fn print_task(task: &Task, device_path: &str) -> Result<(), PrintError> {
     let mut printer = Printer::new(device_path)?;
     printer.init()?;
 
