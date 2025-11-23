@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use dotenv::dotenv;
 use std::env;
 
@@ -7,19 +8,20 @@ mod gui;
 mod escpos;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     dotenv().ok();
 
-    let api_base_url = env::var("API_URL").expect("Unable to find USERNAME env");
-    let printer_device = env::var("PRINTER_DEVICE").expect("Unable to find PRINTER_DEVICE env");
+    let api_base_url = env::var("API_URL").context("API_URL environment variable not set")?;
+    let printer_device =
+        env::var("PRINTER_DEVICE").context("PRINTER_DEVICE environment variable not set")?;
 
     // Get the auth token
     let auth: datatypes::Auth = http_methods::auth(api_base_url.clone())
         .await
-        .expect("Unable to get auth token from auth function")
+        .context("Failed to get auth token")?
         .json()
         .await
-        .expect("Unable to parse token from auth function response");
+        .context("Failed to parse auth token from response")?;
 
     // Now that we have the token lets get some info from the api.
     // Lets get a list of uncompleted tasks.
@@ -31,15 +33,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         s: "".to_string(),
         done: false,
     };
-    let json_str = serde_json::to_string(&json).expect("unable to turn struct into string");
+    let json_str = serde_json::to_string(&json).context("Failed to serialize tasks request")?;
 
     println!("{:?}", json_str);
     let tasks: Vec<datatypes::Task> = http_methods::get_request(get_string, auth, json_str)
         .await
-        .expect("unable to complete get request")
+        .context("Failed to request tasks from API")?
         .json()
         .await
-        .expect("Unable to parse the response");
+        .context("Failed to parse tasks from API response")?;
 
     gui::tui(tasks, printer_device)?;
 
