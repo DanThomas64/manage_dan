@@ -1,12 +1,12 @@
 use crate::datatypes::{Project, Task};
 use quick_error::quick_error;
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{Error, Write};
 
 quick_error! {
     #[derive(Debug)]
     pub enum PrintError {
-        Io(err: io::Error) {
+        Io(err: Error) {
             from()
             display("I/O error: {}", err)
             cause(err)
