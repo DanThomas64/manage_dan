@@ -137,8 +137,8 @@ impl App {
                     Line::from(vec!["Title: ".bold(), task.title.clone().into()]),
                     Line::from(""),
                     Line::from(vec![
-                        "Project: ".bold(),
-                        task.project.title.clone().into(),
+                        "Project ID: ".bold(),
+                        task.project_id.to_string().into(),
                     ]),
                     Line::from(""),
                     Line::from("Description:".bold()),

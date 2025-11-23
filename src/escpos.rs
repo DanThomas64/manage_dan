@@ -97,8 +97,8 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
     printer.align(Align::Left)?;
     printer.newline()?;
 
-    printer.text("Project: ")?;
-    printer.text(&task.project.title)?;
+    printer.text("Project ID: ")?;
+    printer.text(&task.project_id.to_string())?;
     printer.newline()?;
     printer.newline()?;
 

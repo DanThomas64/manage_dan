@@ -102,17 +102,12 @@ pub struct TaskUser {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct ProjectIdentifier {
-    pub title: String,
-    pub identifier: String,
-}
-
-#[derive(Deserialize, Debug, Clone)]
 pub struct Task {
+    pub id: i32,
     pub title: String,
     pub description: String,
     pub done: bool,
     pub assignees: Vec<TaskUser>,
     pub labels: Vec<Label>,
-    pub project: ProjectIdentifier,
+    pub project_id: i32,
 }

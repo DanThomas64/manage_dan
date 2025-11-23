@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Now that we have the token lets get some info from the api.
     // Lets get a list of uncompleted tasks.
     // NOTE: The endpoint is a guess, you may need to adjust it.
-    let get_string = format!("{}/tasks/by-project-identifier/all", api_base_url);
+    let get_string = format!("{}/tasks", api_base_url);
     let json = datatypes::RequestAllTasks {
         page: 0,
         per_page: 50,
