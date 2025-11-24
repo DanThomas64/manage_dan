@@ -83,6 +83,7 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
     printer.init()?;
 
     printer.align(Align::Center)?;
+    print_Header(&printer, "Task".to_string());
     printer.text(&task.title)?;
     printer.newline()?;
     printer.align(Align::Left)?;
@@ -110,6 +111,22 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
         }
     }
 
+    print_footer(&printer, "Task".to_string());
+
     printer.cut()?;
+    Ok(())
+}
+
+fn print_header(printer: mut Printer, print_type: String) -> Result<()> {
+    for _ in 1..10 {
+        printer.newline()?;
+    }
+    Ok(())
+}
+
+fn print_footer(printer: mut &Printer, print_type: String) -> Result<()> {
+    for _ in 1..10 {
+        printer.newline()?;
+    }
     Ok(())
 }
