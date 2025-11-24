@@ -14,11 +14,11 @@ use ratatui::{
 };
 use std::io::stdout;
 
-pub fn tui(tasks: Vec<Task>, printer_device: String) -> Result<()> {
+pub fn tui(tasks: Vec<Task>, printer_device: String, web_url: String) -> Result<()> {
     color_eyre::install()?;
     stdout().execute(EnableMouseCapture)?;
     let terminal = ratatui::init();
-    let app_result = App::new(tasks, printer_device).run(terminal);
+    let app_result = App::new(tasks, printer_device, web_url).run(terminal);
     ratatui::restore();
     stdout().execute(DisableMouseCapture)?;
     app_result
@@ -29,10 +29,11 @@ struct App {
     tasks: Vec<Task>,
     state: ListState,
     printer_device: String,
+    web_url: String,
 }
 
 impl App {
-    fn new(tasks: Vec<Task>, printer_device: String) -> Self {
+    fn new(tasks: Vec<Task>, printer_device: String, web_url: String) -> Self {
         let mut state = ListState::default();
         if !tasks.is_empty() {
             state.select(Some(0));
@@ -42,6 +43,7 @@ impl App {
             tasks,
             state,
             printer_device,
+            web_url,
         }
     }
 
@@ -99,7 +101,7 @@ impl App {
     fn print_selected_task(&self) {
         if let Some(selected) = self.state.selected() {
             if let Some(task) = self.tasks.get(selected) {
-                if let Err(e) = escpos::print_task(task, &self.printer_device) {
+                if let Err(e) = escpos::print_task(task, &self.printer_device, &self.web_url) {
                     // In a real app, you might want to display this error in the TUI
                     eprintln!("Failed to print task: {}", e);
                 }

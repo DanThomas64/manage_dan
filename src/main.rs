@@ -14,6 +14,8 @@ async fn main() -> Result<()> {
     let api_base_url = env::var("API_URL").context("API_URL environment variable not set")?;
     let printer_device =
         env::var("PRINTER_DEVICE").context("PRINTER_DEVICE environment variable not set")?;
+    let web_url =
+        env::var("WEB_URL").unwrap_or_else(|_| "https://todo.dandoesthings.online".to_string());
 
     // Get the auth token
     let auth: datatypes::Auth = http_methods::auth(api_base_url.clone())
@@ -43,7 +45,7 @@ async fn main() -> Result<()> {
         .await
         .context("Failed to parse tasks from API response")?;
 
-    gui::tui(tasks, printer_device)?;
+    gui::tui(tasks, printer_device, web_url)?;
 
     Ok(())
 }
