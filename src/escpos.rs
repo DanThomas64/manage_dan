@@ -1,5 +1,6 @@
 use crate::datatypes::Task;
 use anyhow::{Context, Result};
+use chrono::{DateTime, Local};
 use escpos::driver::FileDriver;
 use escpos::utils::*;
 use escpos::printer::Printer;
@@ -35,9 +36,16 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
         .write(&task.description_as_text(42))?
         .feeds(2)?
         .write("Due Date:")?
-        .feed()?
-        .write(&task.due_date.to_string())?
-        .feeds(2)?;
+        .feed()?;
+
+    let due_date_str = match DateTime::parse_from_rfc3339(&task.due_date) {
+        Ok(dt) => dt
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
+        Err(_) => task.due_date.clone(),
+    };
+    printer.write(&due_date_str)?.feeds(2)?;
 
     if let Some(labels) = &task.labels {
         if !labels.is_empty() {
