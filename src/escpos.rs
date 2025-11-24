@@ -3,8 +3,6 @@ use anyhow::Result;
 use std::fs::File;
 use std::io::Write;
 
-use escpos::utils::*;
-
 // ESC/POS Commands
 const ESC: u8 = 0x1B;
 const GS: u8 = 0x1D;
