@@ -1,10 +1,7 @@
 use crate::datatypes::{Project, Task};
-use escpos::driver::FileDriver;
-use escpos::printer::Printer as EscposPrinter;
-use escpos::protocol::Protocol;
-use escpos::{Justification, QrCodeErrorCorrection, QrCodeModel};
 use quick_error::quick_error;
-use std::io::Error;
+use std::fs::File;
+use std::io::{Error, Write};
 
 quick_error! {
     #[derive(Debug)]
@@ -12,56 +9,63 @@ quick_error! {
         Io(err: Error) {
             from()
             display("I/O error: {}", err)
-        }
-        Escpos(err: escpos::Error) {
-            from()
-            display("Printer error: {}", err)
+            cause(err)
         }
     }
 }
 
-pub use Justification as Align;
+// ESC/POS Commands
+const ESC: u8 = 0x1B;
+const GS: u8 = 0x1D;
+
+const INIT: &[u8] = &[ESC, b'@'];
+const CUT: &[u8] = &[GS, b'V', 0];
+const LF: &[u8] = &[0x0A];
+
+pub enum Align {
+    Left,
+    Center,
+    Right,
+}
 
 pub struct Printer {
-    printer: EscposPrinter<FileDriver>,
+    writer: File,
 }
 
 impl Printer {
     pub fn new(device_path: &str) -> Result<Self, PrintError> {
-        let driver = FileDriver::new(device_path, None)?;
-        let printer = EscposPrinter::new(driver, Protocol::default(), None);
-        Ok(Printer { printer })
+        let file = File::create(device_path)?;
+        Ok(Printer { writer: file })
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), PrintError> {
+        self.writer.write_all(buf)?;
+        Ok(())
     }
 
     pub fn init(&mut self) -> Result<(), PrintError> {
-        self.printer.init()?;
-        Ok(())
+        self.write_all(INIT)
     }
 
     pub fn cut(&mut self) -> Result<(), PrintError> {
-        self.printer.cut()?;
-        Ok(())
+        self.write_all(CUT)
     }
 
     pub fn text(&mut self, text: &str) -> Result<(), PrintError> {
-        self.printer.raw(text.as_bytes())?;
-        Ok(())
+        self.write_all(text.as_bytes())
     }
 
     pub fn newline(&mut self) -> Result<(), PrintError> {
-        self.printer.writeln("")?;
-        Ok(())
+        self.write_all(LF)
     }
 
     pub fn align(&mut self, align: Align) -> Result<(), PrintError> {
-        self.printer.justify(align)?;
-        Ok(())
-    }
-
-    pub fn qrcode(&mut self, data: &str) -> Result<(), PrintError> {
-        self.printer
-            .qrcode(data, QrCodeModel::Model2, 5, QrCodeErrorCorrection::L)?;
-        Ok(())
+        let align_byte = match align {
+            Align::Left => 0,
+            Align::Center => 1,
+            Align::Right => 2,
+        };
+        self.write_all(&[ESC, b'a', align_byte])
     }
 }
 
@@ -85,14 +89,9 @@ pub fn print_project(project: &Project, device_path: &str) -> Result<(), PrintEr
     Ok(())
 }
 
-pub fn print_task(task: &Task, device_path: &str, web_url: &str) -> Result<(), PrintError> {
+pub fn print_task(task: &Task, device_path: &str) -> Result<(), PrintError> {
     let mut printer = Printer::new(device_path)?;
     printer.init()?;
-
-    let task_url = format!("{}/projects/{}/tasks/{}", web_url, task.project_id, task.id);
-    printer.align(Align::Center)?;
-    printer.qrcode(&task_url)?;
-    printer.newline()?;
 
     printer.align(Align::Center)?;
     printer.text(&task.title)?;

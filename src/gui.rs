@@ -1,5 +1,5 @@
 use crate::{datatypes::Task, escpos};
-use color_eyre::Result;
+use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent},
     ExecutableCommand,
@@ -14,11 +14,10 @@ use ratatui::{
 };
 use std::io::stdout;
 
-pub fn tui(tasks: Vec<Task>, printer_device: String, web_url: String) -> Result<()> {
-    color_eyre::install()?;
+pub fn tui(tasks: Vec<Task>, printer_device: String) -> Result<()> {
     stdout().execute(EnableMouseCapture)?;
     let terminal = ratatui::init();
-    let app_result = App::new(tasks, printer_device, web_url).run(terminal);
+    let app_result = App::new(tasks, printer_device).run(terminal);
     ratatui::restore();
     stdout().execute(DisableMouseCapture)?;
     app_result
@@ -29,11 +28,10 @@ struct App {
     tasks: Vec<Task>,
     state: ListState,
     printer_device: String,
-    web_url: String,
 }
 
 impl App {
-    fn new(tasks: Vec<Task>, printer_device: String, web_url: String) -> Self {
+    fn new(tasks: Vec<Task>, printer_device: String) -> Self {
         let mut state = ListState::default();
         if !tasks.is_empty() {
             state.select(Some(0));
@@ -43,7 +41,6 @@ impl App {
             tasks,
             state,
             printer_device,
-            web_url,
         }
     }
 
@@ -101,7 +98,7 @@ impl App {
     fn print_selected_task(&self) {
         if let Some(selected) = self.state.selected() {
             if let Some(task) = self.tasks.get(selected) {
-                if let Err(e) = escpos::print_task(task, &self.printer_device, &self.web_url) {
+                if let Err(e) = escpos::print_task(task, &self.printer_device) {
                     // In a real app, you might want to display this error in the TUI
                     eprintln!("Failed to print task: {}", e);
                 }
