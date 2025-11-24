@@ -31,12 +31,16 @@ pub async fn auth(url: String) -> Result<Response> {
 
 pub async fn get_request(url: String, auth: Auth, json: Option<String>) -> Result<Response> {
     let client = reqwest::Client::new();
-    let response = client
+    let mut request_builder = client
         .get(url)
-        .query(&params)
         .header(CONTENT_TYPE, "application/json")
-        .header(AUTHORIZATION, format!("Bearer {}", auth.token))
-        .send()
-        .await?;
+        .header(AUTHORIZATION, format!("Bearer {}", auth.token));
+
+    if let Some(json_str) = json {
+        let params: serde_json::Value = serde_json::from_str(&json_str)?;
+        request_builder = request_builder.query(&params);
+    }
+
+    let response = request_builder.send().await?;
     Ok(response)
 }

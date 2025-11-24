@@ -14,6 +14,8 @@ async fn main() -> Result<()> {
     let api_base_url = env::var("API_URL").context("API_URL environment variable not set")?;
     let printer_device =
         env::var("PRINTER_DEVICE").context("PRINTER_DEVICE environment variable not set")?;
+    let web_url =
+        env::var("WEB_URL").unwrap_or_else(|_| "https://todo.dandoesthings.online".to_string());
 
     // Get the auth token
     let auth: datatypes::Auth = http_methods::auth(api_base_url.clone())
@@ -27,12 +29,20 @@ async fn main() -> Result<()> {
     // Lets get a list of uncompleted tasks.
     // NOTE: The endpoint is a guess, you may need to adjust it.
     let get_string = format!("{}/tasks/all", api_base_url);
-    let tasks: Vec<datatypes::Task> = http_methods::get_request(get_string, auth, json_str)
-        .await
-        .context("Failed to request tasks from API")?
-        .json()
-        .await
-        .context("Failed to parse tasks from API response")?;
+    let all_tasks_request = datatypes::RequestAllTasks {
+        page: 1,
+        per_page: 50,
+        s: "".to_string(),
+        done: false,
+    };
+    let json_str = serde_json::to_string(&all_tasks_request)?;
+    let tasks: Vec<datatypes::Task> =
+        http_methods::get_request(get_string, auth, Some(json_str))
+            .await
+            .context("Failed to request tasks from API")?
+            .json()
+            .await
+            .context("Failed to parse tasks from API response")?;
 
     gui::tui(tasks, printer_device, web_url)?;
 

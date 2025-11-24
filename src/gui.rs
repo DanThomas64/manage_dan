@@ -133,8 +133,13 @@ impl App {
 
         let task_detail_text = if let Some(selected) = self.state.selected() {
             if let Some(task) = self.tasks.get(selected) {
-                let assignees = task.assignees.iter().map(|a| a.name.clone()).join(", ");
-                let labels = task.labels.iter().map(|l| l.title.clone()).join(", ");
+                let labels = task
+                    .labels
+                    .as_deref()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|l| l.title.clone())
+                    .join(", ");
                 vec![
                     Line::from(vec!["Title: ".bold(), task.title.clone().into()]),
                     Line::from(""),
@@ -145,8 +150,6 @@ impl App {
                     Line::from(""),
                     Line::from("Description:".bold()),
                     Line::from(task.description.clone()),
-                    Line::from(""),
-                    Line::from(vec!["Assignees: ".bold(), assignees.into()]),
                     Line::from(""),
                     Line::from(vec!["Labels: ".bold(), labels.into()]),
                 ]

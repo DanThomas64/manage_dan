@@ -1,6 +1,8 @@
 use crate::datatypes::{Project, Task};
 use escpos::driver::FileDriver;
 use escpos::printer::Printer as EscposPrinter;
+use escpos::protocol::Protocol;
+use escpos::{Justification, QrCodeErrorCorrection, QrCodeModel};
 use quick_error::quick_error;
 use std::io::Error;
 
@@ -18,13 +20,16 @@ quick_error! {
     }
 }
 
+pub use Justification as Align;
+
 pub struct Printer {
     printer: EscposPrinter<FileDriver>,
 }
 
 impl Printer {
     pub fn new(device_path: &str) -> Result<Self, PrintError> {
-        let printer = EscposPrinter::new(device_path, None);
+        let driver = FileDriver::new(device_path, None)?;
+        let printer = EscposPrinter::new(driver, Protocol::default(), None);
         Ok(Printer { printer })
     }
 
@@ -106,22 +111,14 @@ pub fn print_task(task: &Task, device_path: &str, web_url: &str) -> Result<(), P
     printer.newline()?;
     printer.newline()?;
 
-    if !task.assignees.is_empty() {
-        printer.text("Assignees:")?;
-        printer.newline()?;
-        for assignee in &task.assignees {
-            printer.text(&format!("- {}", assignee.name))?;
+    if let Some(labels) = &task.labels {
+        if !labels.is_empty() {
+            printer.text("Labels:")?;
             printer.newline()?;
-        }
-        printer.newline()?;
-    }
-
-    if !task.labels.is_empty() {
-        printer.text("Labels:")?;
-        printer.newline()?;
-        for label in &task.labels {
-            printer.text(&format!("- {}", label.title))?;
-            printer.newline()?;
+            for label in labels {
+                printer.text(&format!("- {}", label.title))?;
+                printer.newline()?;
+            }
         }
     }
 
