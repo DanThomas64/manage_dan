@@ -1,7 +1,6 @@
 use anyhow::Result;
 use reqwest::Response;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
-use serde_json;
 use std::env;
 
 use crate::datatypes::*;
@@ -12,9 +11,9 @@ pub async fn auth(url: String) -> Result<Response> {
 
     let user = RequestLogin {
         long_token: true,
-        password: password,
+        password,
         totp_passcode: "".to_string(),
-        username: username,
+        username,
     };
 
     let request_url = format!("{}/login", url);

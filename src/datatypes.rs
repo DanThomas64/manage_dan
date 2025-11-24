@@ -23,11 +23,8 @@ pub struct Auth {
 
 #[derive(Deserialize, Debug)]
 pub struct User {
-    pub created: String,
-    pub email: Option<String>,
     pub id: i32,
     pub name: String,
-    pub updated: String,
     pub username: String,
 }
 
@@ -92,13 +89,13 @@ pub struct RequestAllTasks {
 #[derive(Deserialize, Debug, Clone)]
 pub struct Label {
     pub title: String,
-    pub hex_color: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub struct TaskUser {
-    pub name: String,
-    pub username: String,
+pub struct ReminderConfig {
+    pub relative_period: u8,
+    pub relative_to: String,
+    pub reminder: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -107,7 +104,8 @@ pub struct Task {
     pub title: String,
     pub description: String,
     pub done: bool,
-    pub assignees: Vec<TaskUser>,
-    pub labels: Vec<Label>,
+    pub labels: Option<Vec<Label>>,
     pub project_id: i32,
+    pub due_date: String,
+    pub reminders: Option<Vec<ReminderConfig>>,
 }
