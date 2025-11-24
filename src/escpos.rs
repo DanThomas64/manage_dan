@@ -1,35 +1,32 @@
 use crate::datatypes::Task;
 use anyhow::Result;
 use escpos::driver::FileDriver;
+use escpos::printer::command::{Justification, Protocol};
 use escpos::printer::Printer;
-use escpos::utils::*;
+use std::path::Path;
 
 pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
-    let driver = FileDriver::new(device_path)?;
-    let mut printer = Printer::new(driver, None, None);
+    let driver = FileDriver::open(Path::new(device_path))?;
+    let mut printer = Printer::new(driver, Protocol::default(), None)?;
 
     printer.init()?;
     printer.justify(Justification::Center)?;
     print_header(&mut printer, "Task")?;
-    printer.text(&task.title)?;
-    printer.ln(1)?;
+    printer.writeln(task.title.as_bytes())?;
     printer.justify(Justification::Left)?;
-    printer.ln(1)?;
-    printer.text("Project ID: ")?;
-    printer.text(&task.project_id.to_string())?;
-    printer.ln(2)?;
-    printer.text("Description:")?;
-    printer.ln(1)?;
-    printer.text(&task.description_as_text(42))?;
-    printer.ln(2)?;
+    printer.feed(1)?;
+    printer.write(b"Project ID: ")?;
+    printer.write(task.project_id.to_string().as_bytes())?;
+    printer.feed(2)?;
+    printer.writeln(b"Description:")?;
+    printer.write(task.description_as_text(42).as_bytes())?;
+    printer.feed(2)?;
 
     if let Some(labels) = &task.labels {
         if !labels.is_empty() {
-            printer.text("Labels:")?;
-            printer.ln(1)?;
+            printer.writeln(b"Labels:")?;
             for label in labels {
-                printer.text(&format!("- {}", label.title))?;
-                printer.ln(1)?;
+                printer.writeln(format!("- {}", label.title).as_bytes())?;
             }
         }
     }
@@ -40,16 +37,16 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
 }
 
 fn print_header(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<()> {
-    printer.ln(4)?;
-    printer.text(print_type)?;
-    printer.ln(4)?;
+    printer.feed(4)?;
+    printer.write(print_type.as_bytes())?;
+    printer.feed(4)?;
     Ok(())
 }
 
 fn print_footer(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<()> {
     printer.justify(Justification::Center)?;
-    printer.ln(4)?;
-    printer.text(print_type)?;
-    printer.ln(9)?;
+    printer.feed(4)?;
+    printer.write(print_type.as_bytes())?;
+    printer.feed(9)?;
     Ok(())
 }
