@@ -29,9 +29,8 @@ pub async fn auth(url: String) -> Result<Response> {
     Ok(response)
 }
 
-pub async fn get_request(url: String, auth: Auth, json: String) -> Result<Response> {
+pub async fn get_request(url: String, auth: Auth, json: Option<String>) -> Result<Response> {
     let client = reqwest::Client::new();
-    let params: serde_json::Value = serde_json::from_str(&json)?;
     let response = client
         .get(url)
         .query(&params)
