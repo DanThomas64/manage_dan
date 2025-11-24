@@ -1,3 +1,4 @@
+use html2text;
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -108,4 +109,10 @@ pub struct Task {
     pub project_id: i32,
     pub due_date: String,
     pub reminders: Option<Vec<ReminderConfig>>,
+}
+
+impl Task {
+    pub fn description_as_text(&self, width: usize) -> String {
+        html2text::from_read(self.description.as_bytes(), width)
+    }
 }

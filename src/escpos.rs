@@ -98,7 +98,7 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
 
     printer.text("Description:")?;
     printer.newline()?;
-    printer.text(&task.description)?;
+    printer.text(&task.description_as_text(42))?;
     printer.newline()?;
     printer.newline()?;
 

@@ -137,7 +137,11 @@ impl App {
                     .iter()
                     .map(|l| l.title.clone())
                     .join(", ");
-                vec![
+
+                let details_width = main_layout[1].width.saturating_sub(2) as usize;
+                let description = task.description_as_text(details_width);
+
+                let mut lines = vec![
                     Line::from(vec!["Title: ".bold(), task.title.clone().into()]),
                     Line::from(""),
                     Line::from(vec![
@@ -146,10 +150,11 @@ impl App {
                     ]),
                     Line::from(""),
                     Line::from("Description:".bold()),
-                    Line::from(task.description.clone()),
-                    Line::from(""),
-                    Line::from(vec!["Labels: ".bold(), labels.into()]),
-                ]
+                ];
+                lines.extend(description.lines().map(Line::from));
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec!["Labels: ".bold(), labels.into()]));
+                lines
             } else {
                 vec![Line::from("No task selected")]
             }
