@@ -76,7 +76,7 @@ impl App {
                     i + 1
                 }
             }
-            None => 0,
+            _ => 0,
         };
         self.state.select(Some(i));
     }
@@ -90,7 +90,7 @@ impl App {
                     i - 1
                 }
             }
-            None => 0,
+            _ => 0,
         };
         self.state.select(Some(i));
     }
