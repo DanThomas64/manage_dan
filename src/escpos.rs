@@ -38,12 +38,16 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
         .write("Due Date:")?
         .feed()?;
 
-    let due_date_str = match DateTime::parse_from_rfc3339(&task.due_date) {
-        Ok(dt) => dt
-            .with_timezone(&Local)
-            .format("%Y-%m-%d %H:%M")
-            .to_string(),
-        Err(_) => task.due_date.clone(),
+    let due_date_str = if task.due_date.starts_with("0001-01-01") {
+        "No due date".to_string()
+    } else {
+        match DateTime::parse_from_rfc3339(&task.due_date) {
+            Ok(dt) => dt
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
+            Err(_) => task.due_date.clone(),
+        }
     };
     printer.write(&due_date_str)?.feeds(2)?;
 
