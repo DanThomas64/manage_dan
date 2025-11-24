@@ -1,8 +1,9 @@
 use crate::datatypes::{Project, Task};
-use escpos::printer::{Justification, Printer as EscposPrinter};
-use escpos::qrcode::{QrCodeErrorCorrection, QrCodeModel};
+use escpos::driver::FileDriver;
+use escpos::printer::Printer as EscposPrinter;
+use escpos::protocol::Protocol;
+use escpos::{Justification, QrCodeErrorCorrection, QrCodeModel};
 use quick_error::quick_error;
-use std::fs::File;
 use std::io::Error;
 
 quick_error! {
@@ -24,13 +25,13 @@ quick_error! {
 pub use Justification as Align;
 
 pub struct Printer {
-    printer: EscposPrinter<File>,
+    printer: EscposPrinter<FileDriver>,
 }
 
 impl Printer {
     pub fn new(device_path: &str) -> Result<Self, PrintError> {
-        let file = File::create(device_path)?;
-        let printer = EscposPrinter::new(file, None, None);
+        let driver = FileDriver::new(device_path, None)?;
+        let printer = EscposPrinter::new(driver, Protocol::default(), None);
         Ok(Printer { printer })
     }
 
@@ -45,8 +46,7 @@ impl Printer {
     }
 
     pub fn text(&mut self, text: &str) -> Result<(), PrintError> {
-        use std::io::Write;
-        self.printer.write_all(text.as_bytes())?;
+        self.printer.raw(text.as_bytes())?;
         Ok(())
     }
 

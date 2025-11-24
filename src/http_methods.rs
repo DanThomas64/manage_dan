@@ -1,3 +1,4 @@
+use anyhow::Result;
 use reqwest::Response;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde_json;
@@ -5,7 +6,7 @@ use std::env;
 
 use crate::datatypes::*;
 
-pub async fn auth(url: String) -> Result<Response, Box<dyn std::error::Error>> {
+pub async fn auth(url: String) -> Result<Response> {
     let username = env::var("USERNAME").expect("Unable to find USERNAME env");
     let password = env::var("PASSWORD").expect("Unable to find PASSWORD env");
 
@@ -24,11 +25,11 @@ pub async fn auth(url: String) -> Result<Response, Box<dyn std::error::Error>> {
         .header(CONTENT_TYPE, "application/json")
         .json(&user)
         .send()
-        .await;
-    Ok(response?)
+        .await?;
+    Ok(response)
 }
 
-pub async fn get_request(url: String, auth: Auth, json: String) -> Result<Response, Box<dyn std::error::Error>> {
+pub async fn get_request(url: String, auth: Auth, json: String) -> Result<Response> {
     let client = reqwest::Client::new();
     let params: serde_json::Value = serde_json::from_str(&json)?;
     let response = client
@@ -37,6 +38,6 @@ pub async fn get_request(url: String, auth: Auth, json: String) -> Result<Respon
         .header(CONTENT_TYPE, "application/json")
         .header(AUTHORIZATION, format!("Bearer {}", auth.token))
         .send()
-        .await;
-    Ok(response?)
+        .await?;
+    Ok(response)
 }

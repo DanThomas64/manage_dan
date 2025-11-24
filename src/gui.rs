@@ -112,7 +112,7 @@ impl App {
     fn render(&mut self, frame: &mut Frame) {
         let main_layout =
             Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)])
-                .split(frame.size());
+                .split(frame.area());
 
         let items: Vec<ListItem> = self
             .tasks
