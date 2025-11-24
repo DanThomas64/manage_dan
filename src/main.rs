@@ -42,7 +42,9 @@ async fn main() -> Result<()> {
             .await
             .context("Failed to parse tasks from API response")?;
 
-    gui::tui(tasks, printer_device)?;
+    let uncompleted_tasks: Vec<datatypes::Task> = tasks.into_iter().filter(|t| !t.done).collect();
+
+    gui::tui(uncompleted_tasks, printer_device)?;
 
     Ok(())
 }
