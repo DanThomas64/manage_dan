@@ -151,7 +151,7 @@ impl App {
                     Line::from(""),
                     Line::from("Description:".bold()),
                 ];
-                lines.extend(description.lines().map(Line::from));
+                lines.extend(description.lines().map(|s| Line::from(s.to_string())));
                 lines.push(Line::from(""));
                 lines.push(Line::from(vec!["Labels: ".bold(), labels.into()]));
                 lines
