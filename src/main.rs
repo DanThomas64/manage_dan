@@ -1,12 +1,12 @@
 use anyhow::{Context, Result};
 use dotenv::dotenv;
-use std::collections::HashSet;
 use std::env;
 use tokio::time::{sleep, Duration};
 
 mod datatypes;
 mod http_methods;
 mod escpos;
+mod database;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -15,6 +15,10 @@ async fn main() -> Result<()> {
     let api_base_url = env::var("API_URL").context("API_URL environment variable not set")?;
     let printer_device =
         env::var("PRINTER_DEVICE").context("PRINTER_DEVICE environment variable not set")?;
+    let db_path = env::var("DATABASE_PATH").unwrap_or_else(|_| "tasks.db".to_string());
+
+    // Setup database
+    let conn = database::init_db(&db_path)?;
 
     // Get the auth token
     let auth: datatypes::Auth = http_methods::auth(api_base_url.clone())
@@ -23,8 +27,6 @@ async fn main() -> Result<()> {
         .json()
         .await
         .context("Failed to parse auth token from response")?;
-
-    let mut printed_task_ids = HashSet::new();
 
     loop {
         // Now that we have the token lets get some info from the api.
@@ -65,11 +67,16 @@ async fn main() -> Result<()> {
             tasks.into_iter().filter(|t| !t.done).collect();
 
         for task in uncompleted_tasks {
-            if !printed_task_ids.contains(&task.id) {
-                println!("Found new task, printing: \"{}\"", task.title);
+            if database::needs_printing(&conn, &task)? {
+                println!(
+                    "Found new or updated task, printing: \"{}\"",
+                    task.title
+                );
                 match escpos::print_task(&task, &printer_device) {
                     Ok(_) => {
-                        printed_task_ids.insert(task.id);
+                        if let Err(e) = database::mark_as_printed(&conn, &task) {
+                            eprintln!("Failed to mark task {} as printed: {}", task.id, e);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Failed to print task {}: {}", task.id, e);

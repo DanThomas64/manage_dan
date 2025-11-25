@@ -104,6 +104,7 @@ pub struct Task {
     pub id: i32,
     pub title: String,
     pub description: String,
+    pub updated: String,
     pub done: bool,
     pub labels: Option<Vec<Label>>,
     pub project_id: i32,
