@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Local, Timelike, Utc};
 use dotenv::dotenv;
 use std::env;
 use tokio::time::{sleep, Duration};
@@ -70,8 +70,9 @@ async fn main() -> Result<()> {
         let uncompleted_tasks: Vec<datatypes::Task> =
             tasks.into_iter().filter(|t| !t.done).collect();
 
-        let today = Local::now().date_naive();
-        if today > last_summary_print_date {
+        let now = Local::now();
+        let today = now.date_naive();
+        if today > last_summary_print_date && now.hour() >= 7 {
             println!("Printing daily summary for {}", today);
 
             let daily_tasks: Vec<datatypes::Task> = uncompleted_tasks
