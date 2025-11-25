@@ -94,7 +94,14 @@ pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
 
     printer.init()?;
     print_header(&mut printer, "--- Daily Summary ---")?;
+    print_summary_datetime(&mut printer)?;
+    print_summary_tasks(&mut printer, tasks)?;
+    print_footer(&mut printer, "--- End Summary ---")?;
+    printer.print_cut()?;
+    Ok(())
+}
 
+fn print_summary_datetime(printer: &mut Printer<FileDriver>) -> Result<()> {
     let now = Local::now();
     let datetime_str = now.format("%Y-%m-%d %H:%M").to_string();
     printer
@@ -102,7 +109,10 @@ pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
         .writeln(&datetime_str)?
         .feed()?
         .justify(JustifyMode::LEFT)?;
+    Ok(())
+}
 
+fn print_summary_tasks(printer: &mut Printer<FileDriver>, tasks: &[Task]) -> Result<()> {
     if tasks.is_empty() {
         printer.writeln("No tasks for today.")?;
     } else {
@@ -110,9 +120,6 @@ pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
             printer.writeln(&format!("- {}", task.title))?.feed()?;
         }
     }
-
-    print_footer(&mut printer, "--- End Summary ---")?;
-    printer.print_cut()?;
     Ok(())
 }
 
@@ -170,7 +177,7 @@ mod tests {
         // Or `cat test_print_output.bin > /dev/usb/lp0`
 
         let task = create_test_task();
-        let output_file = "/dev/usb/lp0";
+        let output_file = "test_print_output.bin";
 
         // Set required environment variables for the test
         env::set_var("BASE_URL", "http://example.com");
@@ -181,6 +188,45 @@ mod tests {
         env::remove_var("BASE_URL");
 
         assert!(result.is_ok());
+
+        // Check that the file was created and is not empty
+        let metadata = fs::metadata(output_file)?;
+        assert!(metadata.len() > 0);
+
+        // Optional: clean up the file after test
+        // fs::remove_file(output_file)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_print_daily_summary_example() -> Result<()> {
+        let tasks = vec![
+            create_test_task(),
+            Task {
+                id: 124,
+                title: "Another Test Task".to_string(),
+                description: String::new(),
+                updated: String::new(),
+                done: false,
+                labels: None,
+                project_id: 1,
+                due_date: String::new(),
+                reminders: None,
+            },
+        ];
+        let output_file = "test_summary_output.bin";
+
+        let result = print_daily_summary(&tasks, output_file);
+
+        assert!(result.is_ok());
+
+        // Check that the file was created and is not empty
+        let metadata = fs::metadata(output_file)?;
+        assert!(metadata.len() > 0);
+
+        // Optional: clean up the file after test
+        // fs::remove_file(output_file)?;
 
         Ok(())
     }

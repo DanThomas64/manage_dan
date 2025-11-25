@@ -18,10 +18,6 @@ async fn main() -> Result<()> {
         env::var("PRINTER_DEVICE").context("PRINTER_DEVICE environment variable not set")?;
     let db_path = env::var("DATABASE_PATH").unwrap_or_else(|_| "tasks.db".to_string());
 
-    let debug_mode = env::var("DEBUG").unwrap_or_else(|_| "false".to_string()) == "true";
-    if debug_mode {
-        println!("Debug mode is enabled. Only a limited number of tasks will be processed.");
-    }
 
     // Setup database
     let conn = database::init_db(&db_path)?;
@@ -104,9 +100,6 @@ async fn main() -> Result<()> {
             last_summary_print_date = today;
         }
 
-        if debug_mode {
-            uncompleted_tasks.truncate(3);
-        }
 
         for task in uncompleted_tasks {
             if task.is_recurring() {
