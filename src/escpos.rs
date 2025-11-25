@@ -145,7 +145,6 @@ mod tests {
     use super::*;
     use crate::datatypes::{Label, Task};
     use std::env;
-    use std::fs;
 
     fn create_test_task() -> Task {
         Task {
@@ -177,7 +176,7 @@ mod tests {
         // Or `cat test_print_output.bin > /dev/usb/lp0`
 
         let task = create_test_task();
-        let output_file = "/dev/usb/lr0";
+        let output_file = "/dev/usb/lp0";
 
         // Set required environment variables for the test
         env::set_var("BASE_URL", "http://example.com");
@@ -208,7 +207,7 @@ mod tests {
                 reminders: None,
             },
         ];
-        let output_file = "/dev/usb/lr0";
+        let output_file = "/dev/usb/lp0";
 
         let result = print_daily_summary(&tasks, output_file);
 
