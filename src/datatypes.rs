@@ -87,6 +87,11 @@ pub struct RequestAllTasks {
     pub done: bool,
 }
 
+#[derive(Serialize, Debug)]
+pub struct UpdateTask {
+    pub done: bool,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Label {
     pub title: String,

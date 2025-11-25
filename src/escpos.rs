@@ -60,6 +60,15 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
         }
     }
 
+    printer.feed()?;
+    let done_url = format!("{base_url}/tasks/{}/done", task.id);
+    printer.justify(JustifyMode::CENTER)?
+        .writeln("Mark as done:")?
+        .qrcode_option(
+                done_url.as_str(),
+                QRCodeOption::new(QRCodeModel::Model1, 6, QRCodeCorrectionLevel::M),
+        )?;
+
     print_footer(&mut printer, "--- End Task ---")?;
     printer.print_cut()?;
     Ok(())

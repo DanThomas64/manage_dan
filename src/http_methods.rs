@@ -43,3 +43,15 @@ pub async fn get_request(url: String, auth: &Auth, json: Option<String>) -> Resu
     let response = request_builder.send().await?;
     Ok(response)
 }
+
+pub async fn post_request(url: String, auth: &Auth, json_body: String) -> Result<Response> {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(url)
+        .header(CONTENT_TYPE, "application/json")
+        .header(AUTHORIZATION, format!("Bearer {}", auth.token))
+        .body(json_body)
+        .send()
+        .await?;
+    Ok(response)
+}
