@@ -13,33 +13,52 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
     let driver = FileDriver::open(path)?;
     let mut printer = Printer::new(driver, Protocol::default(), None);
 
-    let line = LineBuilder::new().style(LineStyle::Custom("=-")).build();
-    let base_api_url = env::var("API_URL").context("API_URL environment variable not set")?;
-    let task_api_url = format!("{base_api_url}/tasks/{}", task.id);
+    printer.init()?;
+    print_task_qrcode(&mut printer, task)?;
+    print_header(&mut printer, "--- Task ---")?;
+    print_task_title(&mut printer, task)?;
+    print_task_description(&mut printer, task)?;
+    print_task_due_date(&mut printer, task)?;
+    print_task_labels(&mut printer, task)?;
+    print_footer(&mut printer, "--- End Task ---")?;
+    printer.print_cut()?;
+    Ok(())
+}
+
+fn print_task_qrcode(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
     let base_url = env::var("BASE_URL").context("API_URL environment variable not set")?;
     let task_url = format!("{base_url}/tasks/{}", task.id);
-
-    printer.init()?
-        .justify(JustifyMode::CENTER)?
+    printer.justify(JustifyMode::CENTER)?
         .qrcode_option(
                 task_url.as_str(),
                 QRCodeOption::new(QRCodeModel::Model1, 6, QRCodeCorrectionLevel::M),
         )?;
-    print_header(&mut printer, "--- Task ---")?;
+    Ok(())
+}
+
+fn print_task_title(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
+    let line = LineBuilder::new().style(LineStyle::Custom("=-")).build();
     printer.bold(true)?
         .writeln(&task.title)?
         .feed()?
         .draw_line(line)?
         .bold(false)?
         .reset_size()?
-        .justify(JustifyMode::LEFT)?
+        .justify(JustifyMode::LEFT)?;
+    Ok(())
+}
+
+fn print_task_description(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
+    printer
         .feed()?
         .writeln("Description:")?
         .write(&task.description_as_text(42))?
-        .feeds(2)?
-        .write("Due Date:")?
-        .feed()?;
+        .feeds(2)?;
+    Ok(())
+}
 
+fn print_task_due_date(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
+    printer.write("Due Date:")?.feed()?;
     let due_date_str = if task.due_date.starts_with("0001-01-01") {
         "No due date".to_string()
     } else {
@@ -52,7 +71,10 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
         }
     };
     printer.write(&due_date_str)?.feeds(2)?;
+    Ok(())
+}
 
+fn print_task_labels(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
     if let Some(labels) = &task.labels {
         if !labels.is_empty() {
             printer.writeln("Labels:")?;
@@ -61,10 +83,7 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
             }
         }
     }
-
     printer.feed()?;
-    print_footer(&mut printer, "--- End Task ---")?;
-    printer.print_cut()?;
     Ok(())
 }
 
