@@ -73,6 +73,14 @@ pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
     printer.init()?;
     print_header(&mut printer, "--- Daily Summary ---")?;
 
+    let now = Local::now();
+    let datetime_str = now.format("%Y-%m-%d %H:%M").to_string();
+    printer
+        .justify(JustifyMode::CENTER)?
+        .writeln(&datetime_str)?
+        .feed()?
+        .justify(JustifyMode::LEFT)?;
+
     if tasks.is_empty() {
         printer.writeln("No tasks for today.")?;
     } else {
