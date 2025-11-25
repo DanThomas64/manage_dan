@@ -38,7 +38,8 @@ fn print_task_qrcode(printer: &mut Printer<FileDriver>, task: &Task) -> Result<(
 
 fn print_task_title(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
     let line = LineBuilder::new().style(LineStyle::Custom("=-")).build();
-    printer.bold(true)?
+    printer
+        .bold(true)?
         .writeln(&task.title)?
         .feed()?
         .draw_line(line)?
@@ -51,14 +52,24 @@ fn print_task_title(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()
 fn print_task_description(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
     printer
         .feed()?
+        .bold(true)?
         .writeln("Description:")?
+        .bold(false)?
+        .justify(JustifyMode::CENTER)?
         .write(&task.description_as_text(42))?
-        .feeds(2)?;
+        .feed()?
+        .justify(JustifyMode::LEFT)?;
     Ok(())
 }
 
 fn print_task_due_date(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
-    printer.write("Due Date:")?.feed()?;
+    printer
+        .feed()?
+        .bold(true)?
+        .write("Due Date:")?
+        .bold(false)?
+        .feed()?
+        .justify(JustifyMode::CENTER)?;
     let due_date_str = if task.due_date.starts_with("0001-01-01") {
         "No due date".to_string()
     } else {
@@ -70,20 +81,28 @@ fn print_task_due_date(printer: &mut Printer<FileDriver>, task: &Task) -> Result
             Err(_) => task.due_date.clone(),
         }
     };
-    printer.write(&due_date_str)?.feeds(2)?;
+    printer.write(&due_date_str)?
+        .feed()?
+        .justify(JustifyMode::LEFT)?;
     Ok(())
 }
 
 fn print_task_labels(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
     if let Some(labels) = &task.labels {
         if !labels.is_empty() {
-            printer.writeln("Labels:")?;
+            printer
+                .bold(true)?
+                .writeln("Labels:")?
+                .bold(false)?
+                .justify(JustifyMode::CENTER)?;
             for label in labels {
                 printer.writeln(&format!("- {}", label.title))?;
             }
         }
     }
-    printer.feed()?;
+    printer
+        .feed()?
+        .justify(JustifyMode::LEFT)?;
     Ok(())
 }
 
@@ -103,7 +122,7 @@ pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
 
 fn print_summary_datetime(printer: &mut Printer<FileDriver>) -> Result<()> {
     let now = Local::now();
-    let datetime_str = now.format("%Y-%m-%d %H:%M").to_string();
+    let datetime_str = now.format("%a %d-%b-%Y").to_string();
     printer
         .justify(JustifyMode::CENTER)?
         .writeln(&datetime_str)?
@@ -113,6 +132,8 @@ fn print_summary_datetime(printer: &mut Printer<FileDriver>) -> Result<()> {
 }
 
 fn print_summary_tasks(printer: &mut Printer<FileDriver>, tasks: &[Task]) -> Result<()> {
+    printer.justify(JustifyMode::CENTER)?
+        .reset_size()?;
     if tasks.is_empty() {
         printer.writeln("No tasks for today.")?;
     } else {
@@ -124,7 +145,8 @@ fn print_summary_tasks(printer: &mut Printer<FileDriver>, tasks: &[Task]) -> Res
 }
 
 fn print_header(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<()> {
-    printer.feeds(2)?
+    printer.justify(JustifyMode::CENTER)?
+        .feeds(2)?
         .size(2,2)?
         .write(print_type)?
         .feeds(3)?;
@@ -133,7 +155,7 @@ fn print_header(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<(
 
 fn print_footer(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<()> {
     printer.justify(JustifyMode::CENTER)?
-        .feeds(2)?
+        .feed()?
         .size(2,2)?
         .write(print_type)?
         .feeds(6)?;
