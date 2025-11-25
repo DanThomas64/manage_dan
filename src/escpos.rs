@@ -16,7 +16,6 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
     printer.init()?;
     print_task_qrcode(&mut printer, task)?;
     print_header(&mut printer, "--- Task ---")?;
-    print_task_printed_time(&mut printer)?;
     print_task_title(&mut printer, task)?;
     print_task_description(&mut printer, task)?;
     print_task_due_date(&mut printer, task)?;
@@ -112,6 +111,7 @@ fn print_task_printed_time(printer: &mut Printer<FileDriver>) -> Result<()> {
     let datetime_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
     printer
         .feed()?
+        .reset_size()?
         .bold(true)?
         .write("Printed at:")?
         .bold(false)?
@@ -175,7 +175,9 @@ fn print_footer(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<(
         .feed()?
         .size(2,2)?
         .write(print_type)?
-        .feeds(6)?;
+        .feed()?;
+    print_task_printed_time(printer)?;
+        printer.feeds(6)?;
     Ok(())
 }
 
