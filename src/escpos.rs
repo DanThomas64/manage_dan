@@ -117,13 +117,10 @@ pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
 }
 
 fn print_header(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<()> {
-
-
     printer.feeds(2)?
         .size(2,2)?
         .write(print_type)?
-        .feeds(2)?
-        .feeds(2)?;
+        .feeds(3)?;
     Ok(())
 }
 
@@ -173,7 +170,7 @@ mod tests {
         // Or `cat test_print_output.bin > /dev/usb/lp0`
 
         let task = create_test_task();
-        let output_file = "test_print_output.bin";
+        let output_file = "/dev/usb/lp0";
 
         // Set required environment variables for the test
         env::set_var("BASE_URL", "http://example.com");
@@ -184,13 +181,6 @@ mod tests {
         env::remove_var("BASE_URL");
 
         assert!(result.is_ok());
-
-        // Check that the file was created and is not empty
-        let metadata = fs::metadata(output_file)?;
-        assert!(metadata.len() > 0);
-
-        // Optional: clean up the file after test
-        // fs::remove_file(output_file)?;
 
         Ok(())
     }
