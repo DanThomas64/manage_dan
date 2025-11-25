@@ -1,16 +1,14 @@
 use crate::datatypes::Task;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local};
-use escpos::driver::FileDriver;
+use escpos::driver::NativeUsbDriver;
 use escpos::utils::*;
 use escpos::printer::Printer;
 use escpos::ui::line::*;
-use std::path::Path;
 use std::env;
 
-pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
-    let path = Path::new(device_path);
-    let driver = FileDriver::open(path)?;
+pub fn print_task(task: &Task, vid: u16, pid: u16) -> Result<()> {
+    let driver = NativeUsbDriver::open(vid, pid, None)?;
     let mut printer = Printer::new(driver, Protocol::default(), None);
 
     printer.init()?;
@@ -25,7 +23,7 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn print_task_qrcode(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
+fn print_task_qrcode(printer: &mut Printer<NativeUsbDriver>, task: &Task) -> Result<()> {
     let base_url = env::var("BASE_URL").context("API_URL environment variable not set")?;
     let task_url = format!("{base_url}/tasks/{}", task.id);
     printer.justify(JustifyMode::CENTER)?
@@ -36,7 +34,7 @@ fn print_task_qrcode(printer: &mut Printer<FileDriver>, task: &Task) -> Result<(
     Ok(())
 }
 
-fn print_task_title(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
+fn print_task_title(printer: &mut Printer<NativeUsbDriver>, task: &Task) -> Result<()> {
     let line = LineBuilder::new().style(LineStyle::Custom("=-")).build();
     printer
         .bold(true)?
@@ -49,7 +47,7 @@ fn print_task_title(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()
     Ok(())
 }
 
-fn print_task_description(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
+fn print_task_description(printer: &mut Printer<NativeUsbDriver>, task: &Task) -> Result<()> {
     printer
         .feed()?
         .bold(true)?
@@ -62,7 +60,7 @@ fn print_task_description(printer: &mut Printer<FileDriver>, task: &Task) -> Res
     Ok(())
 }
 
-fn print_task_due_date(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
+fn print_task_due_date(printer: &mut Printer<NativeUsbDriver>, task: &Task) -> Result<()> {
     printer
         .feed()?
         .bold(true)?
@@ -87,7 +85,7 @@ fn print_task_due_date(printer: &mut Printer<FileDriver>, task: &Task) -> Result
     Ok(())
 }
 
-fn print_task_labels(printer: &mut Printer<FileDriver>, task: &Task) -> Result<()> {
+fn print_task_labels(printer: &mut Printer<NativeUsbDriver>, task: &Task) -> Result<()> {
     if let Some(labels) = &task.labels {
         if !labels.is_empty() {
             printer
@@ -106,7 +104,7 @@ fn print_task_labels(printer: &mut Printer<FileDriver>, task: &Task) -> Result<(
     Ok(())
 }
 
-fn print_task_printed_time(printer: &mut Printer<FileDriver>) -> Result<()> {
+fn print_task_printed_time(printer: &mut Printer<NativeUsbDriver>) -> Result<()> {
     let now = Local::now();
     let datetime_str = now.format("%Y-%m-%d %H:%M:%S").to_string();
     printer
@@ -123,9 +121,8 @@ fn print_task_printed_time(printer: &mut Printer<FileDriver>) -> Result<()> {
     Ok(())
 }
 
-pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
-    let path = Path::new(device_path);
-    let driver = FileDriver::open(path)?;
+pub fn print_daily_summary(tasks: &[Task], vid: u16, pid: u16) -> Result<()> {
+    let driver = NativeUsbDriver::open(vid, pid, None)?;
     let mut printer = Printer::new(driver, Protocol::default(), None);
 
     printer.init()?;
@@ -137,7 +134,7 @@ pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
     Ok(())
 }
 
-fn print_summary_datetime(printer: &mut Printer<FileDriver>) -> Result<()> {
+fn print_summary_datetime(printer: &mut Printer<NativeUsbDriver>) -> Result<()> {
     let now = Local::now();
     let datetime_str = now.format("%a %d-%b-%Y").to_string();
     printer
@@ -148,7 +145,7 @@ fn print_summary_datetime(printer: &mut Printer<FileDriver>) -> Result<()> {
     Ok(())
 }
 
-fn print_summary_tasks(printer: &mut Printer<FileDriver>, tasks: &[Task]) -> Result<()> {
+fn print_summary_tasks(printer: &mut Printer<NativeUsbDriver>, tasks: &[Task]) -> Result<()> {
     printer.justify(JustifyMode::CENTER)?
         .reset_size()?;
     if tasks.is_empty() {
@@ -161,7 +158,7 @@ fn print_summary_tasks(printer: &mut Printer<FileDriver>, tasks: &[Task]) -> Res
     Ok(())
 }
 
-fn print_header(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<()> {
+fn print_header(printer: &mut Printer<NativeUsbDriver>, print_type: &str) -> Result<()> {
     printer.justify(JustifyMode::CENTER)?
         .feeds(2)?
         .size(2,2)?
@@ -170,7 +167,7 @@ fn print_header(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<(
     Ok(())
 }
 
-fn print_footer(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<()> {
+fn print_footer(printer: &mut Printer<NativeUsbDriver>, print_type: &str) -> Result<()> {
     printer.justify(JustifyMode::CENTER)?
         .feed()?
         .size(2,2)?
@@ -218,18 +215,24 @@ mod tests {
     #[test]
     fn test_print_task_example() -> Result<()> {
         let _guard = test_mutex().lock().unwrap();
-        // This test generates an output file `test_print_output.bin` with ESC/POS commands.
-        // You can send this file to a compatible thermal printer to see the output, e.g.,
-        // on Linux/macOS: `lp test_print_output.bin`
-        // Or `cat test_print_output.bin > /dev/usb/lp0`
+        // This test will attempt to print to a USB device specified by PRINTER_VID and PRINTER_PID.
+        // Ensure these environment variables are set before running the test.
+
+        let vid_str = env::var("PRINTER_VID")
+            .context("PRINTER_VID environment variable not set for test")?;
+        let pid_str = env::var("PRINTER_PID")
+            .context("PRINTER_PID environment variable not set for test")?;
+        let vid = u16::from_str_radix(vid_str.trim_start_matches("0x"), 16)
+            .context("Failed to parse PRINTER_VID as a hexadecimal value")?;
+        let pid = u16::from_str_radix(pid_str.trim_start_matches("0x"), 16)
+            .context("Failed to parse PRINTER_PID as a hexadecimal value")?;
 
         let task = create_test_task();
-        let output_file = "/dev/usb/lp0";
 
         // Set required environment variables for the test
         env::set_var("BASE_URL", "http://example.com");
 
-        let result = print_task(&task, output_file);
+        let result = print_task(&task, vid, pid);
 
         // Clean up env var
         env::remove_var("BASE_URL");
@@ -242,6 +245,16 @@ mod tests {
     #[test]
     fn test_print_daily_summary_example() -> Result<()> {
         let _guard = test_mutex().lock().unwrap();
+
+        let vid_str = env::var("PRINTER_VID")
+            .context("PRINTER_VID environment variable not set for test")?;
+        let pid_str = env::var("PRINTER_PID")
+            .context("PRINTER_PID environment variable not set for test")?;
+        let vid = u16::from_str_radix(vid_str.trim_start_matches("0x"), 16)
+            .context("Failed to parse PRINTER_VID as a hexadecimal value")?;
+        let pid = u16::from_str_radix(pid_str.trim_start_matches("0x"), 16)
+            .context("Failed to parse PRINTER_PID as a hexadecimal value")?;
+
         let tasks = vec![
             create_test_task(),
             Task {
@@ -256,9 +269,8 @@ mod tests {
                 reminders: None,
             },
         ];
-        let output_file = "/dev/usb/lp0";
 
-        let result = print_daily_summary(&tasks, output_file);
+        let result = print_daily_summary(&tasks, vid, pid);
 
         assert!(result.is_ok());
         Ok(())

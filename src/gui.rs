@@ -14,10 +14,10 @@ use ratatui::{
 };
 use std::io::stdout;
 
-pub fn tui(tasks: Vec<Task>, printer_device: String) -> Result<()> {
+pub fn tui(tasks: Vec<Task>, printer_vid: u16, printer_pid: u16) -> Result<()> {
     stdout().execute(EnableMouseCapture)?;
     let terminal = ratatui::init();
-    let app_result = App::new(tasks, printer_device).run(terminal);
+    let app_result = App::new(tasks, printer_vid, printer_pid).run(terminal);
     ratatui::restore();
     stdout().execute(DisableMouseCapture)?;
     app_result
@@ -27,11 +27,12 @@ struct App {
     exit: bool,
     tasks: Vec<Task>,
     state: ListState,
-    printer_device: String,
+    printer_vid: u16,
+    printer_pid: u16,
 }
 
 impl App {
-    fn new(tasks: Vec<Task>, printer_device: String) -> Self {
+    fn new(tasks: Vec<Task>, printer_vid: u16, printer_pid: u16) -> Self {
         let mut state = ListState::default();
         if !tasks.is_empty() {
             state.select(Some(0));
@@ -40,7 +41,8 @@ impl App {
             exit: false,
             tasks,
             state,
-            printer_device,
+            printer_vid,
+            printer_pid,
         }
     }
 
@@ -98,7 +100,7 @@ impl App {
     fn print_selected_task(&self) {
         if let Some(selected) = self.state.selected() {
             if let Some(task) = self.tasks.get(selected) {
-                if let Err(e) = escpos::print_task(task, &self.printer_device) {
+                if let Err(e) = escpos::print_task(task, self.printer_vid, self.printer_pid) {
                     // In a real app, you might want to display this error in the TUI
                     eprintln!("Failed to print task: {}", e);
                 }

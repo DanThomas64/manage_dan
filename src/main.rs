@@ -14,8 +14,14 @@ async fn main() -> Result<()> {
     dotenv().ok();
 
     let api_base_url = env::var("API_URL").context("API_URL environment variable not set")?;
-    let printer_device =
-        env::var("PRINTER_DEVICE").context("PRINTER_DEVICE environment variable not set")?;
+    let printer_vid_str =
+        env::var("PRINTER_VID").context("PRINTER_VID environment variable not set")?;
+    let printer_pid_str =
+        env::var("PRINTER_PID").context("PRINTER_PID environment variable not set")?;
+    let printer_vid = u16::from_str_radix(printer_vid_str.trim_start_matches("0x"), 16)
+        .context("Failed to parse PRINTER_VID as a hexadecimal value")?;
+    let printer_pid = u16::from_str_radix(printer_pid_str.trim_start_matches("0x"), 16)
+        .context("Failed to parse PRINTER_PID as a hexadecimal value")?;
     let db_path = env::var("DATABASE_PATH").unwrap_or_else(|_| "tasks.db".to_string());
 
 
@@ -94,7 +100,9 @@ async fn main() -> Result<()> {
                 .collect();
 
             if !daily_tasks.is_empty() {
-                if let Err(e) = escpos::print_daily_summary(&daily_tasks, &printer_device) {
+                if let Err(e) =
+                    escpos::print_daily_summary(&daily_tasks, printer_vid, printer_pid)
+                {
                     eprintln!("Failed to print daily summary: {}", e);
                 }
             }
@@ -122,7 +130,7 @@ async fn main() -> Result<()> {
                     "Found new or updated task, printing: \"{}\"",
                     task.title
                 );
-                match escpos::print_task(&task, &printer_device) {
+                match escpos::print_task(&task, printer_vid, printer_pid) {
                     Ok(_) => {
                         if let Err(e) = database::mark_as_printed(&conn, &task) {
                             eprintln!("Failed to mark task {} as printed: {}", task.id, e);
