@@ -145,6 +145,12 @@ mod tests {
     use super::*;
     use crate::datatypes::{Label, Task};
     use std::env;
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_mutex() -> &'static Mutex<()> {
+        static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        MUTEX.get_or_init(|| Mutex::new(()))
+    }
 
     fn create_test_task() -> Task {
         Task {
@@ -170,6 +176,7 @@ mod tests {
 
     #[test]
     fn test_print_task_example() -> Result<()> {
+        let _guard = test_mutex().lock().unwrap();
         // This test generates an output file `test_print_output.bin` with ESC/POS commands.
         // You can send this file to a compatible thermal printer to see the output, e.g.,
         // on Linux/macOS: `lp test_print_output.bin`
@@ -193,6 +200,7 @@ mod tests {
 
     #[test]
     fn test_print_daily_summary_example() -> Result<()> {
+        let _guard = test_mutex().lock().unwrap();
         let tasks = vec![
             create_test_task(),
             Task {
