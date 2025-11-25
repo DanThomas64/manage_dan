@@ -14,6 +14,8 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
     let mut printer = Printer::new(driver, Protocol::default(), None);
 
     let line = LineBuilder::new().style(LineStyle::Custom("=-")).build();
+    let base_api_url = env::var("API_URL").context("API_URL environment variable not set")?;
+    let task_api_url = format!("{base_api_url}/tasks/{}", task.id);
     let base_url = env::var("BASE_URL").context("API_URL environment variable not set")?;
     let task_url = format!("{base_url}/tasks/{}", task.id);
 
@@ -61,14 +63,6 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
     }
 
     printer.feed()?;
-    let done_url = format!("{base_url}/tasks/{}/done", task.id);
-    printer.justify(JustifyMode::CENTER)?
-        .writeln("Mark as done:")?
-        .qrcode_option(
-                done_url.as_str(),
-                QRCodeOption::new(QRCodeModel::Model1, 6, QRCodeCorrectionLevel::M),
-        )?;
-
     print_footer(&mut printer, "--- End Task ---")?;
     printer.print_cut()?;
     Ok(())
