@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Datelike, Local, Utc};
 use dotenv::dotenv;
 use std::env;
 use tokio::time::{sleep, Duration};
@@ -33,6 +33,8 @@ async fn main() -> Result<()> {
         .json()
         .await
         .context("Failed to parse auth token from response")?;
+
+    let mut last_summary_print_date = Local::now().date_naive().pred_opt().unwrap();
 
     loop {
         // Now that we have the token lets get some info from the api.
@@ -71,6 +73,36 @@ async fn main() -> Result<()> {
 
         let mut uncompleted_tasks: Vec<datatypes::Task> =
             tasks.into_iter().filter(|t| !t.done).collect();
+
+        let today = Local::now().date_naive();
+        if today > last_summary_print_date {
+            println!("Printing daily summary for {}", today);
+
+            let daily_tasks: Vec<datatypes::Task> = uncompleted_tasks
+                .iter()
+                .filter(|task| {
+                    let has_today_label = task.has_label("Today");
+                    let has_tomorrow_label = task.has_label("Tomorrow");
+
+                    let due_date = if let Ok(dt) = DateTime::parse_from_rfc3339(&task.due_date) {
+                        Some(dt.with_timezone(&Local).date_naive())
+                    } else {
+                        None
+                    };
+                    let is_due_today = due_date == Some(today);
+
+                    is_due_today || has_today_label || has_tomorrow_label
+                })
+                .cloned()
+                .collect();
+
+            if !daily_tasks.is_empty() {
+                if let Err(e) = escpos::print_daily_summary(&daily_tasks, &printer_device) {
+                    eprintln!("Failed to print daily summary: {}", e);
+                }
+            }
+            last_summary_print_date = today;
+        }
 
         if debug_mode {
             uncompleted_tasks.truncate(3);

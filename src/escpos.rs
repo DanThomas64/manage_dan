@@ -64,6 +64,28 @@ pub fn print_task(task: &Task, device_path: &str) -> Result<()> {
     printer.print_cut()?;
     Ok(())
 }
+
+pub fn print_daily_summary(tasks: &[Task], device_path: &str) -> Result<()> {
+    let path = Path::new(device_path);
+    let driver = FileDriver::open(path)?;
+    let mut printer = Printer::new(driver, Protocol::default(), None);
+
+    printer.init()?;
+    print_header(&mut printer, "--- Daily Summary ---")?;
+
+    if tasks.is_empty() {
+        printer.writeln("No tasks for today.")?;
+    } else {
+        for task in tasks {
+            printer.writeln(&format!("- {}", task.title))?.feed()?;
+        }
+    }
+
+    print_footer(&mut printer, "--- End Summary ---")?;
+    printer.print_cut()?;
+    Ok(())
+}
+
 fn print_header(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<()> {
 
 

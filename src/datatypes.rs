@@ -134,4 +134,12 @@ impl Task {
             false
         }
     }
+
+    pub fn has_label(&self, label_title: &str) -> bool {
+        if let Some(labels) = &self.labels {
+            labels.iter().any(|label| label.title == label_title)
+        } else {
+            false
+        }
+    }
 }
