@@ -8,7 +8,7 @@ use escpos::ui::line::*;
 use std::env;
 
 pub fn print_task(task: &Task, vid: u16, pid: u16) -> Result<()> {
-    let driver = NativeUsbDriver::open(vid, pid, None)?;
+    let driver = NativeUsbDriver::open(vid, pid)?;
     let mut printer = Printer::new(driver, Protocol::default(), None);
 
     printer.init()?;
@@ -122,7 +122,7 @@ fn print_task_printed_time(printer: &mut Printer<NativeUsbDriver>) -> Result<()>
 }
 
 pub fn print_daily_summary(tasks: &[Task], vid: u16, pid: u16) -> Result<()> {
-    let driver = NativeUsbDriver::open(vid, pid, None)?;
+    let driver = NativeUsbDriver::open(vid, pid)?;
     let mut printer = Printer::new(driver, Protocol::default(), None);
 
     printer.init()?;
