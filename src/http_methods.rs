@@ -28,7 +28,7 @@ pub async fn auth(url: String) -> Result<Response> {
     Ok(response)
 }
 
-pub async fn get_request(url: String, auth: Auth, json: Option<String>) -> Result<Response> {
+pub async fn get_request(url: String, auth: &Auth, json: Option<String>) -> Result<Response> {
     let client = reqwest::Client::new();
     let mut request_builder = client
         .get(url)
