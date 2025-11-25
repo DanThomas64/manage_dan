@@ -116,4 +116,22 @@ impl Task {
     pub fn description_as_text(&self, width: usize) -> String {
         html2text::from_read(self.description.as_bytes(), width)
     }
+
+    pub fn is_recurring(&self) -> bool {
+        const RECURRING_LABELS: &[&str] = &[
+            "Daily",
+            "Weekly",
+            "Monthly",
+            "Bi-Weekly",
+            "Quarterly",
+            "Yearly/Beyond",
+        ];
+        if let Some(labels) = &self.labels {
+            labels
+                .iter()
+                .any(|label| RECURRING_LABELS.contains(&label.title.as_str()))
+        } else {
+            false
+        }
+    }
 }

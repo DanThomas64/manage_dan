@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use chrono::{DateTime, Local, Utc};
 use dotenv::dotenv;
 use std::env;
 use tokio::time::{sleep, Duration};
@@ -76,6 +77,20 @@ async fn main() -> Result<()> {
         }
 
         for task in uncompleted_tasks {
+            if task.is_recurring() {
+                if let Ok(due_date) = DateTime::parse_from_rfc3339(&task.due_date) {
+                    let now = Utc::now();
+                    if due_date.with_timezone(&Utc) > now {
+                        println!(
+                            "Skipping recurring task for the future: \"{}\" (due: {})",
+                            task.title,
+                            due_date.with_timezone(&Local).format("%Y-%m-%d %H:%M")
+                        );
+                        continue;
+                    }
+                }
+            }
+
             if database::needs_printing(&conn, &task)? {
                 println!(
                     "Found new or updated task, printing: \"{}\"",
