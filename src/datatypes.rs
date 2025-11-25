@@ -10,6 +10,7 @@ pub struct RequestLogin {
 }
 
 #[derive(Deserialize, Serialize, Debug)]
+#[allow(dead_code)]
 pub struct RequestAllProjects {
     pub page: u8,
     pub per_page: u8,
@@ -23,6 +24,7 @@ pub struct Auth {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct User {
     pub id: i32,
     pub name: String,
@@ -30,12 +32,14 @@ pub struct User {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct Bucket {
     pub filter: String,
     pub title: String,
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct View {
     pub bucket_configuration: Option<Vec<Bucket>>,
     pub bucket_configuration_mode: String,
@@ -52,6 +56,7 @@ pub struct View {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct Subscription {
     pub created: String,
     pub entity: u32,
@@ -60,6 +65,7 @@ pub struct Subscription {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 pub struct Project {
     pub background_blur_hash: String,
     pub background_information: Option<String>,
@@ -88,6 +94,7 @@ pub struct RequestAllTasks {
 }
 
 #[derive(Serialize, Debug)]
+#[allow(dead_code)]
 pub struct UpdateTask {
     pub done: bool,
 }
@@ -98,6 +105,7 @@ pub struct Label {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[allow(dead_code)]
 pub struct ReminderConfig {
     pub relative_period: u8,
     pub relative_to: String,
@@ -105,6 +113,7 @@ pub struct ReminderConfig {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[allow(dead_code)]
 pub struct Task {
     pub id: i32,
     pub title: String,

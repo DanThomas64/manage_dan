@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Datelike, Local, Utc};
+use chrono::{DateTime, Local, Utc};
 use dotenv::dotenv;
 use std::env;
 use tokio::time::{sleep, Duration};
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
             }
         };
 
-        let mut uncompleted_tasks: Vec<datatypes::Task> =
+        let uncompleted_tasks: Vec<datatypes::Task> =
             tasks.into_iter().filter(|t| !t.done).collect();
 
         let today = Local::now().date_naive();

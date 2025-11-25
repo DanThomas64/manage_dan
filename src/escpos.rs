@@ -145,6 +145,7 @@ mod tests {
     use super::*;
     use crate::datatypes::{Label, Task};
     use std::env;
+    use std::fs;
 
     fn create_test_task() -> Task {
         Task {
@@ -176,7 +177,7 @@ mod tests {
         // Or `cat test_print_output.bin > /dev/usb/lp0`
 
         let task = create_test_task();
-        let output_file = "/dev/usb/lp0";
+        let output_file = "test_print_output.bin";
 
         // Set required environment variables for the test
         env::set_var("BASE_URL", "http://example.com");
@@ -187,6 +188,13 @@ mod tests {
         env::remove_var("BASE_URL");
 
         assert!(result.is_ok());
+
+        // Check that the file was created and is not empty
+        let metadata = fs::metadata(output_file)?;
+        assert!(metadata.len() > 0);
+
+        // Optional: clean up the file after test
+        fs::remove_file(output_file)?;
 
         Ok(())
     }
@@ -207,11 +215,18 @@ mod tests {
                 reminders: None,
             },
         ];
-        let output_file = "/dev/usb/lp0";
+        let output_file = "test_summary_output.bin";
 
         let result = print_daily_summary(&tasks, output_file);
 
         assert!(result.is_ok());
+
+        // Check that the file was created and is not empty
+        let metadata = fs::metadata(output_file)?;
+        assert!(metadata.len() > 0);
+
+        // Optional: clean up the file after test
+        fs::remove_file(output_file)?;
 
         Ok(())
     }

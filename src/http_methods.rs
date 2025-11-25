@@ -44,6 +44,7 @@ pub async fn get_request(url: String, auth: &Auth, json: Option<String>) -> Resu
     Ok(response)
 }
 
+#[allow(dead_code)]
 pub async fn post_request(url: String, auth: &Auth, json_body: String) -> Result<Response> {
     let client = reqwest::Client::new();
     let response = client
