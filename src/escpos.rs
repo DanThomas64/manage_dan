@@ -135,3 +135,63 @@ fn print_footer(printer: &mut Printer<FileDriver>, print_type: &str) -> Result<(
         .feeds(6)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::datatypes::{Label, Task};
+    use std::env;
+    use std::fs;
+
+    fn create_test_task() -> Task {
+        Task {
+            id: 123,
+            title: "Test Print Task".to_string(),
+            description: "This is a <b>test</b> description for the <i>print function</i>."
+                .to_string(),
+            updated: "2025-11-24T10:00:00Z".to_string(),
+            done: false,
+            labels: Some(vec![
+                Label {
+                    title: "Urgent".to_string(),
+                },
+                Label {
+                    title: "Test".to_string(),
+                },
+            ]),
+            project_id: 1,
+            due_date: "2025-11-25T18:00:00Z".to_string(),
+            reminders: None,
+        }
+    }
+
+    #[test]
+    fn test_print_task_example() -> Result<()> {
+        // This test generates an output file `test_print_output.bin` with ESC/POS commands.
+        // You can send this file to a compatible thermal printer to see the output, e.g.,
+        // on Linux/macOS: `lp test_print_output.bin`
+        // Or `cat test_print_output.bin > /dev/usb/lp0`
+
+        let task = create_test_task();
+        let output_file = "test_print_output.bin";
+
+        // Set required environment variables for the test
+        env::set_var("BASE_URL", "http://example.com");
+
+        let result = print_task(&task, output_file);
+
+        // Clean up env var
+        env::remove_var("BASE_URL");
+
+        assert!(result.is_ok());
+
+        // Check that the file was created and is not empty
+        let metadata = fs::metadata(output_file)?;
+        assert!(metadata.len() > 0);
+
+        // Optional: clean up the file after test
+        // fs::remove_file(output_file)?;
+
+        Ok(())
+    }
+}

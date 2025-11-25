@@ -148,3 +148,87 @@ impl Task {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_task(id: i32, labels: Option<Vec<Label>>) -> Task {
+        Task {
+            id,
+            title: "Test Task".to_string(),
+            description: "Test Description".to_string(),
+            updated: "2025-01-01T12:00:00Z".to_string(),
+            done: false,
+            labels,
+            project_id: 1,
+            due_date: "2025-01-02T12:00:00Z".to_string(),
+            reminders: None,
+        }
+    }
+
+    #[test]
+    fn test_is_recurring() {
+        let recurring_labels = vec![
+            Label {
+                title: "Daily".to_string(),
+            },
+            Label {
+                title: "Weekly".to_string(),
+            },
+            Label {
+                title: "Monthly".to_string(),
+            },
+            Label {
+                title: "Bi-Weekly".to_string(),
+            },
+            Label {
+                title: "Quarterly".to_string(),
+            },
+            Label {
+                title: "Yearly/Beyond".to_string(),
+            },
+        ];
+
+        for label in recurring_labels {
+            let task = create_test_task(1, Some(vec![label]));
+            assert!(task.is_recurring());
+        }
+
+        let non_recurring_task =
+            create_test_task(2, Some(vec![Label {
+                title: "Urgent".to_string(),
+            }]));
+        assert!(!non_recurring_task.is_recurring());
+
+        let task_no_labels = create_test_task(3, None);
+        assert!(!task_no_labels.is_recurring());
+    }
+
+    #[test]
+    fn test_has_label() {
+        let task_with_label = create_test_task(1, Some(vec![Label {
+            title: "Today".to_string(),
+        }]));
+        assert!(task_with_label.has_label("Today"));
+        assert!(!task_with_label.has_label("Tomorrow"));
+
+        let task_with_multiple_labels = create_test_task(
+            2,
+            Some(vec![
+                Label {
+                    title: "Today".to_string(),
+                },
+                Label {
+                    title: "Urgent".to_string(),
+                },
+            ]),
+        );
+        assert!(task_with_multiple_labels.has_label("Today"));
+        assert!(task_with_multiple_labels.has_label("Urgent"));
+        assert!(!task_with_multiple_labels.has_label("Weekly"));
+
+        let task_no_labels = create_test_task(3, None);
+        assert!(!task_no_labels.has_label("Today"));
+    }
+}

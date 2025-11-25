@@ -40,3 +40,50 @@ pub fn mark_as_printed(conn: &Connection, task: &Task) -> Result<()> {
     )?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::datatypes::{Label, Task};
+
+    fn create_test_task(id: i32, updated: &str) -> Task {
+        Task {
+            id,
+            title: "Test Task".to_string(),
+            description: "Test Description".to_string(),
+            updated: updated.to_string(),
+            done: false,
+            labels: Some(vec![Label {
+                title: "Test".to_string(),
+            }]),
+            project_id: 1,
+            due_date: "2025-01-02T12:00:00Z".to_string(),
+            reminders: None,
+        }
+    }
+
+    #[test]
+    fn test_database_logic() -> Result<()> {
+        let conn = init_db(":memory:")?;
+
+        // 1. New task should need printing
+        let task_v1 = create_test_task(1, "2025-01-01T12:00:00Z");
+        assert!(needs_printing(&conn, &task_v1)?);
+
+        // 2. Mark as printed
+        mark_as_printed(&conn, &task_v1)?;
+
+        // 3. Same task should not need printing again
+        assert!(!needs_printing(&conn, &task_v1)?);
+
+        // 4. An updated task should need printing
+        let task_v2 = create_test_task(1, "2025-01-01T13:00:00Z");
+        assert!(needs_printing(&conn, &task_v2)?);
+
+        // 5. Mark updated task as printed
+        mark_as_printed(&conn, &task_v2)?;
+        assert!(!needs_printing(&conn, &task_v2)?);
+
+        Ok(())
+    }
+}
