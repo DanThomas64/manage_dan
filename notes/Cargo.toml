@@ -10,5 +10,4 @@ anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 project = { version = "0.1.0", path = "../project" }
-tasks = { version = "0.1.0", path = "../tasks" }
 todo = { version = "0.1.0", path = "../todo" }

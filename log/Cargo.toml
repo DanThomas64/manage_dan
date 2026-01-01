@@ -13,3 +13,4 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt", "jso
 tracing-appender = "0.2.3"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 db = { path = "../db" }
+once_cell = "1.19" # Added dependency

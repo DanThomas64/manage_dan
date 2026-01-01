@@ -1,12 +1,2 @@
-use crate::todo_prelude::*;
-
-pub type TodoLibResult<T = ()> = Result<T, TodoLibError>;
-
-#[derive(Error, Debug)]
-pub enum TodoLibError {
-    #[error("unable to initialize todo system: {0}")]
-    CannotInitialize(String),
-
-    #[error("unknown project error")]
-    Unknown,
-}
+// TodoLibError definition moved to db/src/todo_error.rs to break cyclic dependency.
+// The todo crate should now re-export TodoLibError from db.

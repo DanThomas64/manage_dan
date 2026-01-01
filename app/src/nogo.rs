@@ -1,7 +1,9 @@
 use crate::prelude::*;
+use tokio::time::{sleep, Duration};
+use serde::{Serialize, Deserialize}; // Added serde imports
 
 /// The status enum is used to store the possible status of a system
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)] // Added Serialize/Deserialize
 pub enum Status {
     Init,
     Go,
@@ -11,7 +13,7 @@ pub enum Status {
 }
 
 /// The actual store of the status of each system and the oversall status
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)] // Added Serialize/Deserialize
 pub struct SystemsStatus {
     pub db: Status,
     pub log: Status,
@@ -21,7 +23,7 @@ pub struct SystemsStatus {
     pub todo: Status,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)] // Added Serialize/Deserialize
 pub struct SystemsGoNogo {
     pub gono: Status,
 }
@@ -29,22 +31,26 @@ impl SystemsGoNogo {
     pub fn new() -> SystemsGoNogo {
         SystemsGoNogo { gono: Status::Init }
     }
-    // TODO: Create Error handling for this
-    pub async fn init(&mut self, systems: SystemsStatus) {
-        // Calculate initial status based on system initialization results
+    
+    /// Calculates the initial overall status based on system initialization results.
+    pub fn calculate_initial_status(&mut self, systems: SystemsStatus) {
         *self = self.gonogo(systems);
-        
-        // Log initial state
         info!("Overall Status initialized: {:?}", self.gono);
-        
-        // Start monitoring loop
-        let _ = self.monitor(systems).await;
     }
+
+    /// Starts the monitoring loop in a background task.
+    pub fn start_monitoring(self, systems: SystemsStatus) {
+        // Spawn the monitoring loop and do NOT await it.
+        tokio::spawn(async move {
+            let _ = self.monitor(systems).await;
+        });
+    }
+
     /// Check the status of each system in the Status Struct and then update
     /// the overall status accordingly.
     // TODO: Create Error handling for this
     pub fn gonogo(&mut self, all_sys: SystemsStatus) -> SystemsGoNogo {
-        all_sys.iter().fold(self.gono, |status: Status, x: Status| {
+        all_sys.iter().fold(self.gono, |status: Status, (_, x): (&'static str, Status)| {
             let n_status: Status = match status {
                 Status::Init => match x {
                     Status::Go => Status::Go,
@@ -69,30 +75,27 @@ impl SystemsGoNogo {
         });
         *self
     }
-    /// A monitoring process to make check the GoNogo Struct
+    
+    /// The actual monitoring process loop.
     pub async fn monitor(
         mut self,
         systems: SystemsStatus,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // TODO: Create Error handling for this
-        let _ = tokio::spawn(async move {
-            loop {
-                let _ = sleep(Duration::from_millis(500)).await;
-                
-                // Capture status before update
-                let old_status = self.gono;
-                
-                // Update status
-                let _ = self.gonogo(systems);
-                
-                if self.gono != old_status {
-                    // Log only if status has changed
-                    info!("Overall Status changed: {:?}", self.gono);
-                }
+        loop {
+            sleep(Duration::from_millis(500)).await;
+            
+            // Capture status before update
+            let old_status = self.gono;
+            
+            // Update status
+            let _ = self.gonogo(systems);
+            
+            if self.gono != old_status {
+                // Log only if status has changed
+                info!("Overall Status changed: {:?}", self.gono);
             }
-        })
-        .await;
-        Ok(())
+        }
     }
 }
 
@@ -157,7 +160,7 @@ impl SystemsStatus {
         };
         *self
     }
-    fn iter(&self) -> SystemsIter {
+    pub fn iter(&self) -> SystemsIter {
         SystemsIter {
             systems: *self,
             index: 0,
@@ -178,22 +181,22 @@ impl SystemsStatus {
     }
 }
 
-struct SystemsIter {
+pub struct SystemsIter {
     systems: SystemsStatus,
     index: usize,
 }
 
 impl Iterator for SystemsIter {
-    type Item = Status;
+    type Item = (&'static str, Status);
 
     fn next(&mut self) -> Option<Self::Item> {
         let result = match self.index {
-            0 => Some(self.systems.db),
-            1 => Some(self.systems.log),
-            2 => Some(self.systems.notes),
-            3 => Some(self.systems.project),
-            4 => Some(self.systems.printer),
-            5 => Some(self.systems.todo),
+            0 => Some(("db", self.systems.db)),
+            1 => Some(("log", self.systems.log)),
+            2 => Some(("notes", self.systems.notes)),
+            3 => Some(("project", self.systems.project)),
+            4 => Some(("printer", self.systems.printer)),
+            5 => Some(("todo", self.systems.todo)),
             _ => None,
         };
         self.index += 1;

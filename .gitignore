@@ -1,1 +1,7 @@
 /target
+.aider*
+.termdbms/.2186236571916154720
+app.log
+app.sqlite
+.termdbms
+.termdbms/.3101056271404904488

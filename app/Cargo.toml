@@ -19,3 +19,5 @@ chrono.workspace = true
 tokio.workspace = true
 serde = { workspace = true }
 config = { workspace = true }
+# HTTP Server Dependency
+warp = "0.3"

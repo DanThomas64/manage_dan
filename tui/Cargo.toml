@@ -1,0 +1,22 @@
+[package]
+name = "tui"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] } # Added features for TUI runtime
+serde = { workspace = true, features = ["derive"] }
+chrono = { workspace = true } # Added chrono dependency
+
+# TUI Dependencies
+ratatui = "0.27"
+crossterm = "0.27"
+
+# HTTP Client
+# Ensure reqwest uses a TLS backend (like rustls) for robust networking,
+# and relies on tokio for async runtime integration.
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }

@@ -2,11 +2,26 @@ use db::log_event;
 use tracing::{
     field::{Field, Visit},
     Event, Subscriber,
+    Level, // Explicitly import Level for clarity in filtering
 };
 use tracing_subscriber::{
     layer::{Context, Layer},
     registry::LookupSpan,
 };
+use tokio::runtime::Handle;
+use once_cell::sync::OnceCell;
+use anyhow::Result;
+
+/// Global storage for the Tokio runtime handle.
+static RUNTIME_HANDLE: OnceCell<Handle> = OnceCell::new();
+
+/// Initializes the global runtime handle for use by the DbLayer.
+/// This must be called once during application startup.
+pub fn init_runtime_handle(handle: Handle) -> Result<()> {
+    RUNTIME_HANDLE
+        .set(handle)
+        .map_err(|_| anyhow::anyhow!("Tokio runtime handle already initialized"))
+}
 
 /// A custom visitor to extract message from tracing events.
 struct LogVisitor {
@@ -36,8 +51,14 @@ where
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         // Only log INFO level and above to the database (Application wide significant events)
-        if event.metadata().level() < &tracing::Level::INFO {
-            return;
+        match event.metadata().level() {
+            &Level::INFO | &Level::WARN | &Level::ERROR => {
+                // Proceed with logging
+            }
+            _ => {
+                // Filter out TRACE, DEBUG, and potentially custom levels lower than INFO
+                return;
+            }
         }
 
         let mut visitor = LogVisitor::new();
@@ -47,16 +68,19 @@ where
         let target = event.metadata().target().to_string();
         let message = visitor.message.unwrap_or_else(|| "No message".to_string());
 
-        // We need to spawn an async task to handle the DB insertion
-        // Since this is running inside a tracing subscriber hook, we must ensure
-        // we have a runtime available. `tokio::spawn` is appropriate here.
-        tokio::spawn(async move {
-            if let Err(e) = log_event(&level, &target, &message).await {
-                // If DB logging fails, we should log this failure somewhere else,
-                // but since we are inside the logging system, we'll just print to stderr
-                // or use a standard library print for safety.
-                eprintln!("Failed to log event to database: {:?}", e);
-            }
-        });
+        // FIX: Retrieve the globally stored runtime handle.
+        if let Some(handle) = RUNTIME_HANDLE.get() {
+            handle.spawn(async move {
+                if let Err(e) = log_event(&level, &target, &message).await {
+                    // If DB logging fails, we should log this failure somewhere else,
+                    // but since we are inside the logging system, we'll just print to stderr
+                    // or use a standard library print for safety.
+                    eprintln!("Failed to log event to database: {:?}", e);
+                }
+            });
+        } else {
+            // If we cannot get the runtime handle (because init_runtime_handle wasn't called), we cannot log to DB.
+            eprintln!("Warning: Failed to spawn DB logging task (Tokio runtime handle not initialized). Event: {}/{}: {}", level, target, message);
+        }
     }
 }
