@@ -11,3 +11,4 @@ thiserror.workspace = true
 tracing.workspace = true
 db = { path = "../db" }
 printer = { path = "../printer" }
+serde = { workspace = true, features = ["derive"] } # ADDED

@@ -1,16 +1,22 @@
+//! Database access layer for the application.
+//!
+//! This crate manages the SQLite database connection, schema initialization,
+//! and provides asynchronous wrappers for CRUD operations, primarily focusing on
+//! the `todo` table and application logging.
+
 pub mod db_error;
 pub mod db_prelude;
 pub mod models; // New module for TodoItem
 pub mod todo_error; // New module for TodoLibError
 
-use crate::db_error::DbLibResult;
+use crate::db_error::{DbLibError, DbLibResult};
 use crate::db_prelude::*;
-use crate::models::TodoItem; // Import TodoItem from local module
+use crate::models::{TodoItem, LogEntry}; // Import LogEntry here
 use crate::todo_error::{TodoLibError, TodoLibResult}; // Import Todo types from local module
 use rusqlite::params;
-use tokio_rusqlite::{Connection, Error as TokioSqliteError};
+use tokio_rusqlite::{Connection};
 use rusqlite::{Result as RusqliteResult, Row};
-use chrono::{DateTime, Local, TimeZone}; // Import chrono types
+use chrono::{DateTime, Local}; // Removed TimeZone
 
 // Define DB file location (assuming it's a constant used internally)
 const DB_FILE: &str = "app.sqlite";
@@ -38,8 +44,18 @@ fn row_to_todo_item(row: &Row) -> RusqliteResult<TodoItem> {
     // Read subtasks (Index 8)
     let subtasks: Option<String> = row.get(8)?;
     
-    // NEW: Read archived (Index 9)
+    // Read archived (Index 9)
     let archived: bool = row.get(9)?;
+
+    // NEW: Read due_date (Index 10)
+    let due_date_str: Option<String> = row.get(10)?;
+    let due_date = due_date_str
+        .map(parse_datetime)
+        .transpose()?;
+
+    // NEW: Read priority (Index 11)
+    let priority: u8 = row.get(11)?;
+
 
     Ok(TodoItem {
         id: row.get(0)?,
@@ -51,7 +67,26 @@ fn row_to_todo_item(row: &Row) -> RusqliteResult<TodoItem> {
         completed_at,
         printed_at,
         subtasks,
-        archived, // NEW
+        archived,
+        due_date, // NEW
+        priority, // NEW
+    })
+}
+
+/// Helper function to convert a database row into a LogEntry.
+fn row_to_log_entry(row: &rusqlite::Row) -> RusqliteResult<LogEntry> {
+    let parse_datetime = |s: String| {
+        DateTime::parse_from_rfc3339(&s)
+            .map(|dt| dt.with_timezone(&Local))
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+    };
+
+    Ok(LogEntry {
+        id: row.get(0)?,
+        timestamp: row.get::<_, String>(1).and_then(parse_datetime)?,
+        level: row.get(2)?,
+        target: row.get(3)?,
+        message: row.get(4)?,
     })
 }
 
@@ -87,7 +122,9 @@ pub fn init() -> DbLibResult {
             updated_at TEXT NOT NULL,
             printed_at TEXT,
             subtasks TEXT,
-            archived INTEGER NOT NULL DEFAULT 0
+            archived INTEGER NOT NULL DEFAULT 0,
+            due_date TEXT,
+            priority INTEGER NOT NULL DEFAULT 0
         )",
         [],
     )?;
@@ -100,6 +137,12 @@ pub fn init() -> DbLibResult {
 
     // 2d. Simple migration: Add archived column if it doesn't exist.
     let _ = conn.execute("ALTER TABLE todo ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", []);
+
+    // 2e. Simple migration: Add due_date column if it doesn't exist.
+    let _ = conn.execute("ALTER TABLE todo ADD COLUMN due_date TEXT", []);
+
+    // 2f. Simple migration: Add priority column if it doesn't exist.
+    let _ = conn.execute("ALTER TABLE todo ADD COLUMN priority INTEGER NOT NULL DEFAULT 0", []);
 
     Ok(())
 }
@@ -139,6 +182,19 @@ where
     conn.call(f).await.map_err(|e| e.into())
 }
 
+/// Reads the latest log entries from the database, up to `limit`.
+pub async fn log_read_latest(limit: u32) -> DbLibResult<Vec<LogEntry>> {
+    execute_async(move |conn: &mut rusqlite::Connection| {
+        let query = "SELECT id, timestamp, level, target, message FROM log ORDER BY id DESC LIMIT ?1";
+        
+        let mut stmt = conn.prepare(query)?;
+        let log_iter = stmt.query_map(params![limit], row_to_log_entry)?;
+        
+        let logs: RusqliteResult<Vec<LogEntry>> = log_iter.collect();
+        logs
+    }).await.map_err(|e| DbLibError::Internal(format!("DB error during log read: {}", e)))
+}
+
 // --- Todo CRUD Logic (Moved from todo/src/lib.rs) ---
 
 /// Creates a new TodoItem in the database. Returns the inserted item with its ID.
@@ -147,8 +203,8 @@ pub async fn todo_create(item: TodoItem) -> TodoLibResult<TodoItem> {
     
     execute_async(move |conn: &mut rusqlite::Connection| {
         conn.execute(
-            "INSERT INTO todo (title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO todo (title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 item.title, 
                 item.description, 
@@ -158,13 +214,15 @@ pub async fn todo_create(item: TodoItem) -> TodoLibResult<TodoItem> {
                 now, // updated_at
                 item.printed_at.map(|dt| dt.to_rfc3339()), // printed_at
                 item.subtasks, 
-                item.archived, // NEW
+                item.archived, 
+                item.due_date.map(|dt| dt.to_rfc3339()), // NEW
+                item.priority, // NEW
             ],
         )?;
         let id = conn.last_insert_rowid();
         
-        // Retrieve the newly inserted item (must select 10 columns now)
-        let mut stmt = conn.prepare("SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived FROM todo WHERE id = ?1")?;
+        // Retrieve the newly inserted item (must select 12 columns now)
+        let mut stmt = conn.prepare("SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority FROM todo WHERE id = ?1")?;
         let new_item = stmt.query_row(params![id], row_to_todo_item)?;
         
         Ok(new_item)
@@ -174,8 +232,8 @@ pub async fn todo_create(item: TodoItem) -> TodoLibResult<TodoItem> {
 /// Reads a single TodoItem by ID.
 pub async fn todo_read_one(id: i64) -> TodoLibResult<TodoItem> {
     execute_async(move |conn: &mut rusqlite::Connection| {
-        // Must select 10 columns now
-        let mut stmt = conn.prepare("SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived FROM todo WHERE id = ?1")?;
+        // Must select 12 columns now
+        let mut stmt = conn.prepare("SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority FROM todo WHERE id = ?1")?;
         let item = stmt.query_row(params![id], row_to_todo_item)?;
         Ok(item)
     }).await.map_err(|e| TodoLibError::CannotInitialize(format!("DB error during read: {}", e)))
@@ -186,9 +244,9 @@ pub async fn todo_read_one(id: i64) -> TodoLibResult<TodoItem> {
 pub async fn todo_read_all(include_archived: bool) -> TodoLibResult<Vec<TodoItem>> {
     execute_async(move |conn: &mut rusqlite::Connection| {
         let query = if include_archived {
-            "SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived FROM todo ORDER BY id ASC"
+            "SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority FROM todo ORDER BY id ASC"
         } else {
-            "SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived FROM todo WHERE archived = 0 ORDER BY id ASC"
+            "SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority FROM todo WHERE archived = 0 ORDER BY id ASC"
         };
         
         let mut stmt = conn.prepare(query)?;
@@ -224,8 +282,10 @@ pub async fn todo_update(item: TodoItem) -> TodoLibResult {
                 updated_at = ?5,
                 printed_at = ?6,
                 subtasks = ?7,
-                archived = ?8
-             WHERE id = ?9",
+                archived = ?8,
+                due_date = ?9,
+                priority = ?10
+             WHERE id = ?11",
             params![
                 item.title, 
                 item.description, 
@@ -234,8 +294,10 @@ pub async fn todo_update(item: TodoItem) -> TodoLibResult {
                 now, // updated_at ?5 (DB sets this explicitly)
                 item.printed_at.map(|dt| dt.to_rfc3339()), // printed_at ?6
                 item.subtasks, // ?7
-                item.archived, // NEW ?8
-                id // ?9
+                item.archived, // ?8
+                item.due_date.map(|dt| dt.to_rfc3339()), // NEW ?9
+                item.priority, // NEW ?10
+                id // ?11
             ],
         )?;
         if rows_affected == 0 {

@@ -1,4 +1,0 @@
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .style(Style::default().bg(Color::Black));

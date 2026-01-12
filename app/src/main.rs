@@ -1,4 +1,7 @@
-#![crate_name = "app"]
+//! The main application server executable.
+//!
+//! This application initializes all necessary subsystems (database, logging, printer, etc.),
+//! monitors their status, and starts the HTTP API server.
 
 use db;
 use log;
@@ -15,7 +18,6 @@ pub mod macros;
 pub mod nogo;
 pub mod prelude;
 pub mod api; // New API module
-// pub mod ui; // Removed TUI module
 mod test;
 
 use crate::prelude::*;
@@ -27,9 +29,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load()?;
     AppConfig::init(config)?;
 
-    // 3. initialize all systems
-    let systems = SystemsStatus::new().init();
+    // 2. Initialize all systems, including logging and database setup in the correct order.
+    let mut systems = SystemsStatus::new();
+    let systems = systems.init();
     
+    info!("Application starting up..."); // This log should now succeed if DB/Log initialization worked.
+
     // Setup monitoring and get final status
     let mut go_nogo = SystemsGoNogo::new();
     

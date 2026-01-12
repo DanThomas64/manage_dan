@@ -1,20 +1,23 @@
-use crate::api::{ApiClient, Status, StatusResponse, TodoItem};
+use crate::api::{ApiClient, Status, StatusResponse, TodoItem, LogEntry}; // Import LogEntry
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyModifiers},
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{disable_raw_mode, LeaveAlternateScreen},
     ExecutableCommand,
 };
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::{Line, Text},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap, Clear}, // Added Clear
+    text::Text,
+    widgets::{Block, Borders, ListState, Paragraph, Wrap, Clear},
     Terminal,
 };
 use std::{io::{self, stdout}, time::Duration};
-use chrono::{Local, DateTime}; // Import Local and DateTime for timestamp handling
+use chrono::{Local, NaiveDate, NaiveTime, Datelike, Duration as ChronoDuration, Months, Weekday}; // Expanded chrono imports for date manipulation
+use ratatui::text::Line;
+use ratatui::widgets::{List, ListItem};
+use crossterm::terminal::{enable_raw_mode, EnterAlternateScreen}; // Re-added necessary crossterm imports
 
 /// Represents the different screens/views the TUI can display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,7 +49,11 @@ pub enum InputMode {
 pub enum TodoInputFocus {
     Title,
     Description,
-    Subtasks, // NEW
+    Subtasks,
+    DueBy,          // NEW: Toggle Due Date/Time usage
+    CalendarDate,   // Focus on the calendar grid
+    CalendarTime,   // Focus on the time input buffer
+    Priority,
     Submit,
 }
 
@@ -56,6 +63,9 @@ pub struct App {
     pub api_client: ApiClient,
     pub status: Option<StatusResponse>,
     pub last_error: Option<String>,
+    
+    // Dashboard State
+    pub latest_logs: Vec<LogEntry>, // NEW: Store latest log entries
     
     // Todo State
     pub todo_items: Vec<TodoItem>,
@@ -68,17 +78,28 @@ pub struct App {
     pub editing_item_id: Option<i64>, // None for adding, Some(id) for editing
     pub title_buffer: String,
     pub description_buffer: String,
-    pub subtasks_buffer: String, // NEW
-    pub subtasks_scroll: u16, // NEW: Vertical scroll offset for subtasks input
+    pub subtasks_buffer: String,
+    pub subtasks_scroll: u16, // Vertical scroll offset for subtasks input
+
+    // NEW: Input buffers and toggles for new fields
+    pub due_by_toggle: bool, // NEW: Whether a due date/time is set/intended
+    pub calendar_date: NaiveDate, // Selected date in the picker
+    pub time_buffer: String, // Time input (HH:MM)
+    pub priority_buffer: String,
+
+    // Removed: pub todo_summary: Option<TodoSummary>,
 }
 
 impl App {
     pub fn new(api_client: ApiClient) -> Self {
+        let now = Local::now().date_naive();
+        
         App {
             current_screen: Screen::Dashboard,
             api_client,
             status: None,
             last_error: None,
+            latest_logs: Vec::new(), // Initialize logs
             todo_items: Vec::new(),
             todo_list_state: ListState::default(),
             todo_edit_mode: TodoEditMode::Normal,
@@ -88,13 +109,20 @@ impl App {
             editing_item_id: None,
             title_buffer: String::new(),
             description_buffer: String::new(),
-            subtasks_buffer: String::new(), // NEW
-            subtasks_scroll: 0, // NEW
+            subtasks_buffer: String::new(),
+            subtasks_scroll: 0,
+
+            due_by_toggle: false, // Default to no due date
+            calendar_date: now,
+            time_buffer: String::from("00:00"),
+            priority_buffer: String::new(),
+            // Removed: todo_summary: None,
         }
     }
 
-    /// Fetches the latest status from the main application server.
-    pub async fn update_status(&mut self) {
+    /// Fetches the latest system status and log entries.
+    pub async fn update_system_status_and_logs(&mut self) {
+        // 1. Fetch System Status
         match self.api_client.fetch_status().await {
             Ok(status) => {
                 self.status = Some(status);
@@ -104,13 +132,33 @@ impl App {
                 self.last_error = Some(format!("API Error: {}", e));
             }
         }
+        
+        // 2. Fetch Latest Logs (Limit to 10 for dashboard)
+        match self.api_client.fetch_logs(10).await {
+            Ok(logs) => {
+                self.latest_logs = logs;
+            }
+            Err(e) => {
+                // Log error but don't overwrite status error if it exists
+                if self.last_error.is_none() {
+                    self.last_error = Some(format!("Failed to fetch logs: {}", e));
+                }
+            }
+        }
+    }
+    
+    /// Fetches data specifically required for the dashboard (currently just todo items for panels).
+    pub async fn update_dashboard_data(&mut self) {
+        self.fetch_todos().await;
     }
     
     /// Fetches the latest todo items.
     pub async fn fetch_todos(&mut self) {
         match self.api_client.fetch_todos().await {
             Ok(items) => {
-                self.todo_items = items;
+                // Filter out archived items for display purposes
+                self.todo_items = items.into_iter().filter(|item| !item.archived).collect();
+                
                 if !self.todo_items.is_empty() {
                     // Ensure selection stays within bounds or defaults to 0
                     let current_selection = self.todo_list_state.selected().unwrap_or(0);
@@ -133,20 +181,76 @@ impl App {
     /// Handles input events specific to the current screen.
     pub async fn handle_input(&mut self, event: CEvent) {
         let previous_screen = self.current_screen;
+        let mut action_taken = false;
         
         match self.current_screen {
             Screen::Dashboard => {
                 if let CEvent::Key(key) = event {
                     self.handle_dashboard_input(key.code);
+                    action_taken = true; // Refresh status after any key press on dashboard
                 }
             }
-            Screen::Todo => self.handle_todo_input(event).await,
-            _ => {} // Implement specific screen handlers later
+            Screen::Todo => {
+                match self.todo_edit_mode {
+                    TodoEditMode::Normal => {
+                        if let CEvent::Key(key) = event {
+                            match key.code {
+                                KeyCode::Char('q') => self.current_screen = Screen::Dashboard,
+                                KeyCode::Char('r') => { self.fetch_todos().await; action_taken = true; }
+                                KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
+                                KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
+                                KeyCode::Char('c') => { self.toggle_completed().await; action_taken = true; }
+                                KeyCode::Char('a') => self.start_add_mode(),
+                                KeyCode::Char('e') => self.start_edit_mode(),
+                                KeyCode::Char('p') => { self.print_selected().await; action_taken = true; }
+                                KeyCode::Char('x') => { self.archive_selected().await; action_taken = true; }
+                                _ => {}
+                            }
+                        }
+                    }
+                    TodoEditMode::Adding | TodoEditMode::Editing => {
+                        // Handle input for floating form
+                        let previous_mode = self.todo_edit_mode;
+                        self.handle_todo_input_form(event).await;
+                        
+                        // If we exited edit mode (via submit or cancel), an action was taken
+                        if self.todo_edit_mode == TodoEditMode::Normal && previous_mode != TodoEditMode::Normal {
+                            action_taken = true;
+                        }
+                    }
+                }
+            }
+            _ => {} // Other screens not yet implemented
         }
         
-        // If we switched to the Todo screen, fetch data immediately
-        if previous_screen != Screen::Todo && self.current_screen == Screen::Todo {
+        // 1. Handle screen transition logic
+        if previous_screen != self.current_screen {
+            match self.current_screen {
+                Screen::Dashboard => {
+                    // When entering dashboard, fetch dashboard data immediately
+                    self.update_dashboard_data().await;
+                }
+                Screen::Todo => {
+                    // When entering todo screen, fetch the list immediately
+                    self.fetch_todos().await;
+                }
+                _ => {}
+            }
+        }
+        
+        // 2. Handle periodic/action-based updates
+        if self.current_screen == Screen::Dashboard {
+            // Dashboard needs system status and logs frequently, and todo items (via update_dashboard_data)
+            self.update_system_status_and_logs().await;
+            // Note: update_dashboard_data is called on transition, and implicitly via the main loop's periodic call
+        } else if action_taken && self.current_screen == Screen::Todo {
+            // If an action was taken on the Todo screen, refresh the list and system status/logs
             self.fetch_todos().await;
+            self.update_system_status_and_logs().await;
+        } else if action_taken && self.current_screen == Screen::Dashboard {
+            // If an action was taken on the Dashboard (e.g., refresh 'r'), update everything
+            self.update_system_status_and_logs().await;
+            self.update_dashboard_data().await;
         }
     }
 
@@ -156,71 +260,119 @@ impl App {
             KeyCode::Char('1') => self.current_screen = Screen::Todo,
             KeyCode::Char('2') => self.current_screen = Screen::Notes,
             KeyCode::Char('3') => self.current_screen = Screen::Project,
+            KeyCode::Char('r') => { /* update_status is called automatically */ }
             _ => {}
         }
     }
     
-    async fn handle_todo_input(&mut self, event: CEvent) {
-        match self.todo_edit_mode {
-            TodoEditMode::Normal => {
-                if let CEvent::Key(key) = event {
+    // Renamed and refactored the input handling for the floating form
+    async fn handle_todo_input_form(&mut self, event: CEvent) {
+        if let CEvent::Key(key) = event {
+            match self.input_mode {
+                InputMode::Normal => {
                     match key.code {
-                        KeyCode::Char('q') => self.current_screen = Screen::Dashboard,
-                        KeyCode::Char('r') => self.fetch_todos().await,
-                        KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1), // Added 'k'
-                        KeyCode::Down | KeyCode::Char('j') => self.move_selection(1), // Added 'j'
-                        KeyCode::Char('c') => self.toggle_completed().await,
-                        KeyCode::Char('a') => self.start_add_mode(),
-                        KeyCode::Char('e') => self.start_edit_mode(), // New: Start editing
-                        KeyCode::Char('p') => self.print_selected().await, // New: Selective print
-                        KeyCode::Char('x') => self.archive_selected().await, // NEW: Archive selected item
-                        // KeyCode::Char('d') => self.delete_selected().await, // Future: Delete item
+                        KeyCode::Esc => self.cancel_edit_mode(),
+                        
+                        // UP/DOWN/LEFT/RIGHT always move focus in Normal mode
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            self.move_focus(-1);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            self.move_focus(1);
+                        }
+                        KeyCode::Left | KeyCode::Char('h') => {
+                            self.move_focus(-1);
+                        }
+                        KeyCode::Right | KeyCode::Char('l') => {
+                            self.move_focus(1);
+                        }
+                        
+                        // </> only modify month if CalendarDate is focused (still allowed in Normal mode for quick month flip)
+                        KeyCode::Char('<') if self.todo_input_focus == TodoInputFocus::CalendarDate => {
+                            // Previous month
+                            self.calendar_date = self.calendar_date.with_day(1).unwrap_or(self.calendar_date).checked_sub_months(Months::new(1)).unwrap_or(self.calendar_date);
+                        }
+                        KeyCode::Char('>') if self.todo_input_focus == TodoInputFocus::CalendarDate => {
+                            // Next month
+                            self.calendar_date = self.calendar_date.with_day(1).unwrap_or(self.calendar_date).checked_add_months(Months::new(1)).unwrap_or(self.calendar_date);
+                        }
+                        
+                        KeyCode::Char('i') | KeyCode::Enter => {
+                            match self.todo_input_focus {
+                                TodoInputFocus::Submit => {
+                                    self.submit_item().await;
+                                }
+                                TodoInputFocus::DueBy => {
+                                    // Toggle Due By status
+                                    self.due_by_toggle = !self.due_by_toggle;
+                                }
+                                TodoInputFocus::CalendarDate => {
+                                    // ACTIVATE CALENDAR SELECTION MODE (InputMode::Insert)
+                                    self.input_mode = InputMode::Insert;
+                                }
+                                TodoInputFocus::CalendarTime | TodoInputFocus::Priority | TodoInputFocus::Title | TodoInputFocus::Description | TodoInputFocus::Subtasks => {
+                                    // Enter/i switches to Insert mode for editable fields
+                                    self.input_mode = InputMode::Insert;
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
-            }
-            TodoEditMode::Adding | TodoEditMode::Editing => {
-                if let CEvent::Key(key) = event {
-                    match self.input_mode {
-                        InputMode::Normal => {
-                            match key.code {
-                                KeyCode::Esc => self.cancel_edit_mode(),
-                                KeyCode::Up | KeyCode::Char('k') => self.move_focus(-1),
-                                KeyCode::Down | KeyCode::Char('j') => self.move_focus(1),
-                                KeyCode::Char('i') | KeyCode::Enter => {
-                                    if self.todo_input_focus != TodoInputFocus::Submit {
-                                        self.input_mode = InputMode::Insert;
-                                    } else {
-                                        // Enter on Submit button
-                                        self.submit_item().await;
-                                    }
-                                }
-                                _ => {}
+                InputMode::Insert => {
+                    // Check for Ctrl+C (Exit Insert Mode)
+                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        self.input_mode = InputMode::Normal;
+                        return;
+                    }
+                    
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.input_mode = InputMode::Normal;
+                            // If we were editing CalendarDate, move focus to the next field (Time)
+                            if self.todo_input_focus == TodoInputFocus::CalendarDate {
+                                self.move_focus(1);
                             }
                         }
-                        InputMode::Insert => {
-                            // Check for Ctrl+C (Exit Insert Mode)
-                            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                        
+                        // Date Navigation (only active when CalendarDate is focused AND InputMode::Insert is active)
+                        KeyCode::Up | KeyCode::Char('k') if self.todo_input_focus == TodoInputFocus::CalendarDate => {
+                            self.calendar_date = self.calendar_date.checked_sub_signed(ChronoDuration::weeks(1)).unwrap_or(self.calendar_date);
+                        }
+                        KeyCode::Down | KeyCode::Char('j') if self.todo_input_focus == TodoInputFocus::CalendarDate => {
+                            self.calendar_date = self.calendar_date.checked_add_signed(ChronoDuration::weeks(1)).unwrap_or(self.calendar_date);
+                        }
+                        KeyCode::Left | KeyCode::Char('h') if self.todo_input_focus == TodoInputFocus::CalendarDate => {
+                            self.calendar_date = self.calendar_date.checked_sub_signed(ChronoDuration::days(1)).unwrap_or(self.calendar_date);
+                        }
+                        KeyCode::Right | KeyCode::Char('l') if self.todo_input_focus == TodoInputFocus::CalendarDate => {
+                            self.calendar_date = self.calendar_date.checked_add_signed(ChronoDuration::days(1)).unwrap_or(self.calendar_date);
+                        }
+                        KeyCode::Char('<') if self.todo_input_focus == TodoInputFocus::CalendarDate => {
+                            self.calendar_date = self.calendar_date.with_day(1).unwrap_or(self.calendar_date).checked_sub_months(Months::new(1)).unwrap_or(self.calendar_date);
+                        }
+                        KeyCode::Char('>') if self.todo_input_focus == TodoInputFocus::CalendarDate => {
+                            self.calendar_date = self.calendar_date.with_day(1).unwrap_or(self.calendar_date).checked_add_months(Months::new(1)).unwrap_or(self.calendar_date);
+                        }
+                        
+                        KeyCode::Enter => {
+                            if self.todo_input_focus == TodoInputFocus::CalendarDate {
+                                // Confirm date selection, exit Insert mode, move focus to Time
                                 self.input_mode = InputMode::Normal;
-                                return;
-                            }
-                            
-                            match key.code {
-                                KeyCode::Esc => {
-                                    self.input_mode = InputMode::Normal;
-                                }
-                                KeyCode::Enter => {
-                                    if self.todo_input_focus == TodoInputFocus::Subtasks {
-                                        // Enter inserts a newline in Subtasks field
-                                        self.handle_text_input(KeyCode::Enter, key.modifiers);
-                                    }
-                                    // Otherwise, Enter does nothing in Insert mode (user must Esc then Enter on Submit)
-                                }
-                                KeyCode::Backspace => self.handle_text_input(key.code, key.modifiers),
-                                KeyCode::Char(_) => self.handle_text_input(key.code, key.modifiers),
-                                _ => {}
+                                self.move_focus(1);
+                            } else if self.todo_input_focus == TodoInputFocus::Subtasks || self.todo_input_focus == TodoInputFocus::Description {
+                                // Enter inserts a newline in multiline fields
+                                self.handle_text_input(KeyCode::Enter, key.modifiers);
+                            } else {
+                                // For single-line inputs, Enter exits insert mode
+                                self.input_mode = InputMode::Normal;
                             }
                         }
+                        
+                        // Text input handling (only for non-calendar fields)
+                        KeyCode::Backspace => self.handle_text_input(key.code, key.modifiers),
+                        KeyCode::Char(_) => self.handle_text_input(key.code, key.modifiers),
+                        _ => {}
                     }
                 }
             }
@@ -228,19 +380,42 @@ impl App {
     }
     
     fn move_focus(&mut self, delta: i32) {
-        self.todo_input_focus = match (self.todo_input_focus, delta) {
-            (TodoInputFocus::Title, 1) => TodoInputFocus::Description,
-            (TodoInputFocus::Description, 1) => TodoInputFocus::Subtasks, // NEW
-            (TodoInputFocus::Subtasks, 1) => TodoInputFocus::Submit, // NEW
-            (TodoInputFocus::Submit, 1) => TodoInputFocus::Title,
+        let current_focus = self.todo_input_focus;
+        
+        // Define the order of fields
+        let fields = [
+            TodoInputFocus::Title,
+            TodoInputFocus::Description,
+            TodoInputFocus::Subtasks,
+            TodoInputFocus::DueBy,
+            TodoInputFocus::CalendarDate,
+            TodoInputFocus::CalendarTime,
+            TodoInputFocus::Priority,
+            TodoInputFocus::Submit,
+        ];
+        
+        let current_index = fields.iter().position(|&f| f == current_focus).unwrap_or(0);
+        let num_fields = fields.len();
+        
+        let mut new_index = current_index;
+        
+        // Conditional skipping logic loop
+        loop {
+            new_index = (new_index as i32 + delta).rem_euclid(num_fields as i32) as usize;
+            let next_focus = fields[new_index];
             
-            (TodoInputFocus::Title, -1) => TodoInputFocus::Submit,
-            (TodoInputFocus::Description, -1) => TodoInputFocus::Title,
-            (TodoInputFocus::Subtasks, -1) => TodoInputFocus::Description, // NEW
-            (TodoInputFocus::Submit, -1) => TodoInputFocus::Subtasks, // NEW
+            // If DueBy is false, skip CalendarDate and CalendarTime
+            if !self.due_by_toggle && (next_focus == TodoInputFocus::CalendarDate || next_focus == TodoInputFocus::CalendarTime) {
+                // Continue looping to skip this field
+            } else {
+                break;
+            }
             
-            (f, _) => f, // Should not happen with delta 1 or -1
-        };
+            // Safety break if we somehow cycled through all fields without finding a valid one
+            if new_index == current_index { break; }
+        }
+        
+        self.todo_input_focus = fields[new_index];
         
         // Reset scroll when changing focus
         self.subtasks_scroll = 0;
@@ -250,15 +425,35 @@ impl App {
         let buffer = match self.todo_input_focus {
             TodoInputFocus::Title => &mut self.title_buffer,
             TodoInputFocus::Description => &mut self.description_buffer,
-            TodoInputFocus::Subtasks => &mut self.subtasks_buffer, // NEW
+            TodoInputFocus::Subtasks => &mut self.subtasks_buffer,
+            TodoInputFocus::CalendarTime => &mut self.time_buffer, // NEW
+            TodoInputFocus::Priority => &mut self.priority_buffer,
             _ => return, // Not focused on a text field
         };
 
         match key_code {
             KeyCode::Backspace => {
+                if self.todo_input_focus == TodoInputFocus::CalendarTime {
+                    // Handle backspace for HH:MM format
+                    if buffer.ends_with(':') {
+                        buffer.pop();
+                    }
+                }
                 buffer.pop();
             }
             KeyCode::Char(c) => {
+                // Basic validation for Priority field
+                if self.todo_input_focus == TodoInputFocus::Priority && !c.is_ascii_digit() {
+                    return;
+                }
+                
+                // Basic validation for Time field (HH:MM format)
+                if self.todo_input_focus == TodoInputFocus::CalendarTime {
+                    if buffer.len() >= 5 { return; }
+                    if buffer.len() == 2 && c.is_ascii_digit() { buffer.push(':'); }
+                    if !c.is_ascii_digit() { return; }
+                }
+                
                 // Only allow standard characters unless Ctrl/Alt/Meta modifiers are present
                 if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT {
                     buffer.push(c);
@@ -266,7 +461,7 @@ impl App {
             }
             KeyCode::Enter => {
                 // Handle Enter for newline insertion in Subtasks field (since we are in Insert mode)
-                if self.todo_input_focus == TodoInputFocus::Subtasks {
+                if self.todo_input_focus == TodoInputFocus::Subtasks || self.todo_input_focus == TodoInputFocus::Description {
                     buffer.push('\n');
                 }
             }
@@ -283,12 +478,19 @@ impl App {
     }
 
     fn start_add_mode(&mut self) {
+        let now = Local::now().date_naive();
         self.todo_edit_mode = TodoEditMode::Adding;
         self.input_mode = InputMode::Normal; // Start in Normal mode
         self.editing_item_id = None;
         self.title_buffer.clear();
         self.description_buffer.clear();
-        self.subtasks_buffer.clear(); // NEW
+        self.subtasks_buffer.clear();
+        
+        self.due_by_toggle = false;
+        self.calendar_date = now; // Default to today
+        self.time_buffer = String::from("00:00");
+        self.priority_buffer.clear();
+        
         self.subtasks_scroll = 0; // Reset scroll
         self.todo_input_focus = TodoInputFocus::Title;
         self.last_error = None;
@@ -302,7 +504,21 @@ impl App {
                 self.editing_item_id = item.id;
                 self.title_buffer = item.title.clone();
                 self.description_buffer = item.description.clone(); // Now required String
-                self.subtasks_buffer = item.subtasks.clone().unwrap_or_default(); // NEW
+                self.subtasks_buffer = item.subtasks.clone().unwrap_or_default();
+                
+                // NEW: Populate date/time/toggle
+                if let Some(dt) = item.due_date {
+                    self.due_by_toggle = true;
+                    self.calendar_date = dt.date_naive();
+                    self.time_buffer = dt.format("%H:%M").to_string();
+                } else {
+                    self.due_by_toggle = false;
+                    let now = Local::now().date_naive();
+                    self.calendar_date = now;
+                    self.time_buffer = String::from("00:00");
+                }
+                self.priority_buffer = item.priority.to_string();
+
                 self.subtasks_scroll = 0; // Reset scroll on edit start
                 self.todo_input_focus = TodoInputFocus::Title;
                 self.last_error = None;
@@ -311,19 +527,29 @@ impl App {
     }
     
     fn cancel_edit_mode(&mut self) {
+        let now = Local::now().date_naive();
         self.todo_edit_mode = TodoEditMode::Normal;
         self.input_mode = InputMode::Normal; // Reset mode
         self.editing_item_id = None;
         self.title_buffer.clear();
         self.description_buffer.clear();
-        self.subtasks_buffer.clear(); // NEW
+        self.subtasks_buffer.clear();
+        
+        // Reset calendar state
+        self.due_by_toggle = false;
+        self.calendar_date = now;
+        self.time_buffer = String::from("00:00");
+        self.priority_buffer.clear();
+        
         self.subtasks_scroll = 0; // Reset scroll
     }
     
     async fn submit_item(&mut self) {
         let title = self.title_buffer.trim().to_string();
         let description = self.description_buffer.trim().to_string();
-        let subtasks = self.subtasks_buffer.trim().to_string(); // NEW
+        let subtasks = self.subtasks_buffer.trim().to_string();
+        let time_str = self.time_buffer.trim();
+        let priority_str = self.priority_buffer.trim();
         
         if title.is_empty() {
             self.last_error = Some("Todo title cannot be empty.".to_string());
@@ -336,13 +562,68 @@ impl App {
             return;
         }
         
-        let subtasks_opt = if subtasks.is_empty() { None } else { Some(subtasks) }; // NEW
+        // Parse Due Date and Time
+        let due_date_opt = if !self.due_by_toggle {
+            None
+        } else if time_str.is_empty() || time_str == "00:00" {
+            // If toggle is on but time is default/empty, use midnight of the selected date
+            let naive_datetime = self.calendar_date.and_hms_opt(0, 0, 0).unwrap_or_else(|| self.calendar_date.and_time(NaiveTime::MIN));
+            match naive_datetime.and_local_timezone(Local) {
+                chrono::LocalResult::Single(dt) => Some(dt),
+                _ => {
+                    self.last_error = Some("Due date is invalid.".to_string());
+                    return;
+                }
+            }
+        } else {
+            match NaiveTime::parse_from_str(time_str, "%H:%M") {
+                Ok(naive_time) => {
+                    let naive_datetime = self.calendar_date.and_time(naive_time);
+                    
+                    // Handle LocalResult ambiguity
+                    match naive_datetime.and_local_timezone(Local) {
+                        chrono::LocalResult::Single(dt) => Some(dt),
+                        chrono::LocalResult::Ambiguous(dt1, _) => {
+                            // If ambiguous (e.g., DST change), pick the first one
+                            Some(dt1)
+                        }
+                        chrono::LocalResult::None => {
+                            // If time doesn't exist (e.g., skipped by DST), treat as error
+                            self.last_error = Some("Due time is invalid or ambiguous (e.g., during DST transition).".to_string());
+                            return;
+                        }
+                    }
+                }
+                Err(_) => {
+                    // This path should ideally not be hit if time_str is validated, but kept for safety
+                    self.last_error = Some("Invalid Time format. Use HH:MM.".to_string());
+                    return;
+                }
+            }
+        };
+
+        // Parse Priority
+        let priority: u8 = if priority_str.is_empty() {
+            0
+        } else {
+            match priority_str.parse::<u8>() {
+                Ok(p) if p <= 10 => p,
+                _ => {
+                    self.last_error = Some("Priority must be an integer between 0 and 10.".to_string());
+                    return;
+                }
+            }
+        };
+        
+        let subtasks_opt = if subtasks.is_empty() { None } else { Some(subtasks) };
         
         let result = match self.todo_edit_mode {
             TodoEditMode::Adding => {
                 // When adding, we rely on the API/DB to set created_at/updated_at
                 let mut new_item = TodoItem::new(title, description); // Description is required
-                new_item.subtasks = subtasks_opt; // NEW
+                new_item.subtasks = subtasks_opt;
+                new_item.due_date = due_date_opt; // NEW
+                new_item.priority = priority; // NEW
                 self.api_client.create_todo(new_item).await.map(|_| ()) // Map created item to ()
             }
             TodoEditMode::Editing => {
@@ -361,8 +642,10 @@ impl App {
                         updated_at: Local::now(), // Will be overwritten by API/DB, but required for struct
                         completed_at: existing.completed_at, // Preserve completion time
                         printed_at: existing.printed_at, // Preserve printing time (FIX E0063)
-                        subtasks: subtasks_opt, // NEW
+                        subtasks: subtasks_opt,
                         archived: existing.archived, // Preserve archived status
+                        due_date: due_date_opt, // NEW
+                        priority, // NEW
                     };
                     self.api_client.update_todo(updated_item).await
                 } else {
@@ -376,7 +659,7 @@ impl App {
         match result {
             Ok(_) => {
                 self.cancel_edit_mode();
-                self.fetch_todos().await; // Refresh list
+                // Action taken, handle_input will refresh data
             }
             Err(e) => {
                 self.last_error = Some(format!("Failed to save item: {}", e));
@@ -414,12 +697,9 @@ impl App {
                 if let Err(e) = self.api_client.update_todo(updated_item).await {
                     self.last_error = Some(format!("Failed to toggle completion: {}", e));
                     // Revert local change if API fails
-                    item.completed = !item.completed;
-                    item.completed_at = if item.completed { Some(Local::now()) } else { None }; // Revert logic is complex, better to just refetch
-                    self.fetch_todos().await; // Force refresh to sync state
+                    // We rely on the subsequent refresh to sync state
                 } else {
                     self.last_error = None;
-                    // Successful update, list will be refreshed on next poll/input, but we can rely on the local change for immediate display
                 }
             }
         }
@@ -433,7 +713,7 @@ impl App {
                     match self.api_client.print_todo(id).await {
                         Ok(_) => {
                             self.last_error = Some(format!("Print job sent for ID {}.", id));
-                            self.fetch_todos().await; // Refresh to show updated printed_at timestamp
+                            // Refresh is handled by action_taken logic
                         }
                         Err(e) => {
                             self.last_error = Some(format!("Failed to send print job for ID {}: {}", id, e));
@@ -456,8 +736,7 @@ impl App {
                     match self.api_client.archive_todo(id).await {
                         Ok(_) => {
                             self.last_error = Some(format!("Item ID {} archived successfully.", id));
-                            // Refresh list to remove the archived item
-                            self.fetch_todos().await; 
+                            // Refresh is handled by action_taken logic
                         }
                         Err(e) => {
                             self.last_error = Some(format!("Failed to archive item ID {}: {}", id, e));
@@ -472,8 +751,6 @@ impl App {
         }
     }
 }
-
-// ... Tui struct and impl Tui remains the same ...
 
 /// Helper struct to manage terminal setup and teardown.
 pub struct Tui {
@@ -504,26 +781,100 @@ impl Tui {
 
 // --- Drawing Helper Functions ---
 
-// ... draw_dashboard remains the same ...
-
 fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
-    let overall_status = app.status.as_ref().map(|s| s.overall.gono).unwrap_or(Status::Unknown);
+    let _overall_status = app.status.as_ref().map(|s| s.overall.gono).unwrap_or(Status::Unknown);
     let systems_status = app.status.as_ref().map(|s| s.systems);
+    let _now = Local::now();
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
         .split(area);
 
-    // Header
-    let header_text = format!("Dashboard | Overall Status: {:?}", overall_status);
-    let header = Paragraph::new(header_text)
-        .block(Block::default().borders(Borders::ALL).title("System Status"));
-    frame.render_widget(header, chunks[0]);
+    let (_header_area, content_area, footer_area) = (chunks[0], chunks[1], chunks[2]);
 
-    // System Status List
+    // Content Area: Split vertically for lists and status/logs
+    let main_content_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(70), Constraint::Min(0)])
+        .split(content_area);
+        
+    let list_row_area = main_content_chunks[0];
+    let status_log_area = main_content_chunks[1]; // Area for status and logs
+
+    // List Row: Split horizontally for two lists
+    let list_row_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(list_row_area);
+        
+    let (prioritized_area, no_due_area) = (list_row_chunks[0], list_row_chunks[1]);
+
+    // Status/Log Area: Split horizontally for System Status and Latest Logs
+    let status_log_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(status_log_area);
+        
+    let (status_area, log_area) = (status_log_chunks[0], status_log_chunks[1]);
+
+
+    // --- 1. Prioritized Todos List ---
+    
+    let prioritized_items: Vec<ListItem> = {
+        let mut items: Vec<&TodoItem> = app.todo_items.iter()
+            .filter(|item| !item.completed && item.due_date.is_some())
+            .collect();
+
+        items.sort_by(|a, b| {
+            // Sort primarily by priority (desc), then by due date (asc/urgency)
+            a.priority.cmp(&b.priority).reverse()
+                .then_with(|| a.due_date.cmp(&b.due_date))
+        });
+
+        items.into_iter()
+            .take(5)
+            .map(|item| {
+                let due_str = item.due_date.map(|dt| dt.format("%m-%d %H:%M").to_string()).unwrap_or_default();
+                let content = format!("P{}: {} ({})", item.priority, item.title, due_str);
+                let style = if item.priority >= 8 { Style::default().fg(Color::Red) } else { Style::default().fg(Color::Yellow) };
+                ListItem::new(content).style(style)
+            })
+            .collect()
+    };
+
+    let prioritized_list = List::new(prioritized_items)
+        .block(Block::default().borders(Borders::ALL).title("Prioritized Todos (Top 5)"));
+    frame.render_widget(prioritized_list, prioritized_area);
+
+
+    // --- 2. No Due Date Todos List ---
+    
+    let no_due_items: Vec<ListItem> = {
+        let mut items: Vec<&TodoItem> = app.todo_items.iter()
+            .filter(|item| !item.completed && item.due_date.is_none())
+            .collect();
+
+        // Order by created_at (ascending, oldest first)
+        items.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+
+        items.into_iter()
+            .take(5)
+            .map(|item| {
+                let created_str = item.created_at.format("%m-%d").to_string();
+                let content = format!("{} (Created: {})", item.title, created_str);
+                ListItem::new(content).style(Style::default().fg(Color::White))
+            })
+            .collect()
+    };
+
+    let no_due_list = List::new(no_due_items)
+        .block(Block::default().borders(Borders::ALL).title("No Due Date (Oldest 5)"));
+    frame.render_widget(no_due_list, no_due_area);
+
+
+    // --- 3. System Status List ---
     let status_lines: Vec<Line> = if let Some(systems) = systems_status {
-        // Manually list the fields since the iterator trait is not shared across crates
         let status_to_line = |name: &'static str, status: Status| {
             let style = match status {
                 Status::Go => Style::default().fg(Color::Green),
@@ -548,12 +899,37 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
 
     let status_block = Block::default().borders(Borders::ALL).title("Subsystem Health");
     let status_paragraph = Paragraph::new(status_lines).block(status_block);
-    frame.render_widget(status_paragraph, chunks[1]);
+    frame.render_widget(status_paragraph, status_area);
+    
+    
+    // --- 4. Latest Log Entries Panel (NEW) ---
+    let log_items: Vec<ListItem> = app.latest_logs.iter().map(|log| {
+        let style = match log.level.as_str() {
+            "ERROR" => Style::default().fg(Color::Red),
+            "WARN" => Style::default().fg(Color::Yellow),
+            "INFO" => Style::default().fg(Color::Green),
+            _ => Style::default().fg(Color::DarkGray),
+        };
+        
+        let content = format!(
+            "{} [{}] {}: {}",
+            log.timestamp.format("%H:%M:%S"),
+            log.level,
+            log.target,
+            log.message
+        );
+        ListItem::new(content).style(style)
+    }).collect();
+    
+    let log_list = List::new(log_items)
+        .block(Block::default().borders(Borders::ALL).title("Latest Log Entries (DB)"));
+    frame.render_widget(log_list, log_area);
+
 
     // Footer/Menu
     let footer_text = "Q: Quit | 1: Todo | 2: Notes | 3: Project | R: Refresh";
     let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan));
-    frame.render_widget(footer, chunks[2]);
+    frame.render_widget(footer, footer_area);
 }
 
 
@@ -575,19 +951,31 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
         let status = if item.completed { "[X]" } else { "[ ]" };
         
         let created_str = item.created_at.format("%Y-%m-%d %H:%M").to_string();
-        let updated_str = item.updated_at.format("%Y-%m-%d %H:%M").to_string();
-        // Fix E0282: Explicitly type the closure parameter dt
-        let completed_str = item.completed_at.map(|dt: DateTime<Local>| dt.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+        let _updated_str = item.updated_at.format("%Y-%m-%d %H:%M").to_string();
+        // FIX E0107/E0038: Remove unnecessary type annotation
+        let _completed_str = item.completed_at.map(|dt| dt.format("%Y-%m-%d %H:%M").to_string()).unwrap_or_default();
+        
+        let priority_str = if item.priority > 0 {
+            format!("P:{}", item.priority)
+        } else {
+            "".to_string()
+        };
+
+        let due_date_str = item.due_date.map(|dt| dt.format("Due: %m-%d").to_string()).unwrap_or_default();
         
         let metadata = format!(
-            " (Created: {} | Updated: {} | Completed: {})",
-            created_str, updated_str, completed_str
+            " ({}, {} | Created: {})",
+            priority_str, due_date_str, created_str
         );
         
         let content = format!("{:<3} {:<50} {}", status, item.title, metadata);
         
         let style = if item.completed { 
             Style::default().fg(Color::DarkGray).add_modifier(ratatui::style::Modifier::CROSSED_OUT) 
+        } else if item.priority >= 8 {
+            Style::default().fg(Color::Red)
+        } else if item.priority >= 5 {
+            Style::default().fg(Color::Yellow)
         } else { 
             Style::default().fg(Color::White) 
         };
@@ -617,8 +1005,16 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
                 Line::from(format!("ID: {}", item.id.unwrap_or(0))),
                 Line::from(format!("Title: {}", item.title)).bold(),
                 Line::from(format!("Status: {}", if item.completed { "COMPLETED" } else { "PENDING" })),
-                Line::from(""),
+                Line::from(format!("Priority: {}", item.priority)).fg(if item.priority >= 8 { Color::Red } else { Color::White }),
             ];
+            
+            if let Some(due_date) = item.due_date {
+                text_lines.push(Line::from(format!("Due Date: {}", due_date.format("%Y-%m-%d %H:%M:%S"))).fg(Color::Yellow));
+            } else {
+                text_lines.push(Line::from("Due Date: None"));
+            }
+            
+            text_lines.push(Line::from(""));
             
             // Description (now required)
             text_lines.push(Line::from("Description:").underlined());
@@ -678,16 +1074,121 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
     }
 }
 
+
+fn draw_calendar_picker(frame: &mut ratatui::Frame, area: Rect, date: NaiveDate, is_focused: bool) {
+    
+    let today = Local::now().date_naive();
+    let display_month = date.with_day(1).unwrap_or(date);
+    let month_name = display_month.format("%B %Y").to_string();
+
+    let block = Block::default()
+        .title(format!("Date Picker: {}", month_name))
+        .borders(Borders::TOP)
+        .border_style(if is_focused { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::White) });
+    
+    let inner_area = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Calculate dimensions for the grid (7 columns, 7 rows including header)
+    // inner_area.height must be >= 7 for this to work correctly.
+    let day_width = inner_area.width / 7;
+    let day_height = inner_area.height / 7; 
+
+    // 1. Draw Weekday Headers
+    let weekdays = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+    
+    let header_row_area = Rect::new(inner_area.x, inner_area.y, inner_area.width, day_height);
+    let header_areas = Layout::horizontal(weekdays.iter().map(|_| Constraint::Length(day_width)))
+        .split(header_row_area);
+
+    for (i, day) in weekdays.iter().enumerate() {
+        let style = Style::default().fg(Color::Cyan);
+        let paragraph = Paragraph::new(*day).style(style).alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(paragraph, header_areas[i]);
+    }
+
+    // 2. Draw Days
+    let mut current_date = display_month;
+    
+    // Find the starting position (Monday of the week containing the 1st of the month)
+    let start_weekday = display_month.weekday();
+    let offset = match start_weekday {
+        Weekday::Mon => 0,
+        Weekday::Tue => 1,
+        Weekday::Wed => 2,
+        Weekday::Thu => 3,
+        Weekday::Fri => 4,
+        Weekday::Sat => 5,
+        Weekday::Sun => 6,
+    };
+    
+    // Move back to the start of the week (or previous month)
+    current_date = current_date.checked_sub_signed(ChronoDuration::days(offset)).unwrap_or(current_date);
+
+    let mut row = 1;
+    let mut col = 0;
+
+    // Iterate through up to 6 weeks
+    for _ in 0..42 { // Max 6 weeks * 7 days
+        if row > 6 { break; }
+
+        let day_area = Rect::new(
+            inner_area.x + col * day_width,
+            inner_area.y + row * day_height,
+            day_width,
+            day_height,
+        );
+
+        let day_num = current_date.day().to_string();
+        let mut style = Style::default();
+
+        // Style based on month
+        if current_date.month() != display_month.month() {
+            style = style.fg(Color::DarkGray);
+        } else {
+            style = style.fg(Color::White);
+        }
+
+        // Highlight today
+        if current_date == today {
+            // Reverting to previous color scheme for today's date
+            style = style.add_modifier(ratatui::style::Modifier::BOLD).fg(Color::Green);
+        }
+
+        // Highlight selected date
+        if current_date == date {
+            // Reverting to previous color scheme for selected date
+            style = style.bg(Color::Blue).fg(Color::Black);
+        }
+
+        let paragraph = Paragraph::new(day_num).style(style).alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(paragraph, day_area);
+
+        // Move to next day
+        current_date = current_date.checked_add_signed(ChronoDuration::days(1)).unwrap_or(current_date);
+        col += 1;
+        if col >= 7 {
+            col = 0;
+            row += 1;
+            // Stop if we moved into the next month and finished a full week
+            if current_date.month() != display_month.month() && row > 6 {
+                break;
+            }
+        }
+    }
+}
+
+
 fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: Rect) {
     // Calculate the size and position of the floating window
     let width = parent_area.width.min(80);
-    let height = 14; // Increased height to accommodate Subtasks field
+    let height = 29; // FIX: Increased height to 29 (27 inner lines + 2 borders)
     let x = (parent_area.width.saturating_sub(width)) / 2;
     let y = (parent_area.height.saturating_sub(height)) / 2;
     let area = Rect::new(x, y, width, height);
 
     let mode_indicator = match app.input_mode {
-        InputMode::Normal => "NORMAL (i/Enter: Insert | j/k: Navigate)",
+        InputMode::Normal => "NORMAL (i/Enter: Insert | j/k/h/l: Navigate | </>: Month Nav)",
         InputMode::Insert => "INSERT (Esc/Ctrl+C: Normal | Enter: Newline in Subtasks)",
     };
 
@@ -705,22 +1206,61 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
         .borders(Borders::ALL)
         .style(Style::default().bg(Color::DarkGray)); // Background set here
     
-    // Split the inner area for Title, Description, Subtasks, and Submit button
+    // Split the inner area for fields and Submit button
     let inner_area = block.inner(area);
+    
+    // Determine if the calendar grid should be visible
+    let grid_is_visible = app.todo_input_focus == TodoInputFocus::CalendarDate;
+    
+    // Determine if date navigation is active (Insert mode on CalendarDate)
+    let date_is_navigable = app.todo_input_focus == TodoInputFocus::CalendarDate && app.input_mode == InputMode::Insert;
+
+    // Adjust constraints based on whether the calendar grid is visible
+    let constraints = if grid_is_visible {
+        // Show calendar grid (9 lines required for 7 rows + borders/title)
+        vec![
+            Constraint::Length(2), // 0: Title
+            Constraint::Length(4), // 1: Description (FIX: Increased to 4 lines)
+            Constraint::Length(4), // 2: Subtasks
+            Constraint::Length(2), // 3: Due By Toggle (NEW)
+            Constraint::Length(1), // 4: Date Label
+            Constraint::Length(1), // 5: Date Input (Year/Month/Day display)
+            Constraint::Length(9), // 6: Calendar Grid (FIX: Increased to 9 lines)
+            Constraint::Length(2), // 7: Calendar Time
+            Constraint::Length(2), // 8: Priority
+            Constraint::Length(1), // 9: Spacer
+            Constraint::Length(1), // 10: Submit button
+        ]
+    } else {
+        // Hide calendar grid, collapsing the 9 lines into 0
+        vec![
+            Constraint::Length(2), // 0: Title
+            Constraint::Length(4), // 1: Description (FIX: Increased to 4 lines)
+            Constraint::Length(4), // 2: Subtasks
+            Constraint::Length(2), // 3: Due By Toggle (NEW)
+            Constraint::Length(1), // 4: Date Label
+            Constraint::Length(1), // 5: Date Input (Year/Month/Day display)
+            Constraint::Length(0), // 6: Calendar Grid (Collapsed)
+            Constraint::Length(2), // 7: Calendar Time
+            Constraint::Length(2), // 8: Priority
+            Constraint::Length(1), // 9: Spacer
+            Constraint::Length(1), // 10: Submit button
+        ]
+    };
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2), // Title label + input
-            Constraint::Length(2), // Description label + input
-            Constraint::Length(4), // Subtasks label + input (multi-line area height is 3 lines + 1 line label)
-            Constraint::Length(1), // Spacer
-            Constraint::Length(1), // Submit button
-        ])
+        .constraints(constraints)
         .split(inner_area);
 
-    // Helper to determine if a field is currently active (focused AND in Normal mode, or in Insert mode)
+    // Helper to determine if a field is currently active (focused AND in Insert mode, or Normal mode for non-Insert fields)
     let is_active = |focus: TodoInputFocus| {
-        app.todo_input_focus == focus && (app.input_mode == InputMode::Normal || focus != TodoInputFocus::Submit)
+        // CalendarDate is active if focused AND in Insert mode (for navigation)
+        if focus == TodoInputFocus::CalendarDate {
+            date_is_navigable
+        } else {
+            app.todo_input_focus == focus && (app.input_mode == InputMode::Normal || focus != TodoInputFocus::Submit)
+        }
     };
     
     // --- Title Input ---
@@ -730,14 +1270,19 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
         Style::default().fg(Color::White)
     };
     
-    let title_label = Paragraph::new("Title:").style(title_style);
-    frame.render_widget(title_label, chunks[0]);
-    
-    let title_input_area = Rect::new(chunks[0].x + 7, chunks[0].y, chunks[0].width.saturating_sub(7), 1);
-    let title_input = Paragraph::new(app.title_buffer.as_str()).style(title_style);
-    frame.render_widget(title_input, title_input_area);
+    let title_label_chunks = Layout::horizontal([
+        Constraint::Length(7),
+        Constraint::Min(0),
+    ]).split(chunks[0]);
 
-    // --- Description Input (Now required) ---
+    let title_label = Paragraph::new("Title:").style(title_style);
+    frame.render_widget(title_label, title_label_chunks[0]);
+    
+    let title_input = Paragraph::new(app.title_buffer.as_str()).style(title_style);
+    frame.render_widget(title_input, title_label_chunks[1]);
+    let title_input_area = title_label_chunks[1]; // Used for cursor positioning
+
+    // --- Description Input (Required, Multiline) ---
     let desc_style = if is_active(TodoInputFocus::Description) {
         Style::default().fg(Color::Yellow)
     } else {
@@ -747,11 +1292,53 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
     let desc_label = Paragraph::new("Description:").style(desc_style);
     frame.render_widget(desc_label, chunks[1]);
     
-    let desc_input_area = Rect::new(chunks[1].x + 13, chunks[1].y, chunks[1].width.saturating_sub(13), 1);
-    let desc_input = Paragraph::new(app.description_buffer.as_str()).style(desc_style);
-    frame.render_widget(desc_input, desc_input_area);
+    let desc_input_area = Rect::new(chunks[1].x, chunks[1].y + 1, chunks[1].width, 3);
+    
+    // Calculate cursor position and scroll offset for Description (similar to Subtasks)
+    let desc_line_width = desc_input_area.width as usize;
+    let desc_cursor_pos = app.description_buffer.len();
+    
+    let mut desc_current_line_index = 0;
+    let mut desc_current_col_index = 0;
+    
+    for (i, c) in app.description_buffer.chars().enumerate() {
+        if i == desc_cursor_pos {
+            break;
+        }
+        if c == '\n' {
+            desc_current_line_index += 1;
+            desc_current_col_index = 0;
+        } else {
+            desc_current_col_index += 1;
+            if desc_current_col_index >= desc_line_width {
+                desc_current_line_index += 1;
+                desc_current_col_index = 0;
+            }
+        }
+    }
+    
+    let desc_cursor_line = desc_current_line_index as u16;
+    let desc_cursor_col = desc_current_col_index as u16;
+    
+    let desc_viewport_height = desc_input_area.height; // 3 lines
+    
+    // We need a separate scroll state for description if we want to support scrolling, 
+    // but for simplicity and given the small size, we'll just use a local scroll offset calculation here.
+    let mut desc_scroll_offset = 0;
+    if desc_cursor_line >= desc_scroll_offset + desc_viewport_height {
+        desc_scroll_offset = desc_cursor_line.saturating_sub(desc_viewport_height) + 1;
+    } else if desc_cursor_line < desc_scroll_offset {
+        desc_scroll_offset = desc_cursor_line;
+    }
 
-    // --- Subtasks Input (NEW) ---
+    let desc_input = Paragraph::new(Text::from(app.description_buffer.as_str()))
+        .wrap(Wrap { trim: false })
+        .scroll((desc_scroll_offset, 0))
+        .block(Block::default().borders(Borders::NONE));
+        
+    frame.render_widget(desc_input, desc_input_area);
+    
+    // --- Subtasks Input ---
     let subtasks_style = if is_active(TodoInputFocus::Subtasks) {
         Style::default().fg(Color::Yellow)
     } else {
@@ -767,7 +1354,6 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
     let line_width = subtasks_input_area.width as usize;
     let cursor_pos = app.subtasks_buffer.len();
     
-    // Calculate the line index of the cursor, considering wrapping
     let mut current_line_index = 0;
     let mut current_col_index = 0;
     
@@ -792,12 +1378,9 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
     
     let viewport_height = subtasks_input_area.height; // 3 lines
     
-    // Adjust scroll offset (app.subtasks_scroll)
     if cursor_line >= app.subtasks_scroll + viewport_height {
-        // Cursor moved below the viewport
         app.subtasks_scroll = cursor_line.saturating_sub(viewport_height) + 1;
     } else if cursor_line < app.subtasks_scroll {
-        // Cursor moved above the viewport
         app.subtasks_scroll = cursor_line;
     }
     
@@ -809,6 +1392,126 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
         .block(Block::default().borders(Borders::NONE));
         
     frame.render_widget(subtasks_input, subtasks_input_area);
+
+    // --- Due By Toggle (NEW) ---
+    let due_by_focused = app.todo_input_focus == TodoInputFocus::DueBy;
+    let due_by_style = if due_by_focused {
+        Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::UNDERLINED)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    
+    let toggle_status = if app.due_by_toggle { "[X] Enabled" } else { "[ ] Disabled" };
+    let toggle_text = format!("Due Date/Time: {}", toggle_status);
+    
+    let toggle_paragraph = Paragraph::new(toggle_text)
+        .block(Block::default().borders(Borders::TOP))
+        .style(due_by_style);
+    frame.render_widget(toggle_paragraph, chunks[3]);
+
+
+    // --- Date Label ---
+    let date_label_focused_normal = app.todo_input_focus == TodoInputFocus::CalendarDate && app.input_mode == InputMode::Normal;
+    
+    let date_label_style = if date_label_focused_normal {
+        Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::UNDERLINED)
+    } else if app.due_by_toggle {
+        Style::default().fg(Color::White)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    
+    // --- Date Input (Year/Month/Day fields) ---
+    // Combine label and Y/M/D display into chunk 4
+    let date_input_area = chunks[4];
+    
+    let date_display_chunks = Layout::horizontal([
+        Constraint::Length(6), // Label "Date:"
+        Constraint::Length(6), // Year
+        Constraint::Length(8), // Month
+        Constraint::Length(4), // Day
+        Constraint::Min(0),
+    ]).split(date_input_area);
+
+    let date_style = if date_is_navigable { // Use date_is_navigable for yellow highlight
+        Style::default().fg(Color::Yellow)
+    } else if app.due_by_toggle {
+        Style::default().fg(Color::White)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    // Render Label
+    frame.render_widget(Paragraph::new("Date:").style(date_label_style), date_display_chunks[0]);
+
+    // Display Year, Month, Day separately (read-only, selection happens in grid)
+    let year_str = app.calendar_date.format("%Y").to_string();
+    let month_str = app.calendar_date.format("%b").to_string();
+    let day_str = app.calendar_date.format("%d").to_string();
+
+    frame.render_widget(Paragraph::new(year_str).style(date_style), date_display_chunks[1]);
+    frame.render_widget(Paragraph::new(month_str).style(date_style), date_display_chunks[2]);
+    frame.render_widget(Paragraph::new(day_str).style(date_style), date_display_chunks[3]);
+
+
+    // --- Calendar Grid (CONDITIONAL) ---
+    if grid_is_visible {
+        draw_calendar_picker(
+            frame, 
+            chunks[6], // Use chunk 6 for the grid
+            app.calendar_date, 
+            date_is_navigable // Pass true only if in Insert mode for visual feedback
+        );
+    }
+
+    // --- Calendar Time Input (NEW) ---
+    let time_chunk_index = 7;
+    let priority_chunk_index = 8;
+    let submit_chunk_index = 10;
+
+    let time_style = if is_active(TodoInputFocus::CalendarTime) {
+        Style::default().fg(Color::Yellow)
+    } else if app.due_by_toggle {
+        Style::default().fg(Color::White)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    
+    // Refactor Time input using horizontal layout
+    let time_chunks = Layout::horizontal([
+        Constraint::Length(14), // Label width
+        Constraint::Length(5),  // Input width (HH:MM)
+        Constraint::Min(0),
+    ]).split(chunks[time_chunk_index]);
+
+    let time_label = Paragraph::new("Time (HH:MM):").style(time_style);
+    frame.render_widget(time_label, time_chunks[0]);
+    
+    let time_input = Paragraph::new(app.time_buffer.as_str()).style(time_style);
+    frame.render_widget(time_input, time_chunks[1]);
+    let time_input_area = time_chunks[1]; // Used for cursor positioning
+
+
+    // --- Priority Input ---
+    let priority_style = if is_active(TodoInputFocus::Priority) {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    
+    // Refactor Priority input using horizontal layout
+    let priority_chunks = Layout::horizontal([
+        Constraint::Length(17), // Label width
+        Constraint::Length(3),  // Input width (0-10)
+        Constraint::Min(0),
+    ]).split(chunks[priority_chunk_index]);
+
+    let priority_label = Paragraph::new("Priority (0-10):").style(priority_style);
+    frame.render_widget(priority_label, priority_chunks[0]);
+    
+    let priority_input = Paragraph::new(app.priority_buffer.as_str()).style(priority_style);
+    frame.render_widget(priority_input, priority_chunks[1]);
+    let priority_input_area = priority_chunks[1]; // Used for cursor positioning
 
 
     // --- Submit Button ---
@@ -826,11 +1529,9 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
         _ => unreachable!(),
     };
     
-    let submit_paragraph = Paragraph::new(submit_text)
+    frame.render_widget(Paragraph::new(submit_text)
         .style(submit_style)
-        .alignment(ratatui::layout::Alignment::Center);
-    
-    frame.render_widget(submit_paragraph, chunks[4]); // Index 4 now
+        .alignment(ratatui::layout::Alignment::Center), chunks[submit_chunk_index]);
 
     // Render the main block border last to ensure it overlays everything else
     frame.render_widget(block, area);
@@ -845,9 +1546,33 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
                 );
             }
             TodoInputFocus::Description => {
+                // Cursor position for Description (multiline)
+                let final_cursor_y = desc_input_area.y + desc_cursor_line.saturating_sub(desc_scroll_offset);
+                let final_cursor_x = desc_input_area.x + desc_cursor_col;
+
                 frame.set_cursor(
-                    desc_input_area.x + app.description_buffer.len() as u16,
-                    desc_input_area.y,
+                    final_cursor_x,
+                    final_cursor_y,
+                );
+            }
+            TodoInputFocus::CalendarTime => {
+                // Cursor for time input (HH:MM)
+                let cursor_offset = match app.time_buffer.len() {
+                    0..=1 => app.time_buffer.len(),
+                    2 => 3, // Skip ':'
+                    3..=4 => app.time_buffer.len() + 1,
+                    _ => 5,
+                } as u16;
+                
+                frame.set_cursor(
+                    time_input_area.x + cursor_offset,
+                    time_input_area.y,
+                );
+            }
+            TodoInputFocus::Priority => {
+                frame.set_cursor(
+                    priority_input_area.x + app.priority_buffer.len() as u16,
+                    priority_input_area.y,
                 );
             }
             TodoInputFocus::Subtasks => { // NEW
@@ -860,7 +1585,7 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
                     final_cursor_y,
                 );
             }
-            _ => {} // Cursor hidden for Submit focus
+            _ => {} // Cursor hidden for Submit/CalendarDate focus in Insert mode
         }
     }
 }
@@ -888,7 +1613,8 @@ pub async fn run_tui() -> Result<()> {
     let mut app = App::new(api_client);
 
     // Initial status fetch
-    app.update_status().await;
+    app.update_system_status_and_logs().await;
+    app.update_dashboard_data().await;
 
     loop {
         // Draw the UI
@@ -898,6 +1624,14 @@ pub async fn run_tui() -> Result<()> {
         if event::poll(Duration::from_millis(250))? {
             // Pass the raw event to handle_input
             app.handle_input(event::read()?).await;
+        } else {
+            // Periodic update for system status and logs, regardless of screen
+            app.update_system_status_and_logs().await;
+            
+            // Only update dashboard data (which includes fetching todos) if we are on the dashboard
+            if app.current_screen == Screen::Dashboard {
+                app.update_dashboard_data().await;
+            }
         }
         
         // Check for quit signal

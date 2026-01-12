@@ -1,7 +1,15 @@
+//! API handlers and routing for the application server.
+//!
+//! This module defines the HTTP endpoints using the `warp` framework, handling
+//! requests related to system status and Todo item management.
+
 use crate::prelude::*;
 use warp::{Filter, Rejection, Reply, http::StatusCode};
 use std::sync::Arc;
 use todo::todo_prelude::TodoItem; // FIX: Import TodoItem from the todo prelude
+use todo::TodoSummary; // NEW: Import TodoSummary
+use db::models::LogEntry; // NEW: Import LogEntry from db models
+use warp::query::query; // NEW: Import query filter
 
 /// State shared across API handlers.
 #[derive(Clone)]
@@ -12,6 +20,8 @@ pub struct ApiState {
 // --- Status Endpoints ---
 
 /// Handler for the /status endpoint.
+///
+/// Returns the current status of all initialized systems and the overall Go/NoGo status.
 pub async fn get_status(
     systems_status: SystemsStatus,
     go_nogo_status: SystemsGoNogo,
@@ -32,6 +42,17 @@ pub async fn get_status(
 }
 
 // --- Todo CRUD Endpoints ---
+
+/// GET /api/v1/todo/summary - Read todo summary statistics
+pub async fn read_todo_summary_handler() -> Result<impl Reply, Rejection> {
+    match todo::get_summary().await {
+        Ok(summary) => Ok(warp::reply::json(&summary)),
+        Err(e) => {
+            error!("Failed to read todo summary: {}", e);
+            Err(warp::reject::custom(ApiError::TodoOperationFailed))
+        }
+    }
+}
 
 /// POST /api/v1/todo - Create a new todo item
 pub async fn create_todo_handler(item: TodoItem) -> Result<impl Reply, Rejection> {
@@ -103,21 +124,47 @@ pub async fn delete_todo_handler(id: i64) -> Result<impl Reply, Rejection> {
     }
 }
 
+// --- Log Endpoints ---
+
+/// Query parameters for fetching logs.
+#[derive(Deserialize)]
+pub struct LogQuery {
+    limit: Option<u32>,
+}
+
+/// GET /api/v1/logs - Read latest log entries
+pub async fn read_logs_handler(query: LogQuery) -> Result<impl Reply, Rejection> {
+    let limit = query.limit.unwrap_or(20); // Default to 20 logs
+    
+    match db::log_read_latest(limit).await {
+        Ok(logs) => Ok(warp::reply::json(&logs)),
+        Err(e) => {
+            error!("Failed to read logs: {}", e);
+            Err(warp::reject::custom(ApiError::LogOperationFailed))
+        }
+    }
+}
+
 // --- Error Handling ---
 
+/// Custom API errors used for rejection handling.
 #[derive(Debug)]
 enum ApiError {
     TodoOperationFailed,
     MismatchedId,
+    LogOperationFailed, // NEW
 }
 
 impl warp::reject::Reject for ApiError {}
 
+/// Handles custom rejections and converts them into appropriate HTTP responses.
 async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
     if let Some(ApiError::TodoOperationFailed) = err.find() {
         Ok(warp::reply::with_status("Todo operation failed", StatusCode::INTERNAL_SERVER_ERROR))
     } else if let Some(ApiError::MismatchedId) = err.find() {
         Ok(warp::reply::with_status("ID in path does not match ID in body", StatusCode::BAD_REQUEST))
+    } else if let Some(ApiError::LogOperationFailed) = err.find() {
+        Ok(warp::reply::with_status("Log operation failed", StatusCode::INTERNAL_SERVER_ERROR))
     } else {
         // Let warp handle other rejections (404, method not allowed, etc.)
         Err(err)
@@ -126,8 +173,15 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
 
 // --- Route Definition ---
 
+/// Defines routes related to Todo item management.
 fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let todo_base = warp::path("todo");
+
+    // GET /api/v1/todo/summary
+    let summary = todo_base
+        .and(warp::path("summary"))
+        .and(warp::get())
+        .and_then(read_todo_summary_handler);
 
     // POST /api/v1/todo
     let create = todo_base
@@ -167,9 +221,10 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::delete())
         .and_then(delete_todo_handler);
 
-    create.or(read_all).or(update).or(print).or(archive).or(delete)
+    summary.or(create).or(read_all).or(update).or(print).or(archive).or(delete)
 }
 
+/// Defines routes related to system status.
 fn status_routes(
     systems_status: SystemsStatus,
     go_nogo_status: SystemsGoNogo,
@@ -184,6 +239,14 @@ fn status_routes(
         .and_then(get_status)
 }
 
+/// Defines routes related to logging.
+fn log_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path("logs")
+        .and(warp::get())
+        .and(query::<LogQuery>())
+        .and_then(read_logs_handler)
+}
+
 
 /// Defines the API routes.
 pub fn routes(
@@ -195,6 +258,7 @@ pub fn routes(
     api_v1.and(
         status_routes(systems_status, go_nogo_status)
         .or(todo_routes())
+        .or(log_routes()) // Include log routes
     )
     .recover(handle_rejection)
 }

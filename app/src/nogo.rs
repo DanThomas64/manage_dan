@@ -1,3 +1,8 @@
+//! System status tracking and Go/NoGo determination logic.
+//!
+//! This module defines the health status of individual subsystems and calculates
+//! the overall operational status of the application.
+
 use crate::prelude::*;
 use tokio::time::{sleep, Duration};
 use serde::{Serialize, Deserialize}; // Added serde imports
@@ -23,11 +28,13 @@ pub struct SystemsStatus {
     pub todo: Status,
 }
 
+/// Holds the overall Go/NoGo status of the application.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)] // Added Serialize/Deserialize
 pub struct SystemsGoNogo {
     pub gono: Status,
 }
 impl SystemsGoNogo {
+    /// Creates a new `SystemsGoNogo` instance initialized to `Status::Init`.
     pub fn new() -> SystemsGoNogo {
         SystemsGoNogo { gono: Status::Init }
     }
@@ -49,12 +56,13 @@ impl SystemsGoNogo {
     /// Check the status of each system in the Status Struct and then update
     /// the overall status accordingly.
     // TODO: Create Error handling for this
+    /// Determines the overall status based on the status of all individual systems.
     pub fn gonogo(&mut self, all_sys: SystemsStatus) -> SystemsGoNogo {
         all_sys.iter().fold(self.gono, |status: Status, (_, x): (&'static str, Status)| {
             let n_status: Status = match status {
                 Status::Init => match x {
                     Status::Go => Status::Go,
-                    Status::Nogo => Status::Nogo,
+                    Status::Nogo | Status::Degraded => Status::Degraded, // Degraded is treated as degraded from Init
                     _ => Status::Unknown,
                 },
                 Status::Go => match x {
@@ -66,6 +74,7 @@ impl SystemsGoNogo {
                     _ => Status::Nogo,
                 },
                 Status::Degraded => match x {
+                    Status::Nogo => Status::Nogo,
                     _ => Status::Degraded,
                 },
                 _ => Status::Unknown,
@@ -112,6 +121,7 @@ impl SystemsStatus {
         }
     }
     // TODO: Create Error handling for this
+    /// Initializes all subsystems and updates their status fields.
     pub fn init(&mut self) -> SystemsStatus {
         
         // 1. Initialize DB first, so the log table exists when logging starts.
@@ -121,6 +131,7 @@ impl SystemsStatus {
         };
 
         // 2. Initialize log system, which relies on DB being ready for DB logging.
+        // This must happen AFTER DB initialization to ensure the 'log' table exists.
         match log::init().map_err(|e| AppError::Log(e).print()).is_ok() {
             true => self.update("log", Status::Go),
             false => self.update("log", Status::Nogo),
@@ -160,6 +171,8 @@ impl SystemsStatus {
         };
         *self
     }
+    
+    /// Returns an iterator over the system statuses.
     pub fn iter(&self) -> SystemsIter {
         SystemsIter {
             systems: *self,
@@ -167,6 +180,7 @@ impl SystemsStatus {
         }
     }
     // TODO: Create Error handling for this
+    /// Updates the status of a specific subsystem by name.
     pub fn update(&mut self, val: &str, status: Status) -> Self {
         match val {
             "db" => self.db = status,
@@ -181,6 +195,7 @@ impl SystemsStatus {
     }
 }
 
+/// An iterator over the fields of `SystemsStatus`.
 pub struct SystemsIter {
     systems: SystemsStatus,
     index: usize,

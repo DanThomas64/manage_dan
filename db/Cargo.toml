@@ -6,10 +6,10 @@ edition.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chrono.workspace = true
 thiserror = { workspace = true }
 tracing = { workspace = true}
 rusqlite = { version = "0.37.0", features = ["bundled"] } # Changed from 0.38 to 0.37.0 for compatibility with tokio-rusqlite 0.7.0
 tokio-rusqlite = "0.7.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-chrono = { workspace = true, features = ["serde", "local_datetime"] }
 serde = { workspace = true, features = ["derive"] } # Added serde dependency for TodoItem models

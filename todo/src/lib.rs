@@ -1,3 +1,8 @@
+//! Business logic layer for Todo item management.
+//!
+//! This crate handles CRUD operations, summary calculations, and printing logic
+//! for Todo items, interacting with the `db` crate for persistence.
+
 pub mod todo_error;
 pub mod todo_prelude;
 pub mod models;
@@ -5,10 +10,21 @@ pub mod models;
 use db::models::TodoItem; // Import TodoItem from db
 use db::todo_error::{TodoLibResult, TodoLibError}; // Import error types from db
 use db::{todo_create, todo_read_all, todo_update, todo_delete, todo_read_one}; // Import DB functions, including new todo_read_one
-use tracing::{info, warn}; // Import info macro
+use tracing::{info, warn, debug}; // Import debug macro
 use printer::PrintJob; // Import PrintJob
 use printer::printer_error::PrinterLibResult; // Import PrinterLibResult
-use chrono::Local; // Import Local for timestamp handling
+use chrono::{Local, Datelike}; // Removed Timelike, kept Datelike for date_naive()
+
+// --- Todo Summary Structure (Copied from tui/src/api.rs for internal use) ---
+/// Summary statistics for pending Todo items.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TodoSummary {
+    pub total_pending: usize,
+    pub high_priority_pending: usize, // Priority >= 8
+    pub due_today: usize,
+    pub overdue: usize,
+}
+// ---------------------------------------------------------------------------
 
 /// Helper function to create and execute a print job for a TodoItem.
 async fn print_ticket(item: &TodoItem) -> PrinterLibResult {
@@ -19,12 +35,21 @@ async fn print_ticket(item: &TodoItem) -> PrinterLibResult {
         format!("Status: {}", if item.completed { "COMPLETED" } else { "PENDING" }),
     ];
     
+    // NEW: Priority and Due Date
+    lines.push(String::new());
+    lines.push(format!("Priority: {}", item.priority));
+    if let Some(due_date) = item.due_date {
+        lines.push(format!("Due Date: {}", due_date.format("%Y-%m-%d %H:%M")));
+    } else {
+        lines.push("Due Date: None".to_string());
+    }
+    
     // Description is now required
     lines.push(String::new());
     lines.push("Description:".to_string());
     lines.extend(item.description.lines().map(|s| format!("  {}", s)));
     
-    // NEW: Subtasks
+    // Subtasks
     if let Some(subtasks) = &item.subtasks {
         lines.push(String::new());
         lines.push("Subtasks/Steps:".to_string());
@@ -46,65 +71,79 @@ async fn print_ticket(item: &TodoItem) -> PrinterLibResult {
     job.execute(0, 0).await
 }
 
-/// Checks if the item needs printing (updated_at > printed_at) and prints if necessary.
+/// Checks if the item needs printing (only upon creation) and prints if necessary.
 /// If printing succeeds, updates the item's printed_at timestamp in the database.
 /// 
-/// `force_print`: If true, skips the updated_at > printed_at check.
-/// `skip_if_toggled_off`: If true, skips printing if the item was just toggled from completed to pending.
-async fn print_ticket_if_needed(
-    item: &mut TodoItem, 
-    force_print: bool, 
-    skip_if_toggled_off: bool,
-    old_item: Option<&TodoItem>
-) -> TodoLibResult {
+/// Note: This function is now only intended to be called immediately after creation.
+async fn print_ticket_on_creation(item: &mut TodoItem) -> TodoLibResult {
     
-    // 1. Never print if the item is completed or archived
+    // 1. Never print if the item is completed or archived upon creation
     if item.completed || item.archived {
         return Ok(());
     }
     
-    // 2. Check if we should skip printing because it was toggled from completed to pending
-    if skip_if_toggled_off {
-        if let Some(old) = old_item {
-            // If it was completed before, but is not completed now, it was toggled off.
-            if old.completed && !item.completed {
-                info!("Skipping automatic print: Item ID {} toggled from completed to pending.", item.id.unwrap_or(0));
-                return Ok(());
+    // 2. Attempt automatic print
+    info!("Attempting to print ticket for newly created Todo ID {}", item.id.unwrap_or(0));
+              
+    match print_ticket(item).await {
+        Ok(()) => {
+            // Update printed_at timestamp locally
+            item.printed_at = Some(Local::now());
+            
+            // Update the item in the DB to persist the new printed_at timestamp
+            let item_to_update = item.clone();
+            
+            // We must use todo_update here to persist the printed_at timestamp
+            db::todo_update(item_to_update).await?;
+            
+            info!("Ticket printed successfully for Todo ID {}", item.id.unwrap_or(0));
+            Ok(())
+        }
+        Err(e) => {
+            // Log error but don't fail the overall operation (creation)
+            warn!("Failed to print ticket for Todo ID {}: {}", item.id.unwrap_or(0), e);
+            // Do NOT update printed_at.
+            Ok(())
+        }
+    }
+}
+
+/// Calculates summary statistics for pending todo items.
+pub async fn get_summary() -> TodoLibResult<TodoSummary> {
+    // Read all non-archived items
+    let items = todo_read_all(false).await?;
+    let now = Local::now();
+    let today = now.date_naive();
+
+    let mut total_pending = 0;
+    let mut high_priority_pending = 0;
+    let mut due_today = 0;
+    let mut overdue = 0;
+
+    for item in items.iter().filter(|i| !i.completed) {
+        total_pending += 1;
+
+        if item.priority >= 8 {
+            high_priority_pending += 1;
+        }
+
+        if let Some(due_date) = item.due_date {
+            let due_date_naive = due_date.date_naive();
+            
+            if due_date_naive == today {
+                due_today += 1;
+            } else if due_date < now {
+                overdue += 1;
             }
         }
     }
 
-    // 3. Check if printing is required based on timestamps or force flag
-    let should_print = force_print || item.printed_at.map_or(true, |p_at| item.updated_at > p_at);
-    
-    if should_print {
-        info!("Attempting to print ticket for Todo ID {} (Updated: {:?}, Printed: {:?}, Forced: {})", 
-              item.id.unwrap_or(0), item.updated_at, item.printed_at, force_print);
-              
-        match print_ticket(item).await {
-            Ok(()) => {
-                // Update printed_at timestamp locally
-                item.printed_at = Some(Local::now());
-                
-                // Update the item in the DB to persist the new printed_at timestamp
-                let item_to_update = item.clone();
-                
-                // We must use todo_update here to persist the printed_at timestamp
-                db::todo_update(item_to_update).await?;
-                
-                info!("Ticket printed successfully for Todo ID {}", item.id.unwrap_or(0));
-                Ok(())
-            }
-            Err(e) => {
-                // Log error but don't fail the overall operation (creation/update)
-                warn!("Failed to print ticket for Todo ID {}: {}", item.id.unwrap_or(0), e);
-                // Do NOT update printed_at, so it tries again later if the item is updated again.
-                Ok(())
-            }
-        }
-    } else {
-        Ok(())
-    }
+    Ok(TodoSummary {
+        total_pending,
+        high_priority_pending,
+        due_today,
+        overdue,
+    })
 }
 
 
@@ -117,9 +156,9 @@ pub async fn create_item(mut item: TodoItem) -> TodoLibResult<TodoItem> {
     
     let new_item = todo_create(item).await?;
     
-    // Attempt automatic print immediately after creation (no old item, not toggled off)
+    // Attempt automatic print immediately after creation
     let mut printable_item = new_item.clone();
-    print_ticket_if_needed(&mut printable_item, false, false, None).await?;
+    print_ticket_on_creation(&mut printable_item).await?;
     
     // Return the item, potentially updated with printed_at timestamp
     Ok(printable_item)
@@ -127,28 +166,20 @@ pub async fn create_item(mut item: TodoItem) -> TodoLibResult<TodoItem> {
 
 /// Reads all TodoItems from the database, filtering out archived items by default.
 pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
-    info!("Reading all non-archived todo items");
+    // debug!("Reading all non-archived todo items"); // Removed log entry
 
     // Pass false to todo_read_all to filter archived items
     todo_read_all(false).await
 }
 
 /// Updates an existing TodoItem in the database.
-pub async fn update_item(mut item: TodoItem) -> TodoLibResult {
+pub async fn update_item(item: TodoItem) -> TodoLibResult {
     let id = item.id.ok_or_else(|| TodoLibError::Unknown)?; // ID must be present for update
     info!("Updating todo item ID: {}", id);
 
-    // 1. Read old item state to check for status toggle
-    let old_item = todo_read_one(id).await.ok();
-    
-    // 2. Perform the update first (this updates `updated_at` in the DB)
-    todo_update(item.clone()).await?;
-    
-    // 3. Manually set `updated_at` to now for the print check, matching what the DB used.
-    item.updated_at = Local::now(); 
-    
-    // 4. Attempt automatic print if needed, skipping if it was toggled off completion
-    print_ticket_if_needed(&mut item, false, true, old_item.as_ref()).await
+    // 1. Perform the update
+    // Note: Automatic printing on update is now disabled per user request.
+    todo_update(item).await
 }
 
 /// Manually prints a ticket for a TodoItem by ID, regardless of timestamps.
@@ -157,8 +188,21 @@ pub async fn print_item(id: i64) -> TodoLibResult {
     
     let mut item = todo_read_one(id).await?;
     
-    // Force print, do not skip if toggled off (since this is manual), no old item needed
-    print_ticket_if_needed(&mut item, true, false, None).await
+    // Use the underlying print_ticket function for manual printing, 
+    // and update the printed_at timestamp if successful.
+    match print_ticket(&item).await {
+        Ok(()) => {
+            // Update printed_at timestamp locally and persist it
+            item.printed_at = Some(Local::now());
+            db::todo_update(item).await?;
+            info!("Ticket manually printed successfully for Todo ID {}", id);
+            Ok(())
+        }
+        Err(e) => {
+            warn!("Failed manual print for Todo ID {}: {}", id, e);
+            Err(TodoLibError::CannotInitialize(format!("Manual print failed: {}", e)))
+        }
+    }
 }
 
 /// Archives a TodoItem by ID (sets archived=true).
@@ -179,7 +223,7 @@ pub async fn delete_item(id: i64) -> TodoLibResult {
     todo_delete(id).await
 }
 
-// The synchronous init function remains the same, only ensuring the module is initialized.
+/// Initializes the Todo subsystem.
 pub fn init() -> TodoLibResult {
     info!("initializing todo");
     // The actual table creation is now handled by db::init()

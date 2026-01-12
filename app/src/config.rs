@@ -1,3 +1,8 @@
+//! Application configuration management.
+//!
+//! This module handles loading configuration settings from environment variables
+//! and configuration files, providing global access to the settings.
+
 use anyhow::Result;
 use config::{Config, Environment, File};
 use serde::Deserialize;
@@ -6,12 +11,14 @@ use std::sync::OnceLock;
 /// Static storage for the application configuration, initialized once.
 static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
 
+/// Configuration specific to the USB printer device.
 #[derive(Debug, Deserialize, Clone)]
 pub struct PrinterConfig {
     pub vendor_id: u16,
     pub product_id: u16,
 }
 
+/// Global application configuration structure.
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub environment: String,
@@ -51,6 +58,8 @@ impl AppConfig {
     }
 
     /// Initializes the global application configuration.
+    ///
+    /// This function should only be called once during application startup.
     pub fn init(config: AppConfig) -> Result<()> {
         APP_CONFIG
             .set(config)

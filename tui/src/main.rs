@@ -1,3 +1,8 @@
+//! Terminal User Interface (TUI) client for interacting with the application API.
+//!
+//! This client provides a text-based interface for monitoring system status and
+//! managing Todo items.
+
 use anyhow::Result;
 mod ui;
 mod api;

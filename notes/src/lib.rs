@@ -1,8 +1,14 @@
+//! Notes management subsystem.
+//!
+//! This crate handles operations related to user notes, although currently it only
+//! provides initialization functionality.
+
 pub mod notes_error;
 pub mod notes_prelude;
 
 use crate::notes_prelude::*;
 
+/// Initializes the notes subsystem.
 pub fn init() -> NotesLibResult {
     info!("initializing notes");
     // Err(NotesLibError::CannotInitialize(

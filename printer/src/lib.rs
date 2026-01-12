@@ -1,8 +1,13 @@
+//! USB Printer communication and job management subsystem.
+//!
+//! This crate handles connecting to a USB thermal printer and executing print jobs
+//! using ESC/POS commands.
+
 pub mod printer_error;
 pub mod printer_prelude;
 
 use crate::printer_prelude::*;
-use escpos::driver::{Driver, NativeUsbDriver};
+use escpos::driver::NativeUsbDriver;
 use escpos::printer::Printer;
 use escpos::ui::line::*;
 use escpos::utils::*;
@@ -92,6 +97,8 @@ impl PrintJob {
     }
 
     /// Executes the print job by using the globally initialized printer instance.
+    ///
+    /// Note: `_vid` and `_pid` are ignored as the printer connection is managed globally.
     pub async fn execute(self, _vid: u16, _pid: u16) -> PrinterLibResult {
         // VID/PID are now ignored as the printer is initialized globally
         PrinterManager::get().execute_job(self)
