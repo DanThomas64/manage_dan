@@ -94,6 +94,20 @@ async fn poll() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             continue;
         }
 
+        // Don't print a ticket when the task has been completed; just record
+        // the new hash so the next poll doesn't trigger again.
+        if task.done {
+            info!(
+                "Task {} \"{}\" marked completed — updating hash, skipping print",
+                task.id, task.title
+            );
+            let now = Local::now();
+            if let Err(e) = db::printed_record_set(task.id, now, hash).await {
+                warn!("Failed to persist print record for task {}: {}", task.id, e);
+            }
+            continue;
+        }
+
         let reason = if stored.is_none() { "first print" } else { "content changed" };
         info!(
             "Printing task {} \"{}\" ({})",
