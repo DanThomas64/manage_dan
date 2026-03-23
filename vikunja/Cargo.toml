@@ -1,16 +1,15 @@
 [package]
-name = "todo"
+name = "vikunja"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 
 [dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1.0"
+serde.workspace = true
 chrono.workspace = true
-anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tokio.workspace = true
-serde.workspace = true
-db      = { path = "../db" }
-vikunja = { path = "../vikunja" }
-printer = { path = "../printer" }
+anyhow.workspace = true

@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, Status, StatusResponse, TodoItem, LogEntry}; // Import LogEntry
+use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyModifiers},
@@ -88,6 +88,29 @@ pub struct App {
     pub priority_buffer: String,
 
     // Removed: pub todo_summary: Option<TodoSummary>,
+}
+
+/// Parses the multiline subtasks input buffer into a `Vec<Subtask>`.
+///
+/// Each non-empty line becomes one subtask. A line starting with `[x] ` is
+/// treated as done; `[ ] ` or plain text is treated as not done.
+fn parse_subtasks_buffer(buffer: &str) -> Vec<Subtask> {
+    buffer
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            if let Some(title) = trimmed.strip_prefix("[x] ") {
+                Some(Subtask { id: None, title: title.to_string(), done: true })
+            } else if let Some(title) = trimmed.strip_prefix("[ ] ") {
+                Some(Subtask { id: None, title: title.to_string(), done: false })
+            } else {
+                Some(Subtask { id: None, title: trimmed.to_string(), done: false })
+            }
+        })
+        .collect()
 }
 
 impl App {
@@ -504,7 +527,10 @@ impl App {
                 self.editing_item_id = item.id;
                 self.title_buffer = item.title.clone();
                 self.description_buffer = item.description.clone(); // Now required String
-                self.subtasks_buffer = item.subtasks.clone().unwrap_or_default();
+                self.subtasks_buffer = item.subtasks.iter()
+                    .map(|s| format!("{} {}", if s.done { "[x]" } else { "[ ]" }, s.title))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 
                 // NEW: Populate date/time/toggle
                 if let Some(dt) = item.due_date {
@@ -615,37 +641,35 @@ impl App {
             }
         };
         
-        let subtasks_opt = if subtasks.is_empty() { None } else { Some(subtasks) };
-        
+        let parsed_subtasks = parse_subtasks_buffer(&subtasks);
+
         let result = match self.todo_edit_mode {
             TodoEditMode::Adding => {
-                // When adding, we rely on the API/DB to set created_at/updated_at
-                let mut new_item = TodoItem::new(title, description); // Description is required
-                new_item.subtasks = subtasks_opt;
-                new_item.due_date = due_date_opt; // NEW
-                new_item.priority = priority; // NEW
-                self.api_client.create_todo(new_item).await.map(|_| ()) // Map created item to ()
+                let mut new_item = TodoItem::new(title, description);
+                new_item.subtasks = parsed_subtasks;
+                new_item.due_date = due_date_opt;
+                new_item.priority = priority;
+                self.api_client.create_todo(new_item).await.map(|_| ())
             }
             TodoEditMode::Editing => {
                 let id = self.editing_item_id.expect("Editing mode requires an ID");
-                
-                // Find the existing item to preserve created_at and completed status/timestamp
+
                 let existing_item = self.todo_items.iter().find(|i| i.id == Some(id)).cloned();
-                
+
                 if let Some(existing) = existing_item {
                     let updated_item = TodoItem {
                         id: Some(id),
                         title,
-                        description, // Required
+                        description,
                         completed: existing.completed,
-                        created_at: existing.created_at, // Preserve creation time
-                        updated_at: Local::now(), // Will be overwritten by API/DB, but required for struct
-                        completed_at: existing.completed_at, // Preserve completion time
-                        printed_at: existing.printed_at, // Preserve printing time (FIX E0063)
-                        subtasks: subtasks_opt,
-                        archived: existing.archived, // Preserve archived status
-                        due_date: due_date_opt, // NEW
-                        priority, // NEW
+                        created_at: existing.created_at,
+                        updated_at: Local::now(),
+                        completed_at: existing.completed_at,
+                        printed_at: existing.printed_at,
+                        subtasks: parsed_subtasks,
+                        archived: existing.archived,
+                        due_date: due_date_opt,
+                        priority,
                     };
                     self.api_client.update_todo(updated_item).await
                 } else {
@@ -1021,10 +1045,13 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
             text_lines.extend(Text::from(item.description.as_str()).lines.into_iter().map(|l| Line::from(format!("  {}", l))));
             text_lines.push(Line::from(""));
 
-            // Subtasks (NEW)
-            if let Some(subtasks) = &item.subtasks {
-                text_lines.push(Line::from("Subtasks/Steps:").underlined());
-                text_lines.extend(Text::from(subtasks.as_str()).lines.into_iter().map(|l| Line::from(format!("  {}", l))));
+            // Subtasks
+            if !item.subtasks.is_empty() {
+                text_lines.push(Line::from("Subtasks:").underlined());
+                for sub in &item.subtasks {
+                    let marker = if sub.done { "[x]" } else { "[ ]" };
+                    text_lines.push(Line::from(format!("  {} {}", marker, sub.title)));
+                }
                 text_lines.push(Line::from(""));
             }
             

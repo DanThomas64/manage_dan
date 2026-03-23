@@ -97,8 +97,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         error!("Failed to print initialization status: {}", e);
     }
 
-    // 5. Start monitoring loop in the background
+    // 5. Start system status monitoring loop in the background
     go_nogo.start_monitoring(systems);
+
+    // 5b. Start the print monitor — polls all Vikunja projects for "print"-labelled tasks
+    let interval = AppConfig::get().monitor_interval_secs;
+    tokio::spawn(todo::monitor::run(interval));
 
     // 6. Start the HTTP API server
     info!("Application initialized. Starting API server.");

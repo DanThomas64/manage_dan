@@ -6,3 +6,7 @@ app.sqlite
 .termdbms
 .termdbms/.3101056271404904488
 app.sqlite-journal
+
+# Local config overrides — never commit these
+config/local.toml
+config/local.*.toml

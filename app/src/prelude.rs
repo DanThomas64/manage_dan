@@ -10,9 +10,9 @@ pub use crate::log::log_error::{LogLibError, LogLibResult};
 pub use crate::notes::notes_error::{NotesLibError, NotesLibResult};
 pub use crate::project::project_error::{ProjectLibError, ProjectLibResult};
 pub use crate::printer::printer_error::{PrinterLibError, PrinterLibResult};
-pub use crate::todo::todo_prelude::{TodoLibError, TodoLibResult, TodoItem}; // FIX: Import types from todo::todo_prelude
+pub use crate::todo::todo_prelude::{TodoLibError, TodoLibResult, TodoItem, Subtask};
 pub use crate::nogo::{SystemsGoNogo, Status, SystemsStatus};
-pub use crate::config::{AppConfig, PrinterConfig};
+pub use crate::config::{AppConfig, PrinterConfig, VikunjaConfig};
 pub use crate::{subsystem_init, system_init};
 
 pub use tracing_subscriber::fmt::time::ChronoLocal;

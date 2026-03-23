@@ -1,86 +1,32 @@
 //! Database access layer for the application.
 //!
-//! This crate manages the SQLite database connection, schema initialization,
-//! and provides asynchronous wrappers for CRUD operations, primarily focusing on
-//! the `todo` table and application logging.
+//! Manages the SQLite database connection, schema initialization, log persistence,
+//! and a lightweight `printed_tasks` table for tracking when tasks were last printed.
 
 pub mod db_error;
 pub mod db_prelude;
-pub mod models; // New module for TodoItem
-pub mod todo_error; // New module for TodoLibError
+pub mod models;
 
 use crate::db_error::{DbLibError, DbLibResult};
 use crate::db_prelude::*;
-use crate::models::{TodoItem, LogEntry}; // Import LogEntry here
-use crate::todo_error::{TodoLibError, TodoLibResult}; // Import Todo types from local module
-use rusqlite::params;
-use tokio_rusqlite::{Connection};
+use crate::models::LogEntry;
+use rusqlite::{params, OptionalExtension};
+use tokio_rusqlite::Connection;
 use rusqlite::{Result as RusqliteResult, Row};
-use chrono::{DateTime, Local}; // Removed TimeZone
+use chrono::{DateTime, Local};
+use std::collections::HashMap;
 
-// Define DB file location (assuming it's a constant used internally)
 const DB_FILE: &str = "app.sqlite";
 
-/// Helper function to convert a database row into a TodoItem.
-fn row_to_todo_item(row: &Row) -> RusqliteResult<TodoItem> {
-    // Helper to parse RFC3339 string into DateTime<Local>
+/// Helper to convert a database row into a LogEntry.
+fn row_to_log_entry(row: &Row) -> RusqliteResult<LogEntry> {
     let parse_datetime = |s: String| {
         DateTime::parse_from_rfc3339(&s)
             .map(|dt| dt.with_timezone(&Local))
-            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(
+                0, rusqlite::types::Type::Text, Box::new(e),
+            ))
     };
-
-    let completed_at_str: Option<String> = row.get(5)?;
-    let completed_at = completed_at_str
-        .map(parse_datetime)
-        .transpose()?;
-        
-    // Read printed_at (Index 7)
-    let printed_at_str: Option<String> = row.get(7)?;
-    let printed_at = printed_at_str
-        .map(parse_datetime)
-        .transpose()?;
-        
-    // Read subtasks (Index 8)
-    let subtasks: Option<String> = row.get(8)?;
-    
-    // Read archived (Index 9)
-    let archived: bool = row.get(9)?;
-
-    // NEW: Read due_date (Index 10)
-    let due_date_str: Option<String> = row.get(10)?;
-    let due_date = due_date_str
-        .map(parse_datetime)
-        .transpose()?;
-
-    // NEW: Read priority (Index 11)
-    let priority: u8 = row.get(11)?;
-
-
-    Ok(TodoItem {
-        id: row.get(0)?,
-        title: row.get(1)?,
-        description: row.get(2)?, // Now required String
-        completed: row.get(3)?,
-        created_at: row.get::<_, String>(4).and_then(parse_datetime)?,
-        updated_at: row.get::<_, String>(6).and_then(parse_datetime)?,
-        completed_at,
-        printed_at,
-        subtasks,
-        archived,
-        due_date, // NEW
-        priority, // NEW
-    })
-}
-
-/// Helper function to convert a database row into a LogEntry.
-fn row_to_log_entry(row: &rusqlite::Row) -> RusqliteResult<LogEntry> {
-    let parse_datetime = |s: String| {
-        DateTime::parse_from_rfc3339(&s)
-            .map(|dt| dt.with_timezone(&Local))
-            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
-    };
-
     Ok(LogEntry {
         id: row.get(0)?,
         timestamp: row.get::<_, String>(1).and_then(parse_datetime)?,
@@ -90,69 +36,45 @@ fn row_to_log_entry(row: &rusqlite::Row) -> RusqliteResult<LogEntry> {
     })
 }
 
-/// Initializes the database connection and ensures the log and todo tables exist.
+/// Initializes the database and ensures all required tables exist.
 pub fn init() -> DbLibResult {
     info!("initializing db");
-
-    // Use synchronous rusqlite for schema setup during synchronous initialization phase
     let conn = rusqlite::Connection::open(DB_FILE)?;
 
-    // 1. Create log table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS log (
-            id INTEGER PRIMARY KEY,
+            id        INTEGER PRIMARY KEY,
             timestamp TEXT NOT NULL,
-            level TEXT NOT NULL,
-            target TEXT NOT NULL,
-            message TEXT TEXT NOT NULL
+            level     TEXT NOT NULL,
+            target    TEXT NOT NULL,
+            message   TEXT NOT NULL
         )",
         [],
     )?;
 
-    // 2. Create todo table, including new timestamp fields
-    // NOTE: description is NOT NULL, subtasks is added, archived is added.
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS todo (
-            id INTEGER PRIMARY KEY,
-            title TEXT NOT NULL,
-            description TEXT NOT NULL,
-            completed INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL,
-            completed_at TEXT,
-            updated_at TEXT NOT NULL,
-            printed_at TEXT,
-            subtasks TEXT,
-            archived INTEGER NOT NULL DEFAULT 0,
-            due_date TEXT,
-            priority INTEGER NOT NULL DEFAULT 0
+        "CREATE TABLE IF NOT EXISTS printed_tasks (
+            vikunja_task_id INTEGER PRIMARY KEY,
+            printed_at      TEXT NOT NULL,
+            content_hash    TEXT
         )",
         [],
     )?;
-    
-    // 2b. Simple migration: Add printed_at column if it doesn't exist in an older database.
-    let _ = conn.execute("ALTER TABLE todo ADD COLUMN printed_at TEXT", []);
-    
-    // 2c. Simple migration: Add subtasks column if it doesn't exist.
-    let _ = conn.execute("ALTER TABLE todo ADD COLUMN subtasks TEXT", []);
-
-    // 2d. Simple migration: Add archived column if it doesn't exist.
-    let _ = conn.execute("ALTER TABLE todo ADD COLUMN archived INTEGER NOT NULL DEFAULT 0", []);
-
-    // 2e. Simple migration: Add due_date column if it doesn't exist.
-    let _ = conn.execute("ALTER TABLE todo ADD COLUMN due_date TEXT", []);
-
-    // 2f. Simple migration: Add priority column if it doesn't exist.
-    let _ = conn.execute("ALTER TABLE todo ADD COLUMN priority INTEGER NOT NULL DEFAULT 0", []);
+    // Migration: add content_hash to existing databases.
+    let _ = conn.execute(
+        "ALTER TABLE printed_tasks ADD COLUMN content_hash TEXT",
+        [],
+    );
 
     Ok(())
 }
 
-/// Logs a significant event to the database asynchronously.
+// --- Logging ---
+
+/// Writes a log event to the database.
 pub async fn log_event(level: &str, target: &str, message: &str) -> DbLibResult {
     let conn = Connection::open(DB_FILE).await?;
     let timestamp = chrono::Local::now().to_rfc3339();
-
-    // Convert borrowed slices to owned Strings so they can be moved into the 'static closure
     let level = level.to_string();
     let target = target.to_string();
     let message = message.to_string();
@@ -165,159 +87,147 @@ pub async fn log_event(level: &str, target: &str, message: &str) -> DbLibResult 
         Ok(())
     })
     .await
-    .map_err(|e| e.into()) // Convert TokioSqliteError to DbLibError
+    .map_err(|e| e.into())
 }
 
-/// Executes a synchronous database operation asynchronously on the Tokio thread pool.
-/// This is a generic helper for other modules (like todo) to interact with the DB.
+/// Reads the latest N log entries.
+pub async fn log_read_latest(limit: u32) -> DbLibResult<Vec<LogEntry>> {
+    execute_async(move |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, timestamp, level, target, message FROM log ORDER BY id DESC LIMIT ?1",
+        )?;
+        let entries: RusqliteResult<Vec<LogEntry>> =
+            stmt.query_map(params![limit], row_to_log_entry)?.collect();
+        entries
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading logs: {}", e)))
+}
+
+// --- printed_tasks ---
+
+/// Returns the printed_at timestamp for a given Vikunja task ID, if recorded.
+pub async fn printed_at_get(task_id: i64) -> DbLibResult<Option<DateTime<Local>>> {
+    let opt_str = execute_async(move |conn| {
+        conn.query_row(
+            "SELECT printed_at FROM printed_tasks WHERE vikunja_task_id = ?1",
+            params![task_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading printed_at: {}", e)))?;
+
+    Ok(opt_str.and_then(|s| {
+        DateTime::parse_from_rfc3339(&s)
+            .ok()
+            .map(|dt| dt.with_timezone(&Local))
+    }))
+}
+
+/// Returns printed_at timestamps for all tracked task IDs.
+pub async fn printed_at_get_all() -> DbLibResult<HashMap<i64, DateTime<Local>>> {
+    execute_async(move |conn| {
+        let mut stmt =
+            conn.prepare("SELECT vikunja_task_id, printed_at FROM printed_tasks")?;
+        let rows: RusqliteResult<Vec<(i64, String)>> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect();
+        rows
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading printed_at_all: {}", e)))
+    .map(|rows| {
+        rows.into_iter()
+            .filter_map(|(id, s)| {
+                DateTime::parse_from_rfc3339(&s)
+                    .ok()
+                    .map(|dt| (id, dt.with_timezone(&Local)))
+            })
+            .collect()
+    })
+}
+
+/// Records (or updates) the printed_at timestamp for a Vikunja task.
+/// Does not modify the stored content_hash.
+pub async fn printed_at_set(task_id: i64, printed_at: DateTime<Local>) -> DbLibResult {
+    let ts = printed_at.to_rfc3339();
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO printed_tasks (vikunja_task_id, printed_at)
+             VALUES (?1, ?2)
+             ON CONFLICT(vikunja_task_id) DO UPDATE SET printed_at = excluded.printed_at",
+            params![task_id, ts],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error setting printed_at: {}", e)))
+}
+
+/// Returns the stored content hash for a Vikunja task, if any.
+pub async fn printed_hash_get(task_id: i64) -> DbLibResult<Option<String>> {
+    let opt = execute_async(move |conn| {
+        conn.query_row(
+            "SELECT content_hash FROM printed_tasks WHERE vikunja_task_id = ?1",
+            params![task_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading content_hash: {}", e)))?;
+
+    Ok(opt.flatten())
+}
+
+/// Records (or updates) the printed_at timestamp AND content hash together.
+/// Used by the print monitor after successfully printing a task.
+pub async fn printed_record_set(
+    task_id: i64,
+    printed_at: DateTime<Local>,
+    content_hash: String,
+) -> DbLibResult {
+    let ts = printed_at.to_rfc3339();
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO printed_tasks (vikunja_task_id, printed_at, content_hash)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(vikunja_task_id) DO UPDATE SET
+               printed_at   = excluded.printed_at,
+               content_hash = excluded.content_hash",
+            params![task_id, ts, content_hash],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error setting printed record: {}", e)))
+}
+
+/// Removes the printed_at record for a Vikunja task (e.g. when the task is deleted).
+pub async fn printed_at_delete(task_id: i64) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "DELETE FROM printed_tasks WHERE vikunja_task_id = ?1",
+            params![task_id],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting printed_at: {}", e)))
+}
+
+// --- Generic helper ---
+
 pub async fn execute_async<F, T>(f: F) -> DbLibResult<T>
 where
-    // F must return Result<T, rusqlite::Error>
     F: FnOnce(&mut rusqlite::Connection) -> RusqliteResult<T> + Send + 'static,
     T: Send + 'static,
 {
     let conn = Connection::open(DB_FILE).await?;
-    
-    // conn.call(f) returns Result<T, tokio_rusqlite::Error>
     conn.call(f).await.map_err(|e| e.into())
 }
-
-/// Reads the latest log entries from the database, up to `limit`.
-pub async fn log_read_latest(limit: u32) -> DbLibResult<Vec<LogEntry>> {
-    execute_async(move |conn: &mut rusqlite::Connection| {
-        let query = "SELECT id, timestamp, level, target, message FROM log ORDER BY id DESC LIMIT ?1";
-        
-        let mut stmt = conn.prepare(query)?;
-        let log_iter = stmt.query_map(params![limit], row_to_log_entry)?;
-        
-        let logs: RusqliteResult<Vec<LogEntry>> = log_iter.collect();
-        logs
-    }).await.map_err(|e| DbLibError::Internal(format!("DB error during log read: {}", e)))
-}
-
-// --- Todo CRUD Logic (Moved from todo/src/lib.rs) ---
-
-/// Creates a new TodoItem in the database. Returns the inserted item with its ID.
-pub async fn todo_create(item: TodoItem) -> TodoLibResult<TodoItem> {
-    let now = Local::now().to_rfc3339();
-    
-    execute_async(move |conn: &mut rusqlite::Connection| {
-        conn.execute(
-            "INSERT INTO todo (title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                item.title, 
-                item.description, 
-                item.completed, 
-                now, // created_at
-                item.completed_at.map(|dt| dt.to_rfc3339()), // completed_at (None)
-                now, // updated_at
-                item.printed_at.map(|dt| dt.to_rfc3339()), // printed_at
-                item.subtasks, 
-                item.archived, 
-                item.due_date.map(|dt| dt.to_rfc3339()), // NEW
-                item.priority, // NEW
-            ],
-        )?;
-        let id = conn.last_insert_rowid();
-        
-        // Retrieve the newly inserted item (must select 12 columns now)
-        let mut stmt = conn.prepare("SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority FROM todo WHERE id = ?1")?;
-        let new_item = stmt.query_row(params![id], row_to_todo_item)?;
-        
-        Ok(new_item)
-    }).await.map_err(|e| TodoLibError::CannotInitialize(format!("DB error during creation: {}", e)))
-}
-
-/// Reads a single TodoItem by ID.
-pub async fn todo_read_one(id: i64) -> TodoLibResult<TodoItem> {
-    execute_async(move |conn: &mut rusqlite::Connection| {
-        // Must select 12 columns now
-        let mut stmt = conn.prepare("SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority FROM todo WHERE id = ?1")?;
-        let item = stmt.query_row(params![id], row_to_todo_item)?;
-        Ok(item)
-    }).await.map_err(|e| TodoLibError::CannotInitialize(format!("DB error during read: {}", e)))
-}
-
-/// Reads all TodoItems from the database.
-/// If `include_archived` is false, only non-archived items are returned.
-pub async fn todo_read_all(include_archived: bool) -> TodoLibResult<Vec<TodoItem>> {
-    execute_async(move |conn: &mut rusqlite::Connection| {
-        let query = if include_archived {
-            "SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority FROM todo ORDER BY id ASC"
-        } else {
-            "SELECT id, title, description, completed, created_at, completed_at, updated_at, printed_at, subtasks, archived, due_date, priority FROM todo WHERE archived = 0 ORDER BY id ASC"
-        };
-        
-        let mut stmt = conn.prepare(query)?;
-        let item_iter = stmt.query_map(params![], row_to_todo_item)?;
-        
-        let items: RusqliteResult<Vec<TodoItem>> = item_iter.collect();
-        items
-    }).await.map_err(|e| TodoLibError::CannotInitialize(format!("DB error during read: {}", e)))
-}
-
-/// Updates an existing TodoItem in the database.
-pub async fn todo_update(item: TodoItem) -> TodoLibResult {
-    let id = item.id.ok_or_else(|| TodoLibError::Unknown)?;
-    let now = Local::now().to_rfc3339();
-    
-    // Determine completed_at status based on item.completed flag
-    let completed_at_value = if item.completed {
-        // Use the value provided in `item.completed_at` if present,
-        // otherwise we set it to `now` if `item.completed` is true.
-        item.completed_at.map(|dt| dt.to_rfc3339()).or(Some(now.clone()))
-    } else {
-        // If completed is false, clear completed_at
-        None
-    };
-
-    execute_async(move |conn: &mut rusqlite::Connection| {
-        let rows_affected = conn.execute(
-            "UPDATE todo SET 
-                title = ?1, 
-                description = ?2, 
-                completed = ?3, 
-                completed_at = ?4, 
-                updated_at = ?5,
-                printed_at = ?6,
-                subtasks = ?7,
-                archived = ?8,
-                due_date = ?9,
-                priority = ?10
-             WHERE id = ?11",
-            params![
-                item.title, 
-                item.description, 
-                item.completed, 
-                completed_at_value, // ?4
-                now, // updated_at ?5 (DB sets this explicitly)
-                item.printed_at.map(|dt| dt.to_rfc3339()), // printed_at ?6
-                item.subtasks, // ?7
-                item.archived, // ?8
-                item.due_date.map(|dt| dt.to_rfc3339()), // NEW ?9
-                item.priority, // NEW ?10
-                id // ?11
-            ],
-        )?;
-        if rows_affected == 0 {
-            // Note: We rely on the caller (todo module) to handle logging if needed.
-        }
-        Ok(())
-    }).await.map_err(|e| TodoLibError::CannotInitialize(format!("DB error during update: {}", e)))
-}
-
-/// Deletes a TodoItem by ID.
-pub async fn todo_delete(id: i64) -> TodoLibResult {
-    execute_async(move |conn: &mut rusqlite::Connection| {
-        let rows_affected = conn.execute("DELETE FROM todo WHERE id = ?1", params![id])?;
-        if rows_affected == 0 {
-            // Note: We rely on the caller (todo module) to handle logging if needed.
-        }
-        Ok(())
-    }).await.map_err(|e| TodoLibError::CannotInitialize(format!("DB error during delete: {}", e)))
-}
-
 
 #[cfg(test)]
 mod tests {
@@ -325,9 +235,6 @@ mod tests {
 
     #[test]
     fn it_works() {
-        // Note: Testing DB initialization requires handling the file system interaction.
-        // For simplicity, we rely on the synchronous nature of `rusqlite::Connection::open`
-        // and schema creation.
         let result = init();
         assert!(result.is_ok());
     }

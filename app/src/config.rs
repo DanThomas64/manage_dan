@@ -18,12 +18,22 @@ pub struct PrinterConfig {
     pub product_id: u16,
 }
 
+/// Configuration for the Vikunja task management backend.
+#[derive(Debug, Deserialize, Clone)]
+pub struct VikunjaConfig {
+    pub base_url: String,
+    pub api_token: String,
+    pub project_id: i64,
+}
+
 /// Global application configuration structure.
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
     pub environment: String,
     pub printer: PrinterConfig,
-    // Add other configuration sections here as needed
+    pub vikunja: VikunjaConfig,
+    /// How often the print monitor polls Vikunja for labelled tasks (seconds).
+    pub monitor_interval_secs: u64,
 }
 
 impl AppConfig {
@@ -35,14 +45,22 @@ impl AppConfig {
             .set_default("printer.vendor_id", 0x0fe6)?
             .set_default("printer.product_id", 0x811e)?
             
+            // Vikunja defaults
+            .set_default("vikunja.base_url", "http://localhost:3456")?
+            .set_default("vikunja.api_token", "")?
+            .set_default("vikunja.project_id", 1i64)?
+            .set_default("monitor_interval_secs", 30u64)?
+
             // 2. Load configuration file (e.g., config/default.toml)
             .add_source(File::with_name("config/default").required(false))
             
-            // 3. Load environment-specific configuration (e.g., config/production.toml)
+            // 3. Load environment-specific configuration (e.g., config/development.toml)
             .add_source(File::with_name(&format!("config/{}", std::env::var("APP_ENV").unwrap_or_else(|_| "development".into()))).required(false))
-            
-            // 4. Override with environment variables (e.g., APP_PRINTER_VENDOR_ID)
-            // Environment loading should still work without explicit 'env' feature in 0.15.x
+
+            // 4. Load local overrides — gitignored, never committed (put secrets here)
+            .add_source(File::with_name("config/local").required(false))
+
+            // 5. Override with environment variables (e.g., APP_VIKUNJA_API_TOKEN)
             .add_source(Environment::with_prefix("APP").separator("_"));
 
         let settings = config_builder.build()?;

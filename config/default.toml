@@ -11,3 +11,16 @@ vendor_id = 4070
 # Product ID (PID) for the USB ESC/POS printer
 # Default: 0x811e
 product_id = 33054
+
+# How often the print monitor polls Vikunja for "print"-labelled tasks (seconds).
+monitor_interval_secs = 30
+
+[vikunja]
+# Base URL of your self-hosted Vikunja instance (no trailing slash)
+base_url = "http://localhost:3456"
+
+# API token created in Vikunja Settings > API Tokens
+api_token = ""
+
+# Vikunja project ID to store tasks in
+project_id = 1

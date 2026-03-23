@@ -1,2 +1,22 @@
-// TodoLibError definition moved to db/src/todo_error.rs to break cyclic dependency.
-// The todo crate should now re-export TodoLibError from db.
+use thiserror::Error;
+use vikunja::vikunja_error::VikunjaError;
+
+pub type TodoLibResult<T = ()> = Result<T, TodoLibError>;
+
+#[derive(Error, Debug)]
+pub enum TodoLibError {
+    #[error("unable to initialize todo system: {0}")]
+    CannotInitialize(String),
+
+    #[error("todo item not found: {0}")]
+    NotFound(i64),
+
+    #[error("Vikunja error: {0}")]
+    Vikunja(#[from] VikunjaError),
+
+    #[error("database error: {0}")]
+    Db(String),
+
+    #[error("unknown todo error")]
+    Unknown,
+}

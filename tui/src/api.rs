@@ -59,37 +59,35 @@ pub struct LogEntry {
     pub message: String,
 }
 
-// --- Todo Data Structure copied from db/src/models.rs (Canonical source) ---
+// --- Todo Data Structures (mirrors todo::models) ---
 
-/// Represents a single Todo item (mirrors db::models::TodoItem).
+/// A single subtask, backed by a Vikunja child task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Subtask {
+    pub id: Option<i64>,
+    pub title: String,
+    pub done: bool,
+}
+
+/// Represents a single Todo item (mirrors todo::models::TodoItem).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: Option<i64>,
     pub title: String,
-    pub description: String, // Changed from Option<String> to String (Required)
+    pub description: String,
     pub completed: bool,
-    
-    // New timestamp fields
     pub created_at: DateTime<Local>,
     pub updated_at: DateTime<Local>,
     pub completed_at: Option<DateTime<Local>>,
-    
-    // New field for tracking ticket printing
     pub printed_at: Option<DateTime<Local>>,
-
-    // New optional field for subtasks
-    pub subtasks: Option<String>,
-
-    // New field for archiving
+    /// Subtasks backed by Vikunja child tasks linked via a `subtask` relation.
+    pub subtasks: Vec<Subtask>,
     pub archived: bool,
-
-    // NEW: Due date and Priority
     pub due_date: Option<DateTime<Local>>,
     pub priority: u8,
 }
 
 impl TodoItem {
-    /// Creates a new TodoItem, typically used before insertion into the database.
     pub fn new(title: String, description: String) -> Self {
         let now = Local::now();
         TodoItem {
@@ -101,7 +99,7 @@ impl TodoItem {
             updated_at: now,
             completed_at: None,
             printed_at: None,
-            subtasks: None,
+            subtasks: Vec::new(),
             archived: false,
             due_date: None,
             priority: 0,
