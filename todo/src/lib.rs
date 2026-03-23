@@ -9,6 +9,7 @@ pub mod todo_error;
 pub mod todo_prelude;
 pub mod models;
 pub mod monitor;
+pub mod daily_summary;
 
 use chrono::{DateTime, Local, Utc};
 use tracing::{info, warn};

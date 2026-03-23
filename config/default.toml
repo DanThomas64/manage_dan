@@ -18,6 +18,14 @@ mode = "terminal"
 # How often the print monitor polls Vikunja for "print"-labelled tasks (seconds).
 monitor_interval_secs = 30
 
+# Local hour (0-23) at which the daily summary ticket is printed.
+summary_hour = 8
+
+# Detail level for the daily summary ticket.
+# Options: "minimal" (overdue only), "standard" (overdue + high priority),
+#          "full" (overdue + high priority + upcoming 7 days)
+summary_level = "full"
+
 [vikunja]
 # Base URL of your self-hosted Vikunja instance (no trailing slash)
 base_url = "http://localhost:3456"

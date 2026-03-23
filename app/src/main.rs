@@ -104,6 +104,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interval = AppConfig::get().monitor_interval_secs;
     tokio::spawn(todo::monitor::run(interval));
 
+    // 5c. Print an immediate daily summary at startup, then schedule the recurring one
+    let summary_level = todo::daily_summary::SummaryLevel::from_str(&AppConfig::get().summary_level);
+    todo::daily_summary::print_summary(summary_level).await;
+    let summary_hour = AppConfig::get().summary_hour;
+    tokio::spawn(todo::daily_summary::run(summary_hour, summary_level));
+
     // 6. Start the HTTP API server
     info!("Application initialized. Starting API server.");
     
