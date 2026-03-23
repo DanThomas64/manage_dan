@@ -12,6 +12,9 @@ vendor_id = 4070
 # Default: 0x811e
 product_id = 33054
 
+# Printer backend: "usb" for physical thermal printer, "terminal" for stdout rendering
+mode = "terminal"
+
 # How often the print monitor polls Vikunja for "print"-labelled tasks (seconds).
 monitor_interval_secs = 30
 

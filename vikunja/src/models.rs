@@ -2,8 +2,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Deserializes a Vikunja date field. Vikunja uses Go's zero time
-/// ("0001-01-01T00:00:00Z") to represent null/unset dates.
+// ---------------------------------------------------------------------------
+// Serde helpers
+// ---------------------------------------------------------------------------
+
+/// Deserializes a Vikunja date field.
+///
+/// Vikunja's Go backend uses the zero time ("0001-01-01T00:00:00Z") to signal
+/// "no value" and may also send `null`.  Both map to `None`.
 mod vikunja_date {
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Deserializer, Serializer};
@@ -32,6 +38,23 @@ mod vikunja_date {
         }
     }
 }
+
+/// Deserializes a field that Vikunja may send as either a proper value *or*
+/// as JSON `null`.  When `null` (or absent), `T::default()` is used.
+///
+/// Go nil slices → JSON `null`, not `[]`.  `#[serde(default)]` alone does
+/// not handle the *present-but-null* case; this wrapper does.
+fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
 
 /// A label attached to a Vikunja task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,10 +86,12 @@ pub struct VikunjaTask {
     #[serde(default, with = "vikunja_date")]
     pub updated: Option<DateTime<Utc>>,
     /// Related tasks grouped by relation kind (e.g. "subtask", "parenttask").
-    #[serde(default)]
+    /// Go serialises a nil map as JSON `null`; `null_default` turns that into `{}`.
+    #[serde(default, deserialize_with = "null_default")]
     pub related_tasks: HashMap<String, Vec<VikunjaTask>>,
     /// Labels attached to this task.
-    #[serde(default)]
+    /// Go serialises a nil slice as JSON `null`; `null_default` turns that into `[]`.
+    #[serde(default, deserialize_with = "null_default")]
     pub labels: Vec<VikunjaLabel>,
     /// The project this task belongs to.
     #[serde(default)]

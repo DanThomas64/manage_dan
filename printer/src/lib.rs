@@ -1,85 +1,157 @@
 //! USB Printer communication and job management subsystem.
 //!
-//! This crate handles connecting to a USB thermal printer and executing print jobs
-//! using ESC/POS commands.
+//! Supports two backends selected at runtime via config:
+//!
+//! - `"usb"`      — sends ESC/POS commands to a physical USB thermal printer.
+//! - `"terminal"` — renders the job as ASCII art to stdout; no hardware needed.
 
 pub mod printer_error;
 pub mod printer_prelude;
 
 use crate::printer_prelude::*;
-use escpos::driver::NativeUsbDriver;
-use escpos::printer::Printer;
-use escpos::ui::line::*;
-use escpos::utils::*;
 use once_cell::sync::OnceCell;
 use std::sync::Mutex;
 
-/// A wrapper around the initialized Printer instance, protected by a Mutex for thread-safe access.
-pub struct PrinterManager {
-    printer: Mutex<Printer<NativeUsbDriver>>,
+/// Width (in characters) of the terminal receipt rendering.
+const TERMINAL_WIDTH: usize = 48;
+
+// ---------------------------------------------------------------------------
+// Backend enum
+// ---------------------------------------------------------------------------
+
+enum PrinterBackend {
+    Usb(Mutex<escpos::printer::Printer<escpos::driver::NativeUsbDriver>>),
+    Terminal,
 }
 
-/// Global static storage for the initialized printer manager.
+// ---------------------------------------------------------------------------
+// PrinterManager
+// ---------------------------------------------------------------------------
+
+pub struct PrinterManager {
+    backend: PrinterBackend,
+}
+
 static PRINTER_MANAGER: OnceCell<PrinterManager> = OnceCell::new();
 
 impl PrinterManager {
-    /// Initializes the printer manager by opening the USB driver and setting up the Printer instance.
-    pub fn init(vid: u16, pid: u16) -> PrinterLibResult<Self> {
+    fn init_usb(vid: u16, pid: u16) -> PrinterLibResult<Self> {
+        use escpos::driver::NativeUsbDriver;
+        use escpos::printer::Printer;
+        use escpos::utils::Protocol;
+
         let driver = NativeUsbDriver::open(vid, pid)?;
         let mut printer = Printer::new(driver, Protocol::default(), None);
-        
-        // Perform initial setup on the printer
         printer.init()?;
-        
+
         Ok(PrinterManager {
-            printer: Mutex::new(printer),
+            backend: PrinterBackend::Usb(Mutex::new(printer)),
         })
     }
 
-    /// Gets the globally initialized printer manager. Panics if called before initialization.
-    pub fn get() -> &'static PrinterManager {
-        PRINTER_MANAGER.get().expect("PrinterManager is not initialized")
+    fn init_terminal() -> Self {
+        PrinterManager {
+            backend: PrinterBackend::Terminal,
+        }
     }
 
-    /// Executes a print job using the stored printer instance.
+    /// Returns the globally initialized manager.  Panics if called before `init`.
+    pub fn get() -> &'static PrinterManager {
+        PRINTER_MANAGER
+            .get()
+            .expect("PrinterManager is not initialized")
+    }
+
     pub fn execute_job(&self, job: PrintJob) -> PrinterLibResult {
-        let mut printer = self.printer.lock().map_err(|e| {
+        match &self.backend {
+            PrinterBackend::Usb(mutex) => Self::execute_usb(mutex, job),
+            PrinterBackend::Terminal => {
+                Self::execute_terminal(job);
+                Ok(())
+            }
+        }
+    }
+
+    // --- USB path ---
+
+    fn execute_usb(
+        mutex: &Mutex<escpos::printer::Printer<escpos::driver::NativeUsbDriver>>,
+        job: PrintJob,
+    ) -> PrinterLibResult {
+        use escpos::ui::line::*;
+
+        let mut printer = mutex.lock().map_err(|e| {
             PrinterLibError::CannotInitialize(format!("Failed to lock printer mutex: {}", e))
         })?;
 
-        info!("Executing print job (Title: {})", job.title);
+        info!("Executing USB print job (Title: {})", job.title);
 
         let line = LineBuilder::new().style(LineStyle::Custom("=-")).build();
 
-        // Set up basic formatting
         printer.feeds(1)?;
-
-        // Title (Bold/Large)
         printer.size(2, 2)?;
         printer.writeln(&job.title)?;
         printer.feeds(1)?;
-
-        // Reset font size
         printer.size(1, 1)?;
         printer.writeln(&format!("Origin: {}", job.origin))?;
         printer.feeds(1)?;
         printer.draw_line(line)?;
 
-        // Content lines
-        for line in &job.lines {
-            printer.writeln(line)?;
+        for l in &job.lines {
+            printer.writeln(l)?;
         }
 
-        // Final cuts and feeds
         printer.feeds(2)?;
         printer.print_cut()?;
 
         Ok(())
     }
+
+    // --- Terminal path ---
+
+    fn execute_terminal(job: PrintJob) {
+        info!("Executing terminal print job (Title: {})", job.title);
+
+        let inner = TERMINAL_WIDTH;
+        let total = inner + 2; // borders
+
+        // Box-drawing chars
+        let top    = format!("╔{}╗", "═".repeat(inner));
+        let mid    = format!("╠{}╣", "═".repeat(inner));
+        let bottom = format!("╚{}╝", "═".repeat(inner));
+        let empty  = format!("║{}║", " ".repeat(inner));
+
+        let pad = |s: &str| {
+            let truncated: String = s.chars().take(inner).collect();
+            format!("║ {:<width$}║", truncated, width = inner - 1)
+        };
+
+        println!();
+        println!("{}", top);
+        println!("{}", pad(&format!("▶ {}", job.title)));
+        println!("{}", pad(&format!("  Origin: {}", job.origin)));
+        println!("{}", mid);
+        for line in &job.lines {
+            if line.is_empty() {
+                println!("{}", empty);
+            } else {
+                // Wrap long lines at inner-1 chars
+                let chars: Vec<char> = line.chars().collect();
+                for chunk in chars.chunks(inner - 1) {
+                    let s: String = chunk.iter().collect();
+                    println!("{}", pad(&s));
+                }
+            }
+        }
+        println!("{}", bottom);
+        println!();
+    }
 }
 
+// ---------------------------------------------------------------------------
+// PrintJob
+// ---------------------------------------------------------------------------
 
-/// Represents a print job containing metadata and content to be printed.
 pub struct PrintJob {
     pub origin: String,
     pub title: String,
@@ -87,47 +159,55 @@ pub struct PrintJob {
 }
 
 impl PrintJob {
-    /// Creates a new print job.
     pub fn new(origin: String, title: String, lines: Vec<String>) -> Self {
-        PrintJob {
-            origin,
-            title,
-            lines,
-        }
+        PrintJob { origin, title, lines }
     }
 
-    /// Executes the print job by using the globally initialized printer instance.
-    ///
-    /// Note: `_vid` and `_pid` are ignored as the printer connection is managed globally.
+    /// Executes the print job via the globally initialized backend.
+    /// `_vid` and `_pid` are ignored (connection is managed globally).
     pub async fn execute(self, _vid: u16, _pid: u16) -> PrinterLibResult {
-        // VID/PID are now ignored as the printer is initialized globally
         PrinterManager::get().execute_job(self)
     }
 }
 
-/// Initializes the printer system by attempting to open the USB device and storing the connection globally.
-pub fn init(vid: u16, pid: u16) -> PrinterLibResult {
-    info!("initializing printer system check and connection");
+// ---------------------------------------------------------------------------
+// Public init
+// ---------------------------------------------------------------------------
 
-    match PrinterManager::init(vid, pid) {
-        Ok(manager) => {
-            info!(
-                "Printer device initialized successfully via USB VID: 0x{:x}, PID: 0x{:x}",
-                vid, pid
-            );
-            PRINTER_MANAGER
-                .set(manager)
-                .map_err(|_| PrinterLibError::CannotInitialize("Printer already initialized".to_string()))?;
-            Ok(())
+/// Initialises the printer subsystem.
+///
+/// `mode` should be `"usb"` (physical printer) or `"terminal"` (stdout rendering).
+/// Any unrecognised value is treated as `"terminal"`.
+pub fn init(vid: u16, pid: u16, mode: &str) -> PrinterLibResult {
+    info!("Initializing printer (mode: {})", mode);
+
+    let manager = if mode == "usb" {
+        match PrinterManager::init_usb(vid, pid) {
+            Ok(m) => {
+                info!(
+                    "USB printer initialized (VID: 0x{:04x}, PID: 0x{:04x})",
+                    vid, pid
+                );
+                m
+            }
+            Err(e) => {
+                error!(
+                    "Failed to open USB printer (VID: 0x{:04x}, PID: 0x{:04x}): {}",
+                    vid, pid, e
+                );
+                return Err(e);
+            }
         }
-        Err(e) => {
-            error!(
-                "Failed to initialize USB printer (VID: 0x{:x}, PID: 0x{:x}): {}",
-                vid, pid, e
-            );
-            Err(e.into())
-        }
-    }
+    } else {
+        info!("Printer running in terminal (dummy) mode — output goes to stdout");
+        PrinterManager::init_terminal()
+    };
+
+    PRINTER_MANAGER
+        .set(manager)
+        .map_err(|_| PrinterLibError::CannotInitialize("Printer already initialized".to_string()))?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -135,18 +215,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn it_works() {
-        // Note: Test needs dummy parameters now
-        // We must pass dummy parameters now that init requires them
-        // Since we cannot guarantee a printer is attached, we might expect failure here,
-        // but for now, we keep the original assertion structure.
-        // We use known dummy IDs that likely won't connect, so we expect an error.
-        let result = init(0x04b8, 0x0202);
-        // If the test environment doesn't have a printer, this will fail initialization, which is expected behavior for a system check.
-        // assert!(result.is_ok()); 
-        
-        // To prevent test failure when no printer is attached, we check if it failed due to device not found/open error.
-        // Since we cannot easily check the exact error type without modifying the test structure significantly, 
-        // we will leave the assertion commented out as per the original file's comment, acknowledging the limitation.
+    fn terminal_mode_init_succeeds() {
+        // Terminal mode never needs hardware, so this must always pass.
+        // (We can't call init() here because OnceCell is already set in other
+        // test runs, but we can exercise the manager constructor directly.)
+        let mgr = PrinterManager::init_terminal();
+        let job = PrintJob::new(
+            "test".into(),
+            "TEST TICKET".into(),
+            vec!["Line 1".into(), "Line 2".into()],
+        );
+        assert!(mgr.execute_job(job).is_ok());
     }
 }

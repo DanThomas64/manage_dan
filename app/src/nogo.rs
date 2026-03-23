@@ -156,7 +156,7 @@ impl SystemsStatus {
         
         // 5. Initialize printer, passing configuration values
         let config = AppConfig::get();
-        match printer::init(config.printer.vendor_id, config.printer.product_id)
+        match printer::init(config.printer.vendor_id, config.printer.product_id, &config.printer.mode)
             .map_err(|e| AppError::Printer(e).print())
             .is_ok()
         {

@@ -16,6 +16,8 @@ static APP_CONFIG: OnceLock<AppConfig> = OnceLock::new();
 pub struct PrinterConfig {
     pub vendor_id: u16,
     pub product_id: u16,
+    /// Backend mode: `"usb"` for physical printer, `"terminal"` for stdout rendering.
+    pub mode: String,
 }
 
 /// Configuration for the Vikunja task management backend.
@@ -44,6 +46,7 @@ impl AppConfig {
             .set_default("environment", "development")?
             .set_default("printer.vendor_id", 0x0fe6)?
             .set_default("printer.product_id", 0x811e)?
+            .set_default("printer.mode", "terminal")?
             
             // Vikunja defaults
             .set_default("vikunja.base_url", "http://localhost:3456")?

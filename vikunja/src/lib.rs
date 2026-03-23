@@ -8,6 +8,17 @@ use std::sync::OnceLock;
 use tracing::info;
 use vikunja_error::{VikunjaError, VikunjaResult};
 
+/// Deserialises the response body as `T`, converting any JSON error into a
+/// `VikunjaError::Api` that includes the raw response text for diagnosis.
+async fn decode<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+) -> VikunjaResult<T> {
+    let text = resp.text().await.map_err(VikunjaError::Http)?;
+    serde_json::from_str(&text).map_err(|e| {
+        VikunjaError::Api(format!("JSON decode error: {e}\nBody: {text}"))
+    })
+}
+
 static VIKUNJA_CLIENT: OnceLock<VikunjaClient> = OnceLock::new();
 
 /// Authenticated HTTP client for a single Vikunja project.
@@ -73,7 +84,7 @@ impl VikunjaClient {
         );
         let resp = self.client.get(&url).send().await?;
         let resp = self.require_success(resp).await?;
-        Ok(resp.json::<Vec<VikunjaTask>>().await?)
+        decode(resp).await
     }
 
     /// Lists ALL tasks across every accessible project, with subtasks expanded.
@@ -90,7 +101,7 @@ impl VikunjaClient {
             );
             let resp = self.client.get(&url).send().await?;
             let resp = self.require_success(resp).await?;
-            let batch: Vec<VikunjaTask> = resp.json().await?;
+            let batch: Vec<VikunjaTask> = decode(resp).await?;
             let done = batch.len() < PAGE_SIZE;
             all_tasks.extend(batch);
             if done {
@@ -153,7 +164,7 @@ impl VikunjaClient {
 
     async fn check_response(&self, resp: reqwest::Response) -> VikunjaResult<VikunjaTask> {
         let resp = self.require_success(resp).await?;
-        Ok(resp.json::<VikunjaTask>().await?)
+        decode(resp).await
     }
 
     async fn require_success(
