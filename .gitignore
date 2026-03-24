@@ -13,4 +13,3 @@ config/local.*.toml
 
 # Runtime data (bind-mounted from docker-compose)
 /data/
-/logs/
