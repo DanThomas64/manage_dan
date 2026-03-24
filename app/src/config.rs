@@ -43,6 +43,8 @@ pub struct AppConfig {
     pub summary_hour: u32,
     /// Detail level for the daily summary: "minimal", "standard", or "full".
     pub summary_level: String,
+    /// Directory where rotating log files are written.
+    pub log_dir: String,
 }
 
 impl AppConfig {
@@ -63,6 +65,7 @@ impl AppConfig {
             .set_default("monitor_interval_secs", 30u64)?
             .set_default("summary_hour", 8u64)?
             .set_default("summary_level", "full")?
+            .set_default("log_dir", "logs")?
 
             // 2. Load configuration file (e.g., config/default.toml)
             .add_source(File::with_name("config/default").required(false))

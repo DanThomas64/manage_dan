@@ -30,6 +30,10 @@ summary_hour = 8
 #          "full" (overdue + high priority + upcoming 7 days)
 summary_level = "full"
 
+# Directory where rotating log files are written.
+# Override in config/local.toml or via APP_LOG_DIR environment variable.
+log_dir = "logs"
+
 [vikunja]
 # Base URL of your self-hosted Vikunja instance (no trailing slash)
 base_url = "http://localhost:3456"
