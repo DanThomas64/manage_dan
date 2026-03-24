@@ -16,8 +16,6 @@ services:
     environment:
       # Config directory — points to the bind-mounted projectroot/config/.
       - APP_CONFIG_DIR=/config
-      # Set to "usb" to enable physical printing.
-      - APP_PRINTER_MODE=${APP_PRINTER_MODE:-terminal}
       # Log file path inside the container (mapped to ./data/logs/app.log on the host).
       - APP_LOGGING_FILE=/data/logs/app.log
       # Set to "false" to suppress stdout logging (fully headless).
