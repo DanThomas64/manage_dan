@@ -104,7 +104,7 @@ pub(crate) fn from_vikunja_task(
 pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::PrinterLibResult {
     // Content width available inside the box (TERMINAL_WIDTH minus the leading space in pad).
     const SEP_WIDTH: usize = printer::TERMINAL_WIDTH - 2;
-    let sep = "─".repeat(SEP_WIDTH);
+    let sep = "-".repeat(SEP_WIDTH);
 
     let id = item.id.unwrap_or(0);
     let status = if item.completed { "COMPLETED" } else { "PENDING" };
@@ -121,11 +121,11 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
 
     // Priority bar: 10 filled/empty blocks for priority 0–10
     let filled = item.priority.min(10) as usize;
-    let bar = format!("{}{}", "▓".repeat(filled), "░".repeat(10 - filled));
+    let bar = format!("[{}{}]", "#".repeat(filled), ".".repeat(10 - filled));
     let due_str = item.due_date
         .map(|d| d.format("%a %d %b").to_string())
         .unwrap_or_else(|| "None".to_string());
-    let info_row = format!("Due: {}  ·  Pri: {}  ({}/10)", due_str, bar, item.priority);
+    let info_row = format!("Due: {}  |  Pri: {} {}/10", due_str, bar, item.priority);
 
     let mut lines = vec![info_row];
 
@@ -151,7 +151,7 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
         let done_count = item.subtasks.iter().filter(|s| s.done).count();
         lines.push(format!("Subtasks [{}/{}]", done_count, item.subtasks.len()));
         for sub in &item.subtasks {
-            let marker = if sub.done { "✓" } else { "○" };
+            let marker = if sub.done { "[x]" } else { "[ ]" };
             lines.push(format!("  {} {}", marker, sub.title));
         }
     }
