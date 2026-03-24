@@ -198,8 +198,8 @@ The TUI reads the API URL from the `MANAGE_API_URL` environment variable, defaul
 
 | Scenario | Command |
 |---|---|
-| Local `cargo run -p app` | `cargo run -p tui` |
-| Docker Compose (via nginx, port 80) | `MANAGE_API_URL=http://localhost cargo run -p tui` |
+| Docker Compose (default) | `cargo run -p tui` |
+| Local `cargo run -p app` | `MANAGE_API_URL=http://127.0.0.1:8080 cargo run -p tui` |
 | Docker Compose (direct, port 8080) | `MANAGE_API_URL=http://localhost:8080 cargo run -p tui` |
 
 ---
@@ -412,4 +412,4 @@ The udev rule may not have been applied. Try unplugging and replugging the print
 Ensure Docker BuildKit is enabled (`DOCKER_BUILDKIT=1`) and that you have an internet connection for downloading crates during the first build.
 
 **TUI can't connect**
-The TUI defaults to `http://127.0.0.1:8080`. If you're running via Docker Compose, set `MANAGE_API_URL=http://localhost` (nginx proxy) or `MANAGE_API_URL=http://localhost:8080` (direct, requires uncommenting the port mapping in `docker-compose.yml`). Make sure the server is running before launching the TUI.
+The TUI defaults to `http://localhost` (Docker Compose via nginx). If running the server locally with `cargo run -p app`, set `MANAGE_API_URL=http://127.0.0.1:8080`. Make sure the server is running before launching the TUI.

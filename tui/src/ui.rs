@@ -2052,7 +2052,7 @@ impl Drop for Tui {
 pub async fn run_tui() -> Result<()> {
     let mut tui = Tui::new()?;
     let api_url = std::env::var("MANAGE_API_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+        .unwrap_or_else(|_| "http://localhost".to_string());
     let api_client = ApiClient::new(&api_url);
     let mut app = App::new(api_client);
 

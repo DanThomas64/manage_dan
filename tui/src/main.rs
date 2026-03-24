@@ -21,7 +21,7 @@ mod api;
 #[tokio::main]
 async fn main() -> Result<()> {
     let api_url = std::env::var("MANAGE_API_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+        .unwrap_or_else(|_| "http://localhost".to_string());
 
     println!("Starting TUI — connecting to {api_url}");
 
