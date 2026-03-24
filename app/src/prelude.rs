@@ -14,7 +14,7 @@ pub use crate::printer::printer_error::{PrinterLibError, PrinterLibResult};
 pub use crate::todo::todo_prelude::{TodoLibError, TodoLibResult, TodoItem, Subtask};
 pub use crate::shopping::shopping_error::{ShoppingLibError, ShoppingLibResult};
 pub use crate::nogo::{SystemsGoNogo, Status, SystemsStatus};
-pub use crate::config::{AppConfig, PrinterConfig, VikunjaConfig};
+pub use crate::config::{AppConfig, LoggingConfig, PrinterConfig, VikunjaConfig};
 pub use crate::{subsystem_init, system_init};
 
 pub use tracing_subscriber::fmt::time::ChronoLocal;

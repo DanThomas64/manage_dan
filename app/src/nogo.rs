@@ -134,7 +134,7 @@ impl SystemsStatus {
 
         // 2. Initialize log system, which relies on DB being ready for DB logging.
         // This must happen AFTER DB initialization to ensure the 'log' table exists.
-        match log::init(&AppConfig::get().log_dir).map_err(|e| AppError::Log(e).print()).is_ok() {
+        match log::init(&AppConfig::get().logging.file).map_err(|e| AppError::Log(e).print()).is_ok() {
             true => self.update("log", Status::Go),
             false => self.update("log", Status::Nogo),
         };

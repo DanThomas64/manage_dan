@@ -1,21 +1,23 @@
 //! Application logging system initialization and configuration.
 //!
 //! This crate sets up structured logging using `tracing`, configuring output
-//! to both rotating files and the application database.
+//! to both a file and the application database.
 //!
 //! # File logging
 //!
-//! Log files are written as newline-delimited JSON to `<log_dir>/app.log.<date>`.
-//! A new file is started each day (`Rotation::DAILY`).  The directory is created
-//! automatically if it does not exist.
+//! Log lines are written as newline-delimited JSON to the path given by
+//! `log_file` (e.g. `data/logs/app.log`).  The parent directory is created
+//! automatically if it does not exist.  The file is opened in append mode so
+//! restarts accumulate into the same file.
 //!
 //! The `WorkerGuard` returned by `tracing_appender::non_blocking` is leaked so
 //! it lives for the entire process lifetime — this keeps the background I/O
 //! thread alive and ensures buffered log lines are flushed on shutdown.
 //!
-//! # Environment overrides
+//! # Configuration
 //!
-//! * `RUST_LOG` — standard `EnvFilter` directive (e.g. `debug`, `my_crate=trace`)
+//! * `logging.file` config key (or `APP_LOGGING_FILE` env var) — path to the
+//!   log file.  Relative paths are resolved from the process working directory.
 //! * `LOG_STDOUT=false` — suppress the stdout layer (useful in production / Docker)
 
 pub mod db_subscriber;
@@ -25,7 +27,7 @@ pub mod log_prelude;
 use crate::db_subscriber::DbLayer;
 use crate::log_error::LogLibError;
 use crate::log_prelude::*;
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use std::fs::OpenOptions;
 use tracing_subscriber::{
     fmt::{time::ChronoLocal, Layer},
     layer::{Layer as LayerExt, SubscriberExt},
@@ -40,34 +42,48 @@ static LOG_INIT: Once = Once::new();
 
 /// Initialises the logging system.
 ///
-/// * `log_dir` — directory where rotating log files are written.
-///   Created automatically if it does not exist.
+/// * `log_file` — path to the log file (e.g. `"data/logs/app.log"`).
+///   The parent directory is created automatically if it does not exist.
 ///
 /// Must be called from within a Tokio runtime (i.e. after `#[tokio::main]`).
-pub fn init(log_dir: &str) -> LogLibResult {
+pub fn init(log_file: &str) -> LogLibResult {
     let mut result = Ok(());
 
-    // log_dir must be captured by value for the `call_once` closure.
-    let log_dir = log_dir.to_string();
+    // log_file must be captured by value for the `call_once` closure.
+    let log_file = log_file.to_string();
 
     LOG_INIT.call_once(|| {
-        // ── 0. Ensure the log directory exists ───────────────────────────────
-        if let Err(e) = std::fs::create_dir_all(&log_dir) {
-            result = Err(LogLibError::CannotInitialize(format!(
-                "Failed to create log directory '{}': {}",
-                log_dir, e
-            )));
-            return;
+        // ── 0. Ensure the parent directory exists ────────────────────────────
+        let path = std::path::Path::new(&log_file);
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    result = Err(LogLibError::CannotInitialize(format!(
+                        "Failed to create log directory '{}': {}",
+                        parent.display(), e
+                    )));
+                    return;
+                }
+            }
         }
 
-        // ── 1. File logging layer (JSON, daily rotation) ─────────────────────
+        // ── 1. File logging layer (JSON, append to single file) ───────────────
         //
         // IMPORTANT: `non_blocking` returns a `WorkerGuard` that keeps the
         // background flushing thread alive.  If the guard is dropped, the thread
         // exits immediately and all buffered writes are silently lost.  We call
         // `Box::leak` to promote the guard to `'static` so it is never dropped.
-        let file_appender = RollingFileAppender::new(Rotation::DAILY, &log_dir, "app.log");
-        let (non_blocking_appender, guard) = tracing_appender::non_blocking(file_appender);
+        let file = match OpenOptions::new().append(true).create(true).open(&log_file) {
+            Ok(f) => f,
+            Err(e) => {
+                result = Err(LogLibError::CannotInitialize(format!(
+                    "Failed to open log file '{}': {}",
+                    log_file, e
+                )));
+                return;
+            }
+        };
+        let (non_blocking_appender, guard) = tracing_appender::non_blocking(file);
         // Leak the guard — intentional, keeps the I/O thread alive for the
         // entire process lifetime.
         Box::leak(Box::new(guard));
@@ -164,7 +180,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
 
-        let result = init("/tmp/manage_dan_test_logs");
+        let result = init("/tmp/manage_dan_test_logs/app.log");
         assert!(result.is_ok());
     }
 }

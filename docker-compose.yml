@@ -7,8 +7,8 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     volumes:
-      # Persist the SQLite database and runtime files in the project directory.
-      # Logs are written to ./data/logs (APP_LOG_DIR=/data/logs inside the container).
+      # Persist the SQLite database and log file in the project directory.
+      # Logs are written to ./data/logs/app.log on the host.
       - ./data:/data
       # Optional: drop a config/local.toml next to docker-compose.yml to
       # override defaults (Vikunja token, printer mode, etc.) without
@@ -17,8 +17,8 @@ services:
     environment:
       # Set to "usb" to enable physical printing.
       - APP_PRINTER_MODE=${APP_PRINTER_MODE:-terminal}
-      # Log files are written to /data/logs inside the container.
-      - APP_LOG_DIR=/data/logs
+      # Log file path inside the container (mapped to ./data/logs/app.log on the host).
+      - APP_LOGGING_FILE=/data/logs/app.log
       # Set to "false" to suppress stdout logging (fully headless).
       - LOG_STDOUT=${LOG_STDOUT:-true}
 
