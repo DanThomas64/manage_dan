@@ -110,9 +110,9 @@ lsusb
 # Bus 001 Device 003: ID 0fe6:811e ...
 ```
 
-### 3. Enable USB passthrough in docker-compose.yml
+### 3. USB passthrough is enabled by default
 
-Uncomment the `devices` block in the `app` service:
+The `devices` block in `docker-compose.yml` is already active:
 
 ```yaml
     devices:
@@ -403,7 +403,7 @@ Check that your Vikunja `base_url` and `api_token` are correct in `config/local.
 Run `lsusb` to confirm the printer is detected. Check that the udev rule is installed and that your user is in the `lp` group. Verify the VID/PID in `config/local.toml` matches your printer.
 
 **USB printer not found (Docker)**
-Make sure the `devices: - /dev/bus/usb:/dev/bus/usb` block is uncommented in `docker-compose.yml`, the udev rule is installed on the host, and `APP_PRINTER_MODE=usb` is set. The printer must be plugged in before the container starts — if you plugged it in afterwards, run `docker compose restart app`.
+Ensure the udev rule is installed on the host and `APP_PRINTER_MODE=usb` is set. The printer must be plugged in before the container starts — if you plugged it in afterwards, run `docker compose restart app`.
 
 **Permission denied on USB device**
 The udev rule may not have been applied. Try unplugging and replugging the printer, or run `sudo udevadm trigger`. The rule sets `MODE="0666"` which allows access without root or group membership.
