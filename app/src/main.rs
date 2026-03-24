@@ -34,7 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut systems = SystemsStatus::new();
     let systems = systems.init();
     
-    info!("Application starting up..."); // This log should now succeed if DB/Log initialization worked.
+    info!("Application starting up...");
+    let cfg_dir = std::env::var("APP_CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+    info!("Local config: {}/local.toml", cfg_dir);
 
     // Setup monitoring and get final status
     let mut go_nogo = SystemsGoNogo::new();
