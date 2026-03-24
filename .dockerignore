@@ -1,4 +1,6 @@
 target/
+data/
+logs/
 app.sqlite
 app.log
 config/local.toml

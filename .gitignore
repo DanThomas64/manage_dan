@@ -10,3 +10,7 @@ app.sqlite-journal
 # Local config overrides — never commit these
 config/local.toml
 config/local.*.toml
+
+# Runtime data (bind-mounted from docker-compose)
+/data/
+/logs/

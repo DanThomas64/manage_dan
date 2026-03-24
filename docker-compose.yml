@@ -7,10 +7,10 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     volumes:
-      # Persist the SQLite database and any runtime-generated files.
-      - app_data:/data
-      # Persist log files across container restarts.
-      - app_logs:/data/logs
+      # Persist the SQLite database in the project directory.
+      - ./data:/data
+      # Persist log files in the project directory.
+      - ./logs:/data/logs
       # Optional: drop a config/local.toml next to docker-compose.yml to
       # override defaults (Vikunja token, printer mode, etc.) without
       # rebuilding the image.
@@ -52,6 +52,3 @@ services:
     depends_on:
       - app
 
-volumes:
-  app_data:
-  app_logs:
