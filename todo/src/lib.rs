@@ -162,19 +162,18 @@ pub(crate) fn from_vikunja_task(
 // --- Printing ---
 
 pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::PrinterLibResult {
-    // Content width available inside the box (TERMINAL_WIDTH minus the leading space in pad).
-    // 42 is the ESC/POS default characters-per-line; fits inside the terminal box too.
-    const SEP_WIDTH: usize = 42;
-    let sep = "-".repeat(SEP_WIDTH);
+    // Use the backend's actual line width so separators and badge alignment
+    // match the physical receipt on both USB and terminal.
+    let width = printer::line_width();
+    let sep = "-".repeat(width);
 
     let id = item.id.unwrap_or(0);
     let status = if item.completed { "COMPLETED" } else { "PENDING" };
 
-    // Header line 1: "TODO #42  [ PENDING ]"
+    // Header line 1: "TODO #42  [ PENDING ]" right-aligned badge.
     let badge = format!("[ {} ]", status);
     let id_str = format!("TODO #{}", id);
-    let gap = (printer::TERMINAL_WIDTH - 1)
-        .saturating_sub(id_str.len() + badge.len());
+    let gap = width.saturating_sub(id_str.len() + badge.len());
     let title = format!("{}{}{}", id_str, " ".repeat(gap), badge);
 
     // Header line 2: task title (shown as origin)

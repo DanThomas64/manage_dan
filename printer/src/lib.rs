@@ -12,8 +12,8 @@ use crate::printer_prelude::*;
 use once_cell::sync::OnceCell;
 use std::sync::Mutex;
 
-/// Width (in characters) of the terminal receipt rendering.
-/// Also used by callers to format separator lines.
+/// Width (in characters) of the terminal receipt box.
+/// The usable content area is `TERMINAL_WIDTH - 1` (one leading space inside the border).
 pub const TERMINAL_WIDTH: usize = 48;
 
 // ---------------------------------------------------------------------------
@@ -21,7 +21,11 @@ pub const TERMINAL_WIDTH: usize = 48;
 // ---------------------------------------------------------------------------
 
 enum PrinterBackend {
-    Usb(Mutex<escpos::printer::Printer<escpos::driver::NativeUsbDriver>>),
+    Usb {
+        printer: Mutex<escpos::printer::Printer<escpos::driver::NativeUsbDriver>>,
+        /// Characters per line as reported by `PrinterOptions` at init time.
+        chars_per_line: u8,
+    },
     Terminal,
 }
 
@@ -44,17 +48,21 @@ impl PrinterManager {
 
         let driver = NativeUsbDriver::open(vid, pid)?;
 
-        // Set PC437 (standard ASCII + box/block chars) as the active code page so
-        // the printer's character decoding matches what we send.
+        // PC437 is the standard ESC/POS character page (ASCII + Latin supplement).
+        // Read characters_per_line from options before consuming them.
         let mut options = PrinterOptions::default();
         options.page_code(Some(PageCode::PC437));
+        let chars_per_line = options.get_characters_per_line();
 
         let mut printer = Printer::new(driver, Protocol::default(), Some(options));
         printer.init()?;
         printer.page_code(PageCode::PC437)?;
 
         Ok(PrinterManager {
-            backend: PrinterBackend::Usb(Mutex::new(printer)),
+            backend: PrinterBackend::Usb {
+                printer: Mutex::new(printer),
+                chars_per_line,
+            },
         })
     }
 
@@ -71,9 +79,21 @@ impl PrinterManager {
             .expect("PrinterManager is not initialized")
     }
 
+    /// Returns the usable line width for the active backend.
+    ///
+    /// Callers should use this to format separator lines and right-align badges
+    /// so that content spans the full receipt width on both USB and terminal.
+    pub fn line_width(&self) -> usize {
+        match &self.backend {
+            PrinterBackend::Usb { chars_per_line, .. } => *chars_per_line as usize,
+            // Terminal: one leading space is always added inside the box border.
+            PrinterBackend::Terminal => TERMINAL_WIDTH - 1,
+        }
+    }
+
     pub fn execute_job(&self, job: PrintJob) -> PrinterLibResult {
         match &self.backend {
-            PrinterBackend::Usb(mutex) => Self::execute_usb(mutex, job),
+            PrinterBackend::Usb { printer, .. } => Self::execute_usb(printer, job),
             PrinterBackend::Terminal => {
                 Self::execute_terminal(job);
                 Ok(())
@@ -95,22 +115,18 @@ impl PrinterManager {
 
         info!("Executing USB print job (Title: {})", job.title);
 
-        // Read the configured line width so separators and wrapping match the hardware.
-        let width = printer.options().get_characters_per_line() as usize;
-
         printer.feeds(1)?;
 
-        // Header: centred bold title, then task name in normal weight below it.
+        // Header: centred bold title (normal size — double-width would halve the
+        // usable character count and cause wrapping on 42-cpl printers).
         printer.justify(JustifyMode::CENTER)?;
         printer.bold(true)?;
-        printer.size(2, 1)?;
         printer.writeln(&job.title)?;
-        printer.size(1, 1)?;
         printer.bold(false)?;
         printer.writeln(&job.origin)?;
         printer.justify(JustifyMode::LEFT)?;
-        printer.writeln(&"-".repeat(width))?;
 
+        // Body lines (include separators, metadata, description, subtasks, footer).
         for l in &job.lines {
             printer.writeln(l)?;
         }
@@ -127,7 +143,6 @@ impl PrinterManager {
         info!("Executing terminal print job (Title: {})", job.title);
 
         let inner = TERMINAL_WIDTH;
-        let total = inner + 2; // borders
 
         // Box-drawing chars
         let top    = format!("╔{}╗", "═".repeat(inner));
@@ -136,7 +151,7 @@ impl PrinterManager {
         let empty  = format!("║{}║", " ".repeat(inner));
 
         let pad = |s: &str| {
-            let truncated: String = s.chars().take(inner).collect();
+            let truncated: String = s.chars().take(inner - 1).collect();
             format!("║ {:<width$}║", truncated, width = inner - 1)
         };
 
@@ -149,7 +164,6 @@ impl PrinterManager {
             if line.is_empty() {
                 println!("{}", empty);
             } else {
-                // Wrap long lines at inner-1 chars
                 let chars: Vec<char> = line.chars().collect();
                 for chunk in chars.chunks(inner - 1) {
                     let s: String = chunk.iter().collect();
@@ -160,6 +174,19 @@ impl PrinterManager {
         println!("{}", bottom);
         println!();
     }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/// Returns the usable line width for the active printer backend.
+///
+/// Use this to format separator lines and right-align content so that output
+/// spans the full receipt width regardless of whether the printer is USB or
+/// terminal.  Panics if called before `init`.
+pub fn line_width() -> usize {
+    PrinterManager::get().line_width()
 }
 
 // ---------------------------------------------------------------------------
@@ -178,7 +205,6 @@ impl PrintJob {
     }
 
     /// Executes the print job via the globally initialized backend.
-    /// `_vid` and `_pid` are ignored (connection is managed globally).
     pub async fn execute(self, _vid: u16, _pid: u16) -> PrinterLibResult {
         PrinterManager::get().execute_job(self)
     }
@@ -230,9 +256,6 @@ mod tests {
 
     #[test]
     fn terminal_mode_init_succeeds() {
-        // Terminal mode never needs hardware, so this must always pass.
-        // (We can't call init() here because OnceCell is already set in other
-        // test runs, but we can exercise the manager constructor directly.)
         let mgr = PrinterManager::init_terminal();
         let job = PrintJob::new(
             "test".into(),
