@@ -32,6 +32,66 @@ pub struct TodoSummary {
     pub overdue: usize,
 }
 
+// --- HTML stripping ---
+
+/// Converts an HTML description (as stored by Vikunja's rich-text editor) to
+/// plain text suitable for printing.
+///
+/// Block-level closing tags become newlines; all remaining markup is removed;
+/// common HTML entities are decoded; consecutive blank lines are collapsed.
+fn strip_html(html: &str) -> String {
+    // Block elements that should become line breaks.
+    let s = html
+        .replace("</p>",          "\n")
+        .replace("</div>",        "\n")
+        .replace("</li>",         "\n")
+        .replace("</h1>",         "\n")
+        .replace("</h2>",         "\n")
+        .replace("</h3>",         "\n")
+        .replace("</h4>",         "\n")
+        .replace("</blockquote>", "\n")
+        .replace("<br>",          "\n")
+        .replace("<br/>",         "\n")
+        .replace("<br />",        "\n");
+
+    // Strip all remaining tags.
+    let mut plain = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _   => if !in_tag { plain.push(c) },
+        }
+    }
+
+    // Decode common HTML entities.
+    let plain = plain
+        .replace("&amp;",  "&")
+        .replace("&lt;",   "<")
+        .replace("&gt;",   ">")
+        .replace("&nbsp;", " ")
+        .replace("&quot;", "\"")
+        .replace("&#39;",  "'")
+        .replace("&apos;", "'");
+
+    // Collapse runs of blank lines and trim each line.
+    let mut out: Vec<&str> = Vec::new();
+    let mut last_blank = false;
+    for line in plain.lines() {
+        let t = line.trim();
+        if t.is_empty() {
+            if !last_blank { out.push(""); }
+            last_blank = true;
+        } else {
+            out.push(t);
+            last_blank = false;
+        }
+    }
+
+    out.join("\n").trim().to_string()
+}
+
 // --- Mapping helpers ---
 
 fn to_task_payload(item: &TodoItem) -> TaskPayload {
@@ -84,7 +144,7 @@ pub(crate) fn from_vikunja_task(
     TodoItem {
         id: Some(task.id),
         title: task.title,
-        description: task.description.unwrap_or_default(),
+        description: strip_html(&task.description.unwrap_or_default()),
         completed: task.done,
         created_at: task.created.map(|dt| dt.with_timezone(&Local)).unwrap_or(now),
         updated_at: task.updated.map(|dt| dt.with_timezone(&Local)).unwrap_or(now),
@@ -138,15 +198,19 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
     }
 
     lines.push(sep.clone());
+    lines.push(String::new());
 
     // Description
-    if !item.description.is_empty() {
+    let has_desc = !item.description.is_empty();
+    let has_subs = !item.subtasks.is_empty();
+
+    if has_desc {
         lines.extend(item.description.lines().map(str::to_string));
     }
 
     // Subtasks
-    if !item.subtasks.is_empty() {
-        if !item.description.is_empty() {
+    if has_subs {
+        if has_desc {
             lines.push(String::new());
         }
         let done_count = item.subtasks.iter().filter(|s| s.done).count();
@@ -157,7 +221,15 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
         }
     }
 
+    // Pad with blank lines when the body is sparse so the ticket has presence.
+    if !has_desc && !has_subs {
+        lines.push(String::new());
+        lines.push(String::new());
+        lines.push(String::new());
+    }
+
     // Footer
+    lines.push(String::new());
     lines.push(sep);
     lines.push(format!(
         "Created: {}  |  Updated: {}",

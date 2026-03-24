@@ -112,7 +112,8 @@ pub async fn print_summary(level: SummaryLevel) {
         })
         .collect();
 
-    let title = format!("DAILY SUMMARY:  {}", today.format("%a %d %b %Y"));
+    let title = "DAILY SUMMARY".to_string();
+    let date_line = today.format("%a %d %b %Y").to_string();
     let mut lines: Vec<String> = Vec::new();
 
     // --- Overdue (always) ---
@@ -167,7 +168,7 @@ pub async fn print_summary(level: SummaryLevel) {
     lines.push(format!("Total pending: {}", pending));
     lines.push(format!("Generated: {}", now.format("%H:%M")));
 
-    let job = PrintJob::new("Daily Summary".to_string(), title, lines);
+    let job = PrintJob::new(date_line, title, lines);
     if let Err(e) = job.execute(0, 0).await {
         warn!("Daily summary: print failed: {}", e);
     } else {
