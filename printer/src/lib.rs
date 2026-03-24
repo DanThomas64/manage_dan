@@ -18,18 +18,21 @@ pub const TERMINAL_WIDTH: usize = 48;
 
 /// Wraps `text` at word boundaries so no line exceeds `width` characters.
 ///
-/// Blank lines in the input are preserved as blank lines in the output.
-/// A single word longer than `width` is placed on its own line as-is
-/// rather than splitting mid-word.
+/// Lines that already fit within `width` are passed through unchanged,
+/// preserving any intentional spacing (e.g. separator lines, formatted rows).
+/// A single word longer than `width` is placed on its own line as-is rather
+/// than being split mid-character.
 fn word_wrap(text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
-    for paragraph in text.lines() {
-        if paragraph.trim().is_empty() {
-            out.push(String::new());
+    for line in text.lines() {
+        // Fast path: line fits as-is — preserve it exactly.
+        if line.chars().count() <= width {
+            out.push(line.to_string());
             continue;
         }
+        // Line is too long; break at word boundaries.
         let mut current = String::new();
-        for word in paragraph.split_whitespace() {
+        for word in line.split_whitespace() {
             if current.is_empty() {
                 current.push_str(word);
             } else if current.len() + 1 + word.len() <= width {
@@ -71,7 +74,7 @@ pub struct PrinterManager {
 static PRINTER_MANAGER: OnceCell<PrinterManager> = OnceCell::new();
 
 impl PrinterManager {
-    fn init_usb(vid: u16, pid: u16) -> PrinterLibResult<Self> {
+    fn init_usb(vid: u16, pid: u16, chars_per_line: u8) -> PrinterLibResult<Self> {
         use escpos::driver::NativeUsbDriver;
         use escpos::printer::Printer;
         use escpos::printer_options::PrinterOptions;
@@ -80,10 +83,9 @@ impl PrinterManager {
         let driver = NativeUsbDriver::open(vid, pid)?;
 
         // PC437 is the standard ESC/POS character page (ASCII + Latin supplement).
-        // Read characters_per_line from options before consuming them.
         let mut options = PrinterOptions::default();
         options.page_code(Some(PageCode::PC437));
-        let chars_per_line = options.get_characters_per_line();
+        options.characters_per_line(chars_per_line);
 
         let mut printer = Printer::new(driver, Protocol::default(), Some(options));
         printer.init()?;
@@ -262,11 +264,11 @@ impl PrintJob {
 ///
 /// `mode` should be `"usb"` (physical printer) or `"terminal"` (stdout rendering).
 /// Any unrecognised value is treated as `"terminal"`.
-pub fn init(vid: u16, pid: u16, mode: &str) -> PrinterLibResult {
-    info!("Initializing printer (mode: {})", mode);
+pub fn init(vid: u16, pid: u16, mode: &str, chars_per_line: u8) -> PrinterLibResult {
+    info!("Initializing printer (mode: {}, chars_per_line: {})", mode, chars_per_line);
 
     let manager = if mode == "usb" {
-        match PrinterManager::init_usb(vid, pid) {
+        match PrinterManager::init_usb(vid, pid, chars_per_line) {
             Ok(m) => {
                 info!(
                     "USB printer initialized (VID: 0x{:04x}, PID: 0x{:04x})",

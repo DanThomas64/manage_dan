@@ -15,6 +15,10 @@ product_id = 33054
 # Printer backend: "usb" for physical thermal printer, "terminal" for stdout rendering
 mode = "terminal"
 
+# Characters per line of the physical receipt.  Common values: 42 (ESC/POS default) or 48.
+# Check your printer's spec sheet and set this in config/local.toml if needed.
+characters_per_line = 42
+
 # How often the print monitor polls Vikunja for "print"-labelled tasks (seconds).
 monitor_interval_secs = 30
 

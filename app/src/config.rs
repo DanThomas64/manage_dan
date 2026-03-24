@@ -18,6 +18,9 @@ pub struct PrinterConfig {
     pub product_id: u16,
     /// Backend mode: `"usb"` for physical printer, `"terminal"` for stdout rendering.
     pub mode: String,
+    /// Number of characters that fit on one line of the physical receipt.
+    /// Common values: 42 (default ESC/POS) or 48.  Check your printer's spec sheet.
+    pub characters_per_line: u8,
 }
 
 /// Configuration for the Vikunja task management backend.
@@ -51,6 +54,7 @@ impl AppConfig {
             .set_default("printer.vendor_id", 0x0fe6)?
             .set_default("printer.product_id", 0x811e)?
             .set_default("printer.mode", "terminal")?
+            .set_default("printer.characters_per_line", 42u64)?
             
             // Vikunja defaults
             .set_default("vikunja.base_url", "http://localhost:3456")?
