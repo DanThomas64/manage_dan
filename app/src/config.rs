@@ -60,7 +60,16 @@ pub struct AppConfig {
 
 impl AppConfig {
     /// Loads the configuration from environment variables and configuration files.
+    ///
+    /// Config files are loaded from the directory specified by `APP_CONFIG_DIR`
+    /// (default: `"config"`).  This lets Docker bind-mount the project's
+    /// `config/` directory at an absolute path without creating any structure
+    /// inside `./data/`.
     pub fn load() -> Result<AppConfig> {
+        // Read config directory from env directly (bypasses the crate separator logic).
+        let cfg_dir = std::env::var("APP_CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
+        let env = std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string());
+
         let config_builder = Config::builder()
             // 1. Load defaults
             .set_default("environment", "development")?
@@ -68,7 +77,7 @@ impl AppConfig {
             .set_default("printer.product_id", 0x811e)?
             .set_default("printer.mode", "terminal")?
             .set_default("printer.characters_per_line", 42u64)?
-            
+
             // Vikunja defaults
             .set_default("vikunja.base_url", "http://localhost:3456")?
             .set_default("vikunja.api_token", "")?
@@ -78,14 +87,14 @@ impl AppConfig {
             .set_default("summary_level", "full")?
             .set_default("logging.file", "data/logs/app.log")?
 
-            // 2. Load configuration file (e.g., config/default.toml)
-            .add_source(File::with_name("config/default").required(false))
-            
-            // 3. Load environment-specific configuration (e.g., config/development.toml)
-            .add_source(File::with_name(&format!("config/{}", std::env::var("APP_ENV").unwrap_or_else(|_| "development".into()))).required(false))
+            // 2. Load default config file
+            .add_source(File::with_name(&format!("{}/default", cfg_dir)).required(false))
+
+            // 3. Load environment-specific config
+            .add_source(File::with_name(&format!("{}/{}", cfg_dir, env)).required(false))
 
             // 4. Load local overrides — gitignored, never committed (put secrets here)
-            .add_source(File::with_name("config/local").required(false))
+            .add_source(File::with_name(&format!("{}/local", cfg_dir)).required(false))
 
             // 5. Override with environment variables (e.g., APP_VIKUNJA_API_TOKEN)
             .add_source(Environment::with_prefix("APP").separator("_"));

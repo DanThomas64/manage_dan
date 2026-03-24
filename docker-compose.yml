@@ -10,11 +10,12 @@ services:
       # Persist the SQLite database and log file in the project directory.
       # Logs are written to ./data/logs/app.log on the host.
       - ./data:/data
-      # Mounts the whole config directory so local.toml is picked up if it
-      # exists.  Mounting a directory (not a file) avoids Docker creating a
-      # phantom directory when local.toml is absent on the host.
-      - ./config:/data/config:ro
+      # Mount the project config/ directory at /config so local.toml is read
+      # from projectroot/config/local.toml without touching ./data/ at all.
+      - ./config:/config:ro
     environment:
+      # Config directory — points to the bind-mounted projectroot/config/.
+      - APP_CONFIG_DIR=/config
       # Set to "usb" to enable physical printing.
       - APP_PRINTER_MODE=${APP_PRINTER_MODE:-terminal}
       # Log file path inside the container (mapped to ./data/logs/app.log on the host).
