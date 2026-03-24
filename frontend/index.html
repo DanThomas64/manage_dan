@@ -409,9 +409,9 @@
     #toast.error { border-color: var(--red); color: var(--red); }
 
     /* ═══════════════════════════════════════════
-       MOBILE  (≤ 600px)
+       MOBILE  (touch devices or ≤ 1024px)
     ═══════════════════════════════════════════ */
-    @media (max-width: 600px) {
+    @media (hover: none) and (pointer: coarse), (max-width: 1024px) {
       html, body { font-size: 16px; }
 
       header {
@@ -563,7 +563,11 @@
   let selectedCategoryId = null;
   let items             = [];
 
-  const isMobile = () => window.innerWidth <= 600;
+  // Treat as mobile when the primary input is touch (no fine pointer / no hover).
+  // This correctly catches folding phones at any resolution.
+  const isMobile = () =>
+    window.matchMedia('(hover: none) and (pointer: coarse)').matches ||
+    window.innerWidth <= 1024;
 
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
@@ -596,6 +600,10 @@
       if (!res.ok) throw new Error(await res.text());
       categories = await res.json();
       renderCategories();
+      // Auto-select the first category on initial load
+      if (categories.length > 0 && selectedCategoryId === null) {
+        await selectCategory(categories[0].id);
+      }
     } catch (e) {
       toast('Failed to load categories: ' + e.message, true);
     }
