@@ -36,8 +36,9 @@ COPY --from=builder /build/target/release/app /usr/local/bin/manage
 # Working directory — app.sqlite is created here at runtime.
 WORKDIR /data
 
-# Bake in the default config.  Override specific values with APP_* env vars
-# or bind-mount a config/local.toml at /data/config/local.toml.
+# Bake in the default config for standalone image runs.  When started via
+# docker-compose the whole ./config directory is bind-mounted over this,
+# so projectroot/config/local.toml is picked up automatically.
 COPY config/default.toml /data/config/default.toml
 
 EXPOSE 8080
