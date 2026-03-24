@@ -14,9 +14,23 @@ services:
       # rebuilding the image.
       - ./config/local.toml:/data/config/local.toml:ro
     environment:
-      # Override individual config values with APP_* env vars if preferred.
-      # e.g. APP_PRINTER_MODE=usb  APP_VIKUNJA__API_TOKEN=your_token
+      # Set to "usb" to enable physical printing.  Requires the USB device
+      # section below to be uncommented as well.
       - APP_PRINTER_MODE=${APP_PRINTER_MODE:-terminal}
+
+    # ── USB printer passthrough ──────────────────────────────────────────────
+    # Uncomment the lines below to pass the host USB bus into the container so
+    # the app can talk to a physical ESC/POS printer.
+    #
+    # Prerequisites on the host:
+    #   1. The udev rule must be installed (see README — USB printer setup).
+    #      This sets MODE="0666" so the device is accessible without root.
+    #   2. The printer must be plugged in before the container starts.
+    #   3. Set APP_PRINTER_MODE=usb (env var or config/local.toml).
+    #
+    # devices:
+    #   - /dev/bus/usb:/dev/bus/usb
+
     # The app binds on 0.0.0.0:8080.  Expose it directly only if you need
     # to access the raw API without going through the frontend proxy.
     # ports:

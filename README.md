@@ -88,6 +88,69 @@ docker compose down -v
 
 ---
 
+## USB printing with Docker
+
+By default the app runs in `terminal` mode (output goes to stdout). To use a physical printer with the Docker stack you need to pass the host USB bus into the container.
+
+### 1. Install the udev rule on the host
+
+This sets the device permissions to world-readable/writable so the container can access it without running as root.
+
+```bash
+sudo cp 99-printer.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+### 2. Plug in your printer and confirm it is detected
+
+```bash
+lsusb
+# Look for a line like:
+# Bus 001 Device 003: ID 0fe6:811e ...
+```
+
+### 3. Enable USB passthrough in docker-compose.yml
+
+Uncomment the `devices` block in the `app` service:
+
+```yaml
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+```
+
+This mounts the entire host USB bus into the container. The app will find the printer by its VID/PID configured in `config/local.toml`.
+
+### 4. Set printer mode to USB
+
+In `config/local.toml`:
+
+```toml
+[printer]
+mode = "usb"
+```
+
+Or via environment variable without editing the file:
+
+```bash
+APP_PRINTER_MODE=usb docker compose up -d
+```
+
+### 5. Verify the VID and PID match your printer
+
+The defaults are `0x0fe6` / `0x811e`. If your printer is different, find its IDs with `lsusb` and override them in `config/local.toml`:
+
+```toml
+[printer]
+mode = "usb"
+vendor_id  = 0x1234   # replace with your printer's VID
+product_id = 0x5678   # replace with your printer's PID
+```
+
+> **Note:** The printer must be plugged in before `docker compose up`. If you plug it in afterwards, restart the `app` container: `docker compose restart app`.
+
+---
+
 ## Running from source
 
 Use this approach if you want to run the TUI or develop locally.
@@ -330,11 +393,14 @@ manage_dan/
 **The server starts but todos don't load**
 Check that your Vikunja `base_url` and `api_token` are correct in `config/local.toml`. The system status endpoint (`GET /api/v1/status`) will show `todo: Nogo` if initialisation failed.
 
-**USB printer not found**
+**USB printer not found (running from source)**
 Run `lsusb` to confirm the printer is detected. Check that the udev rule is installed and that your user is in the `lp` group. Verify the VID/PID in `config/local.toml` matches your printer.
 
+**USB printer not found (Docker)**
+Make sure the `devices: - /dev/bus/usb:/dev/bus/usb` block is uncommented in `docker-compose.yml`, the udev rule is installed on the host, and `APP_PRINTER_MODE=usb` is set. The printer must be plugged in before the container starts — if you plugged it in afterwards, run `docker compose restart app`.
+
 **Permission denied on USB device**
-The udev rule may not have been applied. Try unplugging and replugging the printer, or run `sudo udevadm trigger`.
+The udev rule may not have been applied. Try unplugging and replugging the printer, or run `sudo udevadm trigger`. The rule sets `MODE="0666"` which allows access without root or group membership.
 
 **Docker build fails**
 Ensure Docker BuildKit is enabled (`DOCKER_BUILDKIT=1`) and that you have an internet connection for downloading crates during the first build.
