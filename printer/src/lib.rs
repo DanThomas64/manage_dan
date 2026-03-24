@@ -16,6 +16,37 @@ use std::sync::Mutex;
 /// The usable content area is `TERMINAL_WIDTH - 1` (one leading space inside the border).
 pub const TERMINAL_WIDTH: usize = 48;
 
+/// Wraps `text` at word boundaries so no line exceeds `width` characters.
+///
+/// Blank lines in the input are preserved as blank lines in the output.
+/// A single word longer than `width` is placed on its own line as-is
+/// rather than splitting mid-word.
+fn word_wrap(text: &str, width: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for paragraph in text.lines() {
+        if paragraph.trim().is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let mut current = String::new();
+        for word in paragraph.split_whitespace() {
+            if current.is_empty() {
+                current.push_str(word);
+            } else if current.len() + 1 + word.len() <= width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                out.push(current.clone());
+                current = word.to_string();
+            }
+        }
+        if !current.is_empty() {
+            out.push(current);
+        }
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Backend enum
 // ---------------------------------------------------------------------------
@@ -115,20 +146,31 @@ impl PrinterManager {
 
         info!("Executing USB print job (Title: {})", job.title);
 
+        let width = printer.options().get_characters_per_line() as usize;
+
         printer.feeds(1)?;
 
-        // Header: centred bold title (normal size — double-width would halve the
-        // usable character count and cause wrapping on 42-cpl printers).
+        // Header — centred, bold + double-strike for extra weight on the title line.
         printer.justify(JustifyMode::CENTER)?;
         printer.bold(true)?;
+        printer.double_strike(true)?;
         printer.writeln(&job.title)?;
+        printer.double_strike(false)?;
         printer.bold(false)?;
+        // Task name on its own line with breathing room below before the body.
         printer.writeln(&job.origin)?;
+        printer.writeln("")?;
         printer.justify(JustifyMode::LEFT)?;
 
-        // Body lines (include separators, metadata, description, subtasks, footer).
+        // Body — word-wrap each line so words are never split mid-way.
         for l in &job.lines {
-            printer.writeln(l)?;
+            if l.is_empty() {
+                printer.writeln("")?;
+            } else {
+                for wrapped in word_wrap(l, width) {
+                    printer.writeln(&wrapped)?;
+                }
+            }
         }
 
         printer.feeds(2)?;
@@ -155,19 +197,21 @@ impl PrinterManager {
             format!("║ {:<width$}║", truncated, width = inner - 1)
         };
 
+        let content_width = inner - 1;
+
         println!();
         println!("{}", top);
         println!("{}", pad(&job.title));
         println!("{}", pad(&job.origin));
+        // Blank line between the task title and the dividing border.
+        println!("{}", empty);
         println!("{}", mid);
         for line in &job.lines {
             if line.is_empty() {
                 println!("{}", empty);
             } else {
-                let chars: Vec<char> = line.chars().collect();
-                for chunk in chars.chunks(inner - 1) {
-                    let s: String = chunk.iter().collect();
-                    println!("{}", pad(&s));
+                for wrapped in word_wrap(line, content_width) {
+                    println!("{}", pad(&wrapped));
                 }
             }
         }
