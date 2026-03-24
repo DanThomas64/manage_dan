@@ -56,6 +56,13 @@ where
 // Models
 // ---------------------------------------------------------------------------
 
+/// A Vikunja project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VikunjaProject {
+    pub id: i64,
+    pub title: String,
+}
+
 /// A label attached to a Vikunja task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VikunjaLabel {

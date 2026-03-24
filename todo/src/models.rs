@@ -34,6 +34,10 @@ pub struct TodoItem {
     pub due_date: Option<DateTime<Local>>,
     /// Priority 0–10 (0 = no priority). Stored as-is in Vikunja.
     pub priority: u8,
+    /// Name of the Vikunja project this task belongs to.
+    pub project_title: Option<String>,
+    /// Label titles attached to this task.
+    pub labels: Vec<String>,
 }
 
 impl TodoItem {
@@ -52,6 +56,8 @@ impl TodoItem {
             archived: false,
             due_date: None,
             priority: 0,
+            project_title: None,
+            labels: Vec::new(),
         }
     }
 }

@@ -61,6 +61,7 @@ fn subtask_payload(sub: &Subtask) -> TaskPayload {
 pub(crate) fn from_vikunja_task(
     task: VikunjaTask,
     printed_at: Option<DateTime<Local>>,
+    project_title: Option<String>,
 ) -> TodoItem {
     let now = Local::now();
 
@@ -78,6 +79,8 @@ pub(crate) fn from_vikunja_task(
         })
         .unwrap_or_default();
 
+    let labels: Vec<String> = task.labels.iter().map(|l| l.title.clone()).collect();
+
     TodoItem {
         id: Some(task.id),
         title: task.title,
@@ -91,55 +94,77 @@ pub(crate) fn from_vikunja_task(
         archived: false,
         due_date: task.due_date.map(|dt| dt.with_timezone(&Local)),
         priority: (task.priority.clamp(0, 255)) as u8,
+        project_title,
+        labels,
     }
 }
 
 // --- Printing ---
 
 pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::PrinterLibResult {
-    let title = format!("TODO TICKET #{}", item.id.unwrap_or(0));
+    // Content width available inside the box (TERMINAL_WIDTH minus the leading space in pad).
+    const SEP_WIDTH: usize = printer::TERMINAL_WIDTH - 2;
+    let sep = "─".repeat(SEP_WIDTH);
 
-    let mut lines = vec![
-        format!("Title: {}", item.title),
-        format!(
-            "Status: {}",
-            if item.completed { "COMPLETED" } else { "PENDING" }
-        ),
-        String::new(),
-        format!("Priority: {}", item.priority),
-    ];
+    let id = item.id.unwrap_or(0);
+    let status = if item.completed { "COMPLETED" } else { "PENDING" };
 
-    if let Some(due) = item.due_date {
-        lines.push(format!("Due Date: {}", due.format("%Y-%m-%d %H:%M")));
-    } else {
-        lines.push("Due Date: None".to_string());
+    // Header line 1: "TODO #42  [ PENDING ]"
+    let badge = format!("[ {} ]", status);
+    let id_str = format!("TODO #{}", id);
+    let gap = (printer::TERMINAL_WIDTH - 1)
+        .saturating_sub(id_str.len() + badge.len());
+    let title = format!("{}{}{}", id_str, " ".repeat(gap), badge);
+
+    // Header line 2: task title (shown as origin)
+    let origin = item.title.clone();
+
+    // Priority bar: 10 filled/empty blocks for priority 0–10
+    let filled = item.priority.min(10) as usize;
+    let bar = format!("{}{}", "▓".repeat(filled), "░".repeat(10 - filled));
+    let due_str = item.due_date
+        .map(|d| d.format("%a %d %b").to_string())
+        .unwrap_or_else(|| "None".to_string());
+    let info_row = format!("Due: {}  ·  Pri: {}  ({}/10)", due_str, bar, item.priority);
+
+    let mut lines = vec![info_row];
+
+    if let Some(ref project) = item.project_title {
+        lines.push(format!("Project: {}", project));
+    }
+    if !item.labels.is_empty() {
+        lines.push(format!("Labels: {}", item.labels.join(", ")));
     }
 
-    lines.push(String::new());
-    lines.push("Description:".to_string());
-    lines.extend(item.description.lines().map(|s| format!("  {}", s)));
+    lines.push(sep.clone());
 
+    // Description
+    if !item.description.is_empty() {
+        lines.extend(item.description.lines().map(str::to_string));
+    }
+
+    // Subtasks
     if !item.subtasks.is_empty() {
-        lines.push(String::new());
-        lines.push("Subtasks:".to_string());
+        if !item.description.is_empty() {
+            lines.push(String::new());
+        }
+        let done_count = item.subtasks.iter().filter(|s| s.done).count();
+        lines.push(format!("Subtasks [{}/{}]", done_count, item.subtasks.len()));
         for sub in &item.subtasks {
-            let marker = if sub.done { "[x]" } else { "[ ]" };
+            let marker = if sub.done { "✓" } else { "○" };
             lines.push(format!("  {} {}", marker, sub.title));
         }
     }
 
-    lines.push(String::new());
-    lines.push(format!("Created: {}", item.created_at.format("%Y-%m-%d %H:%M")));
-    lines.push(format!("Updated: {}", item.updated_at.format("%Y-%m-%d %H:%M")));
+    // Footer
+    lines.push(sep);
+    lines.push(format!(
+        "Created: {}  ·  Updated: {}",
+        item.created_at.format("%d %b %Y"),
+        item.updated_at.format("%d %b %Y"),
+    ));
 
-    if let Some(completed_at) = item.completed_at {
-        lines.push(format!(
-            "Completed: {}",
-            completed_at.format("%Y-%m-%d %H:%M")
-        ));
-    }
-
-    PrintJob::new("Todo System".to_string(), title, lines)
+    PrintJob::new(origin, title, lines)
         .execute(0, 0)
         .await
 }
@@ -193,7 +218,8 @@ pub async fn create_item(item: TodoItem) -> TodoLibResult<TodoItem> {
 
     // 3. Fetch the full task with subtasks populated
     let full = client.get_task(parent.id).await?;
-    let mut result = from_vikunja_task(full, None);
+    let project_title = client.get_project(full.project_id).await.ok().map(|p| p.title);
+    let mut result = from_vikunja_task(full, None, project_title);
 
     // 4. Attempt automatic print
     print_ticket_on_creation(&mut result).await?;
@@ -204,7 +230,14 @@ pub async fn create_item(item: TodoItem) -> TodoLibResult<TodoItem> {
 /// Returns all top-level (non-subtask) items across all accessible Vikunja projects.
 pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
     let client = VikunjaClient::get()?;
-    let tasks = client.list_all_tasks().await?;
+    let (tasks, projects) = tokio::join!(client.list_all_tasks(), client.list_projects());
+    let tasks = tasks?;
+
+    let project_map: std::collections::HashMap<i64, String> = projects
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| (p.id, p.title))
+        .collect();
 
     // Collect IDs of tasks that appear as subtasks of other tasks so we can
     // exclude them from the top-level list.
@@ -225,7 +258,8 @@ pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
         .filter(|t| !subtask_ids.contains(&t.id))
         .map(|t| {
             let printed_at = printed_map.get(&t.id).copied();
-            from_vikunja_task(t, printed_at)
+            let project_title = project_map.get(&t.project_id).cloned();
+            from_vikunja_task(t, printed_at, project_title)
         })
         .collect();
 
@@ -266,7 +300,8 @@ pub async fn print_item(id: i64) -> TodoLibResult {
     let client = VikunjaClient::get()?;
     let task = client.get_task(id).await?;
     let printed_at = db::printed_at_get(id).await.unwrap_or(None);
-    let item = from_vikunja_task(task, printed_at);
+    let project_title = client.get_project(task.project_id).await.ok().map(|p| p.title);
+    let item = from_vikunja_task(task, printed_at, project_title);
 
     match print_ticket(&item).await {
         Ok(()) => {

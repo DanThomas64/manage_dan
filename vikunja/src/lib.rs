@@ -3,7 +3,7 @@
 pub mod models;
 pub mod vikunja_error;
 
-use models::{CreateRelation, TaskPayload, VikunjaTask};
+use models::{CreateRelation, TaskPayload, VikunjaProject, VikunjaTask};
 use std::sync::OnceLock;
 use tracing::info;
 use vikunja_error::{VikunjaError, VikunjaResult};
@@ -118,6 +118,22 @@ impl VikunjaClient {
         let url = format!("{}/api/v1/tasks/{}", self.base_url, id);
         let resp = self.client.post(&url).json(&payload).send().await?;
         self.check_response(resp).await
+    }
+
+    /// Fetches a single project by ID.
+    pub async fn get_project(&self, id: i64) -> VikunjaResult<VikunjaProject> {
+        let url = format!("{}/api/v1/projects/{}", self.base_url, id);
+        let resp = self.client.get(&url).send().await?;
+        let resp = self.require_success(resp).await?;
+        decode(resp).await
+    }
+
+    /// Lists all projects accessible to the authenticated user.
+    pub async fn list_projects(&self) -> VikunjaResult<Vec<VikunjaProject>> {
+        let url = format!("{}/api/v1/projects?per_page=500", self.base_url);
+        let resp = self.client.get(&url).send().await?;
+        let resp = self.require_success(resp).await?;
+        decode(resp).await
     }
 
     /// Deletes a task by ID.

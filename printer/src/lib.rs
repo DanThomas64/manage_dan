@@ -13,7 +13,8 @@ use once_cell::sync::OnceCell;
 use std::sync::Mutex;
 
 /// Width (in characters) of the terminal receipt rendering.
-const TERMINAL_WIDTH: usize = 48;
+/// Also used by callers to format separator lines.
+pub const TERMINAL_WIDTH: usize = 48;
 
 // ---------------------------------------------------------------------------
 // Backend enum
@@ -93,7 +94,7 @@ impl PrinterManager {
         printer.writeln(&job.title)?;
         printer.feeds(1)?;
         printer.size(1, 1)?;
-        printer.writeln(&format!("Origin: {}", job.origin))?;
+        printer.writeln(&job.origin)?;
         printer.feeds(1)?;
         printer.draw_line(line)?;
 
@@ -128,8 +129,8 @@ impl PrinterManager {
 
         println!();
         println!("{}", top);
-        println!("{}", pad(&format!("▶ {}", job.title)));
-        println!("{}", pad(&format!("  Origin: {}", job.origin)));
+        println!("{}", pad(&job.title));
+        println!("{}", pad(&job.origin));
         println!("{}", mid);
         for line in &job.lines {
             if line.is_empty() {

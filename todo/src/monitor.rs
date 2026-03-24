@@ -1,19 +1,21 @@
 //! Background print monitor.
 //!
-//! Polls all accessible Vikunja projects on a configurable interval.  Any task
-//! carrying the `"print"` label is printed automatically.  A content hash of
-//! the task's meaningful fields is stored in the local `printed_tasks` table;
-//! a task is only reprinted when that hash changes, preventing duplicate
-//! tickets for unchanged tasks.
+//! Polls all accessible Vikunja projects on a configurable interval.  Every
+//! top-level task is printed by default.  Adding a `"Don't Print"` label to a
+//! task suppresses ticket printing for that task entirely.
+//!
+//! A content hash of the task's meaningful fields is stored in the local
+//! `printed_tasks` table; a task is only reprinted when that hash changes,
+//! preventing duplicate tickets for unchanged tasks.
 //!
 //! ## Reprint triggers
 //! The following changes cause a reprint:
 //! - Title or description changed
-//! - Completion status (`done`) toggled
 //! - Due date or priority changed
 //! - Any subtask added, removed, renamed, or its done-status toggled
 //!
 //! Changes that do NOT trigger a reprint:
+//! - Completion status (`done`) — completed tasks are never printed
 //! - Labels added/removed (would create a feedback loop)
 //! - Assignees, comments, position, or other metadata
 
@@ -27,13 +29,13 @@ use vikunja::models::VikunjaTask;
 use crate::from_vikunja_task;
 use crate::print_ticket;
 
-const PRINT_LABEL: &str = "print";
+const NO_PRINT_LABEL: &str = "don't print";
 
-/// Returns true if the task has a label whose title is "print" (case-insensitive).
-fn has_print_label(task: &VikunjaTask) -> bool {
+/// Returns true if the task has a "Don't Print" label (case-insensitive).
+fn has_no_print_label(task: &VikunjaTask) -> bool {
     task.labels
         .iter()
-        .any(|l| l.title.to_ascii_lowercase() == PRINT_LABEL)
+        .any(|l| l.title.to_ascii_lowercase() == NO_PRINT_LABEL)
 }
 
 /// Produces a deterministic string that captures every field visible on a
@@ -69,7 +71,14 @@ pub(crate) fn content_hash(task: &VikunjaTask) -> String {
 /// Checks all print-labelled tasks once and prints any that are new or changed.
 async fn poll() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let client = VikunjaClient::get()?;
-    let all_tasks = client.list_all_tasks().await?;
+    let (all_tasks, projects) = tokio::join!(client.list_all_tasks(), client.list_projects());
+    let all_tasks = all_tasks?;
+
+    let project_map: std::collections::HashMap<i64, String> = projects
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| (p.id, p.title))
+        .collect();
 
     // Collect subtask IDs so we never try to print a subtask as a top-level ticket.
     let subtask_ids: std::collections::HashSet<i64> = all_tasks
@@ -84,7 +93,7 @@ async fn poll() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     for task in all_tasks
         .iter()
-        .filter(|t| !subtask_ids.contains(&t.id) && has_print_label(t))
+        .filter(|t| !subtask_ids.contains(&t.id) && !has_no_print_label(t))
     {
         let hash = content_hash(task);
         let stored = db::printed_hash_get(task.id).await.unwrap_or(None);
@@ -115,7 +124,8 @@ async fn poll() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         );
 
         let printed_at_stored = db::printed_at_get(task.id).await.unwrap_or(None);
-        let item = from_vikunja_task(task.clone(), printed_at_stored);
+        let project_title = project_map.get(&task.project_id).cloned();
+        let item = from_vikunja_task(task.clone(), printed_at_stored, project_title);
 
         match print_ticket(&item).await {
             Ok(()) => {
@@ -143,8 +153,8 @@ async fn poll() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 /// Errors within a poll are logged and do not stop the loop.
 pub async fn run(interval_secs: u64) {
     info!(
-        "Print monitor started (interval: {}s, label: \"{}\")",
-        interval_secs, PRINT_LABEL
+        "Print monitor started (interval: {}s, suppress label: \"{}\")",
+        interval_secs, NO_PRINT_LABEL
     );
 
     loop {

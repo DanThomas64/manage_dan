@@ -112,7 +112,7 @@ pub async fn print_summary(level: SummaryLevel) {
         })
         .collect();
 
-    let title = format!("DAILY SUMMARY — {}", today.format("%a %d %b %Y"));
+    let title = format!("DAILY SUMMARY:  {}", today.format("%a %d %b %Y"));
     let mut lines: Vec<String> = Vec::new();
 
     // --- Overdue (always) ---
