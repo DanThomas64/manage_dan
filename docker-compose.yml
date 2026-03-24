@@ -10,10 +10,10 @@ services:
       # Persist the SQLite database and log file in the project directory.
       # Logs are written to ./data/logs/app.log on the host.
       - ./data:/data
-      # Optional: drop a config/local.toml next to docker-compose.yml to
-      # override defaults (Vikunja token, printer mode, etc.) without
-      # rebuilding the image.
-      - ./config/local.toml:/data/config/local.toml:ro
+      # Mounts the whole config directory so local.toml is picked up if it
+      # exists.  Mounting a directory (not a file) avoids Docker creating a
+      # phantom directory when local.toml is absent on the host.
+      - ./config:/data/config:ro
     environment:
       # Set to "usb" to enable physical printing.
       - APP_PRINTER_MODE=${APP_PRINTER_MODE:-terminal}
