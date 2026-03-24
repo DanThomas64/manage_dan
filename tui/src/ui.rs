@@ -2042,9 +2042,18 @@ impl Drop for Tui {
 }
 
 /// Runs the main TUI loop.
+///
+/// The API base URL is read from the `MANAGE_API_URL` environment variable,
+/// defaulting to `http://127.0.0.1:8080`.
+///
+/// Examples:
+///   Running against local server:  (no env var needed)
+///   Running against Docker Compose: MANAGE_API_URL=http://localhost cargo run -p tui
 pub async fn run_tui() -> Result<()> {
     let mut tui = Tui::new()?;
-    let api_client = ApiClient::new("http://127.0.0.1:8080");
+    let api_url = std::env::var("MANAGE_API_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let api_client = ApiClient::new(&api_url);
     let mut app = App::new(api_client);
 
     // Initial status fetch
