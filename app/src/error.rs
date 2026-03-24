@@ -23,6 +23,8 @@ pub enum AppError {
     Printer(#[from] PrinterLibError),
     #[error(transparent)]
     Todo(#[from] TodoLibError),
+    #[error(transparent)]
+    Shopping(#[from] ShoppingLibError),
 
     #[error("systemstatus monitor has failed: {0}")]
     SystemStatusMonitorFail(String),

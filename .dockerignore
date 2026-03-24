@@ -1,0 +1,7 @@
+target/
+app.sqlite
+app.log
+config/local.toml
+.git/
+frontend/node_modules/
+**/*.rs.bk

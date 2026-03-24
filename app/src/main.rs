@@ -9,6 +9,7 @@ use nogo::{SystemsGoNogo, Status};
 use notes;
 use project;
 use printer;
+use shopping;
 use todo;
 use tokio::time::{sleep, Duration};
 

@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry};
+use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ShoppingCategory, ShoppingItem};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyModifiers},
@@ -26,6 +26,7 @@ pub enum Screen {
     Todo,
     Notes,
     Project,
+    Shopping,
     Quit,
 }
 
@@ -42,6 +43,21 @@ pub enum TodoEditMode {
 pub enum InputMode {
     Normal,
     Insert,
+}
+
+/// Which panel is focused on the Shopping screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShoppingFocus {
+    Categories,
+    Items,
+}
+
+/// Input mode for the Shopping screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShoppingInputMode {
+    Normal,
+    AddingCategory,
+    AddingItem,
 }
 
 /// Represents which field is currently focused in the floating input form.
@@ -88,6 +104,15 @@ pub struct App {
     pub priority_buffer: String,
 
     // Removed: pub todo_summary: Option<TodoSummary>,
+
+    // Shopping State
+    pub shopping_categories: Vec<ShoppingCategory>,
+    pub shopping_items: Vec<ShoppingItem>,
+    pub shopping_category_state: ListState,
+    pub shopping_item_state: ListState,
+    pub shopping_focus: ShoppingFocus,
+    pub shopping_input_mode: ShoppingInputMode,
+    pub shopping_input_buffer: String,
 }
 
 /// Parses the multiline subtasks input buffer into a `Vec<Subtask>`.
@@ -140,6 +165,14 @@ impl App {
             time_buffer: String::from("00:00"),
             priority_buffer: String::new(),
             // Removed: todo_summary: None,
+
+            shopping_categories: Vec::new(),
+            shopping_items: Vec::new(),
+            shopping_category_state: ListState::default(),
+            shopping_item_state: ListState::default(),
+            shopping_focus: ShoppingFocus::Categories,
+            shopping_input_mode: ShoppingInputMode::Normal,
+            shopping_input_buffer: String::new(),
         }
     }
 
@@ -201,6 +234,162 @@ impl App {
         }
     }
 
+    // --- Shopping helpers ---
+
+    pub async fn fetch_shopping_categories(&mut self) {
+        match self.api_client.fetch_shopping_categories().await {
+            Ok(cats) => {
+                self.shopping_categories = cats;
+                if self.shopping_categories.is_empty() {
+                    self.shopping_category_state.select(None);
+                } else {
+                    let sel = self.shopping_category_state.selected().unwrap_or(0)
+                        .min(self.shopping_categories.len().saturating_sub(1));
+                    self.shopping_category_state.select(Some(sel));
+                    self.fetch_shopping_items_for_selected().await;
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Shopping API error: {}", e)),
+        }
+    }
+
+    pub async fn fetch_shopping_items_for_selected(&mut self) {
+        if let Some(idx) = self.shopping_category_state.selected() {
+            if let Some(cat) = self.shopping_categories.get(idx) {
+                let id = cat.id;
+                match self.api_client.fetch_shopping_items(id).await {
+                    Ok(items) => {
+                        self.shopping_items = items;
+                        if self.shopping_items.is_empty() {
+                            self.shopping_item_state.select(None);
+                        } else {
+                            let sel = self.shopping_item_state.selected().unwrap_or(0)
+                                .min(self.shopping_items.len().saturating_sub(1));
+                            self.shopping_item_state.select(Some(sel));
+                        }
+                    }
+                    Err(e) => self.last_error = Some(format!("Shopping API error: {}", e)),
+                }
+            }
+        }
+    }
+
+    fn shopping_move_category(&mut self, delta: i32) {
+        let len = self.shopping_categories.len();
+        if len == 0 { return; }
+        let cur = self.shopping_category_state.selected().unwrap_or(0) as i32;
+        let next = (cur + delta).rem_euclid(len as i32) as usize;
+        self.shopping_category_state.select(Some(next));
+        self.shopping_item_state.select(None);
+        self.shopping_items.clear();
+    }
+
+    fn shopping_move_item(&mut self, delta: i32) {
+        let len = self.shopping_items.len();
+        if len == 0 { return; }
+        let cur = self.shopping_item_state.selected().unwrap_or(0) as i32;
+        let next = (cur + delta).rem_euclid(len as i32) as usize;
+        self.shopping_item_state.select(Some(next));
+    }
+
+    pub async fn shopping_toggle_check(&mut self) {
+        if let Some(idx) = self.shopping_item_state.selected() {
+            if let Some(item) = self.shopping_items.get(idx) {
+                let id = item.id;
+                let new_checked = !item.checked;
+                if let Err(e) = self.api_client.check_shopping_item(id, new_checked).await {
+                    self.last_error = Some(format!("Check failed: {}", e));
+                } else {
+                    self.fetch_shopping_items_for_selected().await;
+                }
+            }
+        }
+    }
+
+    pub async fn shopping_delete_item(&mut self) {
+        if let Some(idx) = self.shopping_item_state.selected() {
+            if let Some(item) = self.shopping_items.get(idx) {
+                let id = item.id;
+                if let Err(e) = self.api_client.delete_shopping_item(id).await {
+                    self.last_error = Some(format!("Delete failed: {}", e));
+                } else {
+                    self.fetch_shopping_items_for_selected().await;
+                }
+            }
+        }
+    }
+
+    pub async fn shopping_delete_category(&mut self) {
+        if let Some(idx) = self.shopping_category_state.selected() {
+            if let Some(cat) = self.shopping_categories.get(idx) {
+                let id = cat.id;
+                if let Err(e) = self.api_client.delete_shopping_category(id).await {
+                    self.last_error = Some(format!("Delete failed: {}", e));
+                } else {
+                    self.fetch_shopping_categories().await;
+                }
+            }
+        }
+    }
+
+    pub async fn shopping_clear_checked(&mut self) {
+        if let Some(idx) = self.shopping_category_state.selected() {
+            if let Some(cat) = self.shopping_categories.get(idx) {
+                let id = cat.id;
+                if let Err(e) = self.api_client.clear_shopping_checked(id).await {
+                    self.last_error = Some(format!("Clear failed: {}", e));
+                } else {
+                    self.fetch_shopping_items_for_selected().await;
+                }
+            }
+        }
+    }
+
+    pub async fn shopping_print_list(&mut self) {
+        if let Some(idx) = self.shopping_category_state.selected() {
+            if let Some(cat) = self.shopping_categories.get(idx) {
+                let id = cat.id;
+                if let Err(e) = self.api_client.print_shopping_list(id).await {
+                    self.last_error = Some(format!("Print failed: {}", e));
+                }
+            }
+        }
+    }
+
+    pub async fn shopping_submit_input(&mut self) {
+        let input = self.shopping_input_buffer.trim().to_string();
+        if input.is_empty() {
+            self.shopping_input_mode = ShoppingInputMode::Normal;
+            self.shopping_input_buffer.clear();
+            return;
+        }
+        match self.shopping_input_mode {
+            ShoppingInputMode::AddingCategory => {
+                if let Err(e) = self.api_client.add_shopping_category(&input).await {
+                    self.last_error = Some(format!("Add category failed: {}", e));
+                } else {
+                    self.fetch_shopping_categories().await;
+                }
+            }
+            ShoppingInputMode::AddingItem => {
+                if let Some(idx) = self.shopping_category_state.selected() {
+                    if let Some(cat) = self.shopping_categories.get(idx) {
+                        let cat_id = cat.id;
+                        if let Err(e) = self.api_client.add_shopping_item(cat_id, &input, None).await {
+                            self.last_error = Some(format!("Add item failed: {}", e));
+                        } else {
+                            self.fetch_shopping_items_for_selected().await;
+                        }
+                    }
+                }
+            }
+            ShoppingInputMode::Normal => {}
+        }
+        self.shopping_input_mode = ShoppingInputMode::Normal;
+        self.shopping_input_buffer.clear();
+    }
+
     /// Handles input events specific to the current screen.
     pub async fn handle_input(&mut self, event: CEvent) {
         let previous_screen = self.current_screen;
@@ -243,7 +432,110 @@ impl App {
                     }
                 }
             }
-            _ => {} // Other screens not yet implemented
+            Screen::Notes => {
+                if let CEvent::Key(key) = event {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => self.current_screen = Screen::Dashboard,
+                        _ => {}
+                    }
+                }
+            }
+            Screen::Project => {
+                if let CEvent::Key(key) = event {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => self.current_screen = Screen::Dashboard,
+                        _ => {}
+                    }
+                }
+            }
+            Screen::Shopping => {
+                if let CEvent::Key(key) = event {
+                    match self.shopping_input_mode {
+                        ShoppingInputMode::Normal => {
+                            match key.code {
+                                KeyCode::Char('q') | KeyCode::Esc => {
+                                    self.current_screen = Screen::Dashboard;
+                                }
+                                KeyCode::Tab => {
+                                    self.shopping_focus = match self.shopping_focus {
+                                        ShoppingFocus::Categories => ShoppingFocus::Items,
+                                        ShoppingFocus::Items => ShoppingFocus::Categories,
+                                    };
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    match self.shopping_focus {
+                                        ShoppingFocus::Categories => {
+                                            self.shopping_move_category(-1);
+                                            self.fetch_shopping_items_for_selected().await;
+                                        }
+                                        ShoppingFocus::Items => self.shopping_move_item(-1),
+                                    }
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    match self.shopping_focus {
+                                        ShoppingFocus::Categories => {
+                                            self.shopping_move_category(1);
+                                            self.fetch_shopping_items_for_selected().await;
+                                        }
+                                        ShoppingFocus::Items => self.shopping_move_item(1),
+                                    }
+                                }
+                                KeyCode::Char('a') => {
+                                    match self.shopping_focus {
+                                        ShoppingFocus::Categories => {
+                                            self.shopping_input_mode = ShoppingInputMode::AddingCategory;
+                                            self.shopping_input_buffer.clear();
+                                        }
+                                        ShoppingFocus::Items => {
+                                            self.shopping_input_mode = ShoppingInputMode::AddingItem;
+                                            self.shopping_input_buffer.clear();
+                                        }
+                                    }
+                                }
+                                KeyCode::Char('d') => {
+                                    match self.shopping_focus {
+                                        ShoppingFocus::Categories => self.shopping_delete_category().await,
+                                        ShoppingFocus::Items => self.shopping_delete_item().await,
+                                    }
+                                    action_taken = true;
+                                }
+                                KeyCode::Char(' ') | KeyCode::Char('c') => {
+                                    self.shopping_toggle_check().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Char('C') => {
+                                    self.shopping_clear_checked().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Char('p') => {
+                                    self.shopping_print_list().await;
+                                }
+                                KeyCode::Char('r') => {
+                                    self.fetch_shopping_categories().await;
+                                    action_taken = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                        ShoppingInputMode::AddingCategory | ShoppingInputMode::AddingItem => {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    self.shopping_submit_input().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Esc => {
+                                    self.shopping_input_mode = ShoppingInputMode::Normal;
+                                    self.shopping_input_buffer.clear();
+                                }
+                                KeyCode::Backspace => { self.shopping_input_buffer.pop(); }
+                                KeyCode::Char(c) => { self.shopping_input_buffer.push(c); }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
         
         // 1. Handle screen transition logic
@@ -256,6 +548,9 @@ impl App {
                 Screen::Todo => {
                     // When entering todo screen, fetch the list immediately
                     self.fetch_todos().await;
+                }
+                Screen::Shopping => {
+                    self.fetch_shopping_categories().await;
                 }
                 _ => {}
             }
@@ -283,6 +578,7 @@ impl App {
             KeyCode::Char('1') => self.current_screen = Screen::Todo,
             KeyCode::Char('2') => self.current_screen = Screen::Notes,
             KeyCode::Char('3') => self.current_screen = Screen::Project,
+            KeyCode::Char('4') => self.current_screen = Screen::Shopping,
             KeyCode::Char('r') => { /* update_status is called automatically */ }
             _ => {}
         }
@@ -796,6 +1092,9 @@ impl Tui {
             match app.current_screen {
                 Screen::Dashboard => draw_dashboard(frame, app, area),
                 Screen::Todo => draw_todo_screen(frame, app, area),
+                Screen::Notes => draw_notes_placeholder(frame, area),
+                Screen::Project => draw_project_placeholder(frame, area),
+                Screen::Shopping => draw_shopping_screen(frame, app, area),
                 _ => {}
             }
         })?;
@@ -916,6 +1215,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
             status_to_line("project", systems.project),
             status_to_line("printer", systems.printer),
             status_to_line("todo", systems.todo),
+            status_to_line("shopping", systems.shopping),
         ]
     } else {
         vec![Line::from(app.last_error.as_deref().unwrap_or("Waiting for API status...").fg(Color::Red))]
@@ -951,7 +1251,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
 
 
     // Footer/Menu
-    let footer_text = "Q: Quit | 1: Todo | 2: Notes | 3: Project | R: Refresh";
+    let footer_text = "Q: Quit | 1: Todo | 2: Notes | 3: Project | 4: Shopping | R: Refresh";
     let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan));
     frame.render_widget(footer, footer_area);
 }
@@ -1617,9 +1917,117 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
     }
 }
 
+// --- Shopping Screen ---
+
+fn draw_shopping_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(3),
+            Constraint::Length(3),
+        ])
+        .split(area);
+
+    let main_area = chunks[0];
+    let footer_area = chunks[1];
+
+    // Split main area into category list (left) and items (right)
+    let panels = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(main_area);
+
+    let cat_area = panels[0];
+    let item_area = panels[1];
+
+    // --- Category list ---
+    let cat_items: Vec<ListItem> = app.shopping_categories.iter().map(|c| {
+        ListItem::new(c.name.clone())
+    }).collect();
+
+    let cat_focused = app.shopping_focus == ShoppingFocus::Categories;
+    let cat_border = if cat_focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let cat_list = List::new(cat_items)
+        .block(Block::default().borders(Borders::ALL).title("Categories").border_style(cat_border))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Yellow))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(cat_list, cat_area, &mut app.shopping_category_state);
+
+    // --- Item list ---
+    let category_name = app.shopping_category_state.selected()
+        .and_then(|i| app.shopping_categories.get(i))
+        .map(|c| c.name.as_str())
+        .unwrap_or("—");
+
+    let item_items: Vec<ListItem> = app.shopping_items.iter().map(|item| {
+        let marker = if item.checked { "[x]" } else { "[ ]" };
+        let label = match &item.quantity {
+            Some(q) => format!("{} {} ({})", marker, item.name, q),
+            None => format!("{} {}", marker, item.name),
+        };
+        let style = if item.checked {
+            Style::default().fg(Color::DarkGray)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        ListItem::new(label).style(style)
+    }).collect();
+
+    let item_focused = app.shopping_focus == ShoppingFocus::Items;
+    let item_border = if item_focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let title = format!("Items — {}", category_name);
+    let item_list = List::new(item_items)
+        .block(Block::default().borders(Borders::ALL).title(title).border_style(item_border))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(item_list, item_area, &mut app.shopping_item_state);
+
+    // --- Footer / input bar ---
+    let footer_content = match app.shopping_input_mode {
+        ShoppingInputMode::AddingCategory => {
+            format!("New list name: {}_", app.shopping_input_buffer)
+        }
+        ShoppingInputMode::AddingItem => {
+            format!("New item: {}_", app.shopping_input_buffer)
+        }
+        ShoppingInputMode::Normal => {
+            "Q:Back | Tab:Switch | j/k:Navigate | a:Add | d:Delete | Space:Check | C:Clear checked | p:Print | r:Refresh".to_string()
+        }
+    };
+
+    let footer_style = match app.shopping_input_mode {
+        ShoppingInputMode::Normal => Style::default().fg(Color::Cyan),
+        _ => Style::default().fg(Color::Yellow),
+    };
+    let footer = Paragraph::new(footer_content)
+        .style(footer_style)
+        .block(Block::default().borders(Borders::ALL));
+    frame.render_widget(footer, footer_area);
+}
+
 // Placeholder for other screens
 fn draw_todo_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
     let text = Paragraph::new("TODO Screen (Press Q to quit TUI)").block(Block::default().borders(Borders::ALL).title("TODO List"));
+    frame.render_widget(text, area);
+}
+
+fn draw_notes_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+    let text = Paragraph::new("Notes — coming soon\n\nPress Q or Esc to go back")
+        .block(Block::default().borders(Borders::ALL).title("Notes"));
+    frame.render_widget(text, area);
+}
+
+fn draw_project_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+    let text = Paragraph::new("Projects — coming soon\n\nPress Q or Esc to go back")
+        .block(Block::default().borders(Borders::ALL).title("Projects"));
     frame.render_widget(text, area);
 }
 

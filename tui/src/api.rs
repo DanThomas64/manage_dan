@@ -31,6 +31,7 @@ pub struct SystemsStatus {
     pub project: Status,
     pub printer: Status,
     pub todo: Status,
+    pub shopping: Status,
 }
 
 /// Overall Go/NoGo status (mirrors app::nogo::SystemsGoNogo).
@@ -116,6 +117,26 @@ pub struct TodoSummary {
     pub high_priority_pending: usize, // Priority >= 8
     pub due_today: usize,
     pub overdue: usize,
+}
+
+// --- Shopping Data Structures ---
+
+/// A named shopping list (mirrors shopping::models::ShoppingCategory).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShoppingCategory {
+    pub id: i64,
+    pub name: String,
+}
+
+/// A single item on a shopping list (mirrors shopping::models::ShoppingItem).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShoppingItem {
+    pub id: i64,
+    pub category_id: i64,
+    pub name: String,
+    pub quantity: Option<String>,
+    pub checked: bool,
+    pub created_at: DateTime<Local>,
 }
 
 // ---------------------------------------------------
@@ -207,6 +228,64 @@ impl ApiClient {
     pub async fn delete_todo(&self, id: i64) -> Result<()> {
         let url = format!("{}/api/v1/todo/{}", self.base_url, id);
         self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    // --- Shopping Methods ---
+
+    pub async fn fetch_shopping_categories(&self) -> Result<Vec<ShoppingCategory>> {
+        let url = format!("{}/api/v1/shopping/categories", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn add_shopping_category(&self, name: &str) -> Result<ShoppingCategory> {
+        let url = format!("{}/api/v1/shopping/categories", self.base_url);
+        Ok(self.client.post(&url)
+            .json(&serde_json::json!({ "name": name }))
+            .send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn delete_shopping_category(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/shopping/categories/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn fetch_shopping_items(&self, category_id: i64) -> Result<Vec<ShoppingItem>> {
+        let url = format!("{}/api/v1/shopping/categories/{}/items", self.base_url, category_id);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn add_shopping_item(&self, category_id: i64, name: &str, quantity: Option<&str>) -> Result<ShoppingItem> {
+        let url = format!("{}/api/v1/shopping/categories/{}/items", self.base_url, category_id);
+        Ok(self.client.post(&url)
+            .json(&serde_json::json!({ "name": name, "quantity": quantity }))
+            .send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn check_shopping_item(&self, id: i64, checked: bool) -> Result<()> {
+        let url = format!("{}/api/v1/shopping/items/{}/check", self.base_url, id);
+        self.client.patch(&url)
+            .json(&serde_json::json!({ "checked": checked }))
+            .send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn delete_shopping_item(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/shopping/items/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn clear_shopping_checked(&self, category_id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/shopping/categories/{}/clear", self.base_url, category_id);
+        self.client.post(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn print_shopping_list(&self, category_id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/shopping/categories/{}/print", self.base_url, category_id);
+        self.client.post(&url).send().await?.error_for_status()?;
         Ok(())
     }
 }

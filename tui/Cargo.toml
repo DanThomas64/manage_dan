@@ -10,6 +10,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] } # Added features for TUI runtime
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
 chrono = { workspace = true } # Added chrono dependency
 
 # TUI Dependencies

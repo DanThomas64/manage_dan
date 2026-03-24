@@ -1,0 +1,16 @@
+[package]
+name = "shopping"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+db      = { path = "../db" }
+printer = { path = "../printer" }
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+chrono.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+tokio.workspace = true

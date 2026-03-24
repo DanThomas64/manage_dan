@@ -1,0 +1,37 @@
+services:
+
+  # ── Backend (Rust app) ────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      # Persist the SQLite database and any runtime-generated files.
+      - app_data:/data
+      # Optional: drop a config/local.toml next to docker-compose.yml to
+      # override defaults (Vikunja token, printer mode, etc.) without
+      # rebuilding the image.
+      - ./config/local.toml:/data/config/local.toml:ro
+    environment:
+      # Override individual config values with APP_* env vars if preferred.
+      # e.g. APP_PRINTER_MODE=usb  APP_VIKUNJA__API_TOKEN=your_token
+      - APP_PRINTER_MODE=${APP_PRINTER_MODE:-terminal}
+    # The app binds on 0.0.0.0:8080.  Expose it directly only if you need
+    # to access the raw API without going through the frontend proxy.
+    # ports:
+    #   - "8080:8080"
+
+  # ── Frontend (nginx static + API proxy) ───────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+
+volumes:
+  app_data:

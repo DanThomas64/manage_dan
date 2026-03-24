@@ -153,7 +153,7 @@ pub(crate) fn from_vikunja_task(
         subtasks,
         archived: false,
         due_date: task.due_date.map(|dt| dt.with_timezone(&Local)),
-        priority: (task.priority.clamp(0, 255)) as u8,
+        priority: (task.priority.clamp(0, 5)) as u8,
         project_title,
         labels,
     }
@@ -179,13 +179,21 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
     // Header line 2: task title (shown as origin)
     let origin = item.title.clone();
 
-    // Priority bar: 10 filled/empty blocks for priority 0–10
-    let filled = item.priority.min(10) as usize;
-    let bar = format!("[{}{}]", "#".repeat(filled), ".".repeat(10 - filled));
+    // Priority: Vikunja uses 0=Unset, 1=Low, 2=Medium, 3=High, 4=Urgent, 5=Do Now
+    let pri_label = match item.priority {
+        1 => "LOW",
+        2 => "MEDIUM",
+        3 => "HIGH",
+        4 => "URGENT",
+        5 => "DO NOW",
+        _ => "UNSET",
+    };
+    let filled = item.priority.min(5) as usize;
+    let bar = format!("[{}{}]", "#".repeat(filled), ".".repeat(5 - filled));
     let due_str = item.due_date
         .map(|d| d.format("%a %d %b").to_string())
         .unwrap_or_else(|| "None".to_string());
-    let info_row = format!("Due: {}  |  Pri: {} {}/10", due_str, bar, item.priority);
+    let info_row = format!("Due: {}  |  Pri: {} {}", due_str, bar, pri_label);
 
     let mut lines = vec![info_row];
 
@@ -428,7 +436,7 @@ pub async fn get_summary() -> TodoLibResult<TodoSummary> {
 
     for item in items.iter().filter(|i| !i.completed) {
         total_pending += 1;
-        if item.priority >= 8 {
+        if item.priority >= 3 {
             high_priority_pending += 1;
         }
         if let Some(due) = item.due_date {

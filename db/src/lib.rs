@@ -16,7 +16,7 @@ use rusqlite::{Result as RusqliteResult, Row};
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
 
-const DB_FILE: &str = "app.sqlite";
+pub const DB_FILE: &str = "app.sqlite";
 
 /// Helper to convert a database row into a LogEntry.
 fn row_to_log_entry(row: &Row) -> RusqliteResult<LogEntry> {
