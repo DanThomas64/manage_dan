@@ -159,8 +159,15 @@ impl PrinterManager {
         printer.writeln(&job.title)?;
         printer.double_strike(false)?;
         printer.bold(false)?;
-        // Task name on its own line with breathing room below before the body.
-        printer.writeln(&job.origin)?;
+        // Task name: slightly taller, underlined, and word-wrapped so it stands out.
+        use escpos::utils::UnderlineMode;
+        printer.size(1, 2)?;
+        printer.underline(UnderlineMode::Single)?;
+        for wrapped in word_wrap(&job.origin, width) {
+            printer.writeln(&wrapped)?;
+        }
+        printer.underline(UnderlineMode::None)?;
+        printer.size(1, 1)?;
         printer.writeln("")?;
         printer.justify(JustifyMode::LEFT)?;
 
