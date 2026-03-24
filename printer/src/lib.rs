@@ -39,11 +39,19 @@ impl PrinterManager {
     fn init_usb(vid: u16, pid: u16) -> PrinterLibResult<Self> {
         use escpos::driver::NativeUsbDriver;
         use escpos::printer::Printer;
-        use escpos::utils::Protocol;
+        use escpos::printer_options::PrinterOptions;
+        use escpos::utils::{PageCode, Protocol};
 
         let driver = NativeUsbDriver::open(vid, pid)?;
-        let mut printer = Printer::new(driver, Protocol::default(), None);
+
+        // Set PC437 (standard ASCII + box/block chars) as the active code page so
+        // the printer's character decoding matches what we send.
+        let mut options = PrinterOptions::default();
+        options.page_code(Some(PageCode::PC437));
+
+        let mut printer = Printer::new(driver, Protocol::default(), Some(options));
         printer.init()?;
+        printer.page_code(PageCode::PC437)?;
 
         Ok(PrinterManager {
             backend: PrinterBackend::Usb(Mutex::new(printer)),
@@ -79,7 +87,7 @@ impl PrinterManager {
         mutex: &Mutex<escpos::printer::Printer<escpos::driver::NativeUsbDriver>>,
         job: PrintJob,
     ) -> PrinterLibResult {
-        use escpos::ui::line::*;
+        use escpos::utils::JustifyMode;
 
         let mut printer = mutex.lock().map_err(|e| {
             PrinterLibError::CannotInitialize(format!("Failed to lock printer mutex: {}", e))
@@ -87,16 +95,21 @@ impl PrinterManager {
 
         info!("Executing USB print job (Title: {})", job.title);
 
-        let line = LineBuilder::new().style(LineStyle::Custom("=-")).build();
+        // Read the configured line width so separators and wrapping match the hardware.
+        let width = printer.options().get_characters_per_line() as usize;
 
         printer.feeds(1)?;
-        printer.size(2, 2)?;
+
+        // Header: centred bold title, then task name in normal weight below it.
+        printer.justify(JustifyMode::CENTER)?;
+        printer.bold(true)?;
+        printer.size(2, 1)?;
         printer.writeln(&job.title)?;
-        printer.feeds(1)?;
         printer.size(1, 1)?;
+        printer.bold(false)?;
         printer.writeln(&job.origin)?;
-        printer.feeds(1)?;
-        printer.draw_line(line)?;
+        printer.justify(JustifyMode::LEFT)?;
+        printer.writeln(&"-".repeat(width))?;
 
         for l in &job.lines {
             printer.writeln(l)?;

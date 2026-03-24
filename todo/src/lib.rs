@@ -103,7 +103,8 @@ pub(crate) fn from_vikunja_task(
 
 pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::PrinterLibResult {
     // Content width available inside the box (TERMINAL_WIDTH minus the leading space in pad).
-    const SEP_WIDTH: usize = printer::TERMINAL_WIDTH - 2;
+    // 42 is the ESC/POS default characters-per-line; fits inside the terminal box too.
+    const SEP_WIDTH: usize = 42;
     let sep = "-".repeat(SEP_WIDTH);
 
     let id = item.id.unwrap_or(0);
@@ -159,7 +160,7 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
     // Footer
     lines.push(sep);
     lines.push(format!(
-        "Created: {}  ·  Updated: {}",
+        "Created: {}  |  Updated: {}",
         item.created_at.format("%d %b %Y"),
         item.updated_at.format("%d %b %Y"),
     ));
