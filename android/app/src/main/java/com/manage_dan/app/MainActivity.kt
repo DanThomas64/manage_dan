@@ -3,9 +3,15 @@ package com.manage_dan.app
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.view.Menu
 import android.view.MenuItem
+import android.view.View
+import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -21,6 +27,28 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private val prefs by lazy { getSharedPreferences("manage_dan_prefs", Context.MODE_PRIVATE) }
+
+    /** Exposed to JavaScript as `window.AndroidVibrator`. */
+    private inner class VibrationBridge {
+        @JavascriptInterface
+        fun vibrate(duration: Long) {
+            val ms = duration.coerceIn(1L, 500L)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val mgr = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                mgr.defaultVibrator.vibrate(
+                    VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)
+                )
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                @Suppress("DEPRECATION")
+                (getSystemService(Context.VIBRATOR_SERVICE) as Vibrator).vibrate(
+                    VibrationEffect.createOneShot(ms, VibrationEffect.DEFAULT_AMPLITUDE)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                (getSystemService(Context.VIBRATOR_SERVICE) as Vibrator).vibrate(ms)
+            }
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,7 +73,39 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
         }
 
+        // Prevent WebView's own overscroll glow/stretch from conflicting with
+        // the page's internal scrollable panes (groups, quick-add, item list).
+        webView.overScrollMode = View.OVER_SCROLL_NEVER
+        webView.isVerticalScrollBarEnabled = false
+        webView.isHorizontalScrollBarEnabled = false
+
+        // Expose native vibration so navigator.vibrate() works inside the page.
+        webView.addJavascriptInterface(VibrationBridge(), "AndroidVibrator")
+
         webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView, url: String) {
+                // Route navigator.vibrate() through the Android bridge; WebView
+                // ignores it by default even when VIBRATE permission is granted.
+                view.evaluateJavascript(
+                    """
+                    (function() {
+                        if (typeof window.AndroidVibrator !== 'undefined') {
+                            Object.defineProperty(navigator, 'vibrate', {
+                                value: function(pattern) {
+                                    var ms = Array.isArray(pattern) ? pattern[0]
+                                           : (typeof pattern === 'number' ? pattern : 0);
+                                    if (ms > 0) window.AndroidVibrator.vibrate(ms);
+                                    return true;
+                                },
+                                configurable: true,
+                                writable: true
+                            });
+                        }
+                    })();
+                    """.trimIndent(), null
+                )
+            }
+
             override fun onReceivedError(
                 view: WebView, request: WebResourceRequest, error: WebResourceError
             ) {
