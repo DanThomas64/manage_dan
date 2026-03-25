@@ -84,11 +84,11 @@ class MainActivity : AppCompatActivity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
-                // Route navigator.vibrate() through the Android bridge; WebView
-                // ignores it by default even when VIBRATE permission is granted.
                 view.evaluateJavascript(
                     """
                     (function() {
+                        // 1. Route navigator.vibrate() through the Android bridge.
+                        //    WebView ignores it by default even with VIBRATE permission.
                         if (typeof window.AndroidVibrator !== 'undefined') {
                             Object.defineProperty(navigator, 'vibrate', {
                                 value: function(pattern) {
@@ -101,6 +101,28 @@ class MainActivity : AppCompatActivity() {
                                 writable: true
                             });
                         }
+
+                        // 2. Left swipe (not on an item row) navigates back to the
+                        //    group/list sidebar, mirroring the header back button.
+                        var _sx = 0, _sy = 0, _onItem = false;
+                        document.addEventListener('touchstart', function(e) {
+                            _sx = e.touches[0].clientX;
+                            _sy = e.touches[0].clientY;
+                            _onItem = !!e.target.closest('.item-row');
+                        }, { passive: true });
+                        document.addEventListener('touchend', function(e) {
+                            if (_onItem) return;
+                            var dx = e.changedTouches[0].clientX - _sx;
+                            var dy = e.changedTouches[0].clientY - _sy;
+                            // Left swipe: negative dx, more horizontal than vertical,
+                            // minimum 60 px travel.
+                            if (dx < -60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                                var main = document.getElementById('main');
+                                if (main && main.classList.contains('show-panel')) {
+                                    if (typeof goBack === 'function') goBack();
+                                }
+                            }
+                        }, { passive: true });
                     })();
                     """.trimIndent(), null
                 )
