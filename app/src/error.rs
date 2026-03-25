@@ -24,7 +24,7 @@ pub enum AppError {
     #[error(transparent)]
     Todo(#[from] TodoLibError),
     #[error(transparent)]
-    Shopping(#[from] ShoppingLibError),
+    Lists(#[from] ListsLibError),
 
     #[error("systemstatus monitor has failed: {0}")]
     SystemStatusMonitorFail(String),

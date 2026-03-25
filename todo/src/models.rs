@@ -35,8 +35,10 @@ pub struct TodoItem {
     /// Priority 0–10 (0 = no priority). Stored as-is in Vikunja.
     pub priority: u8,
     /// Name of the Vikunja project this task belongs to.
+    #[serde(default)]
     pub project_title: Option<String>,
     /// Label titles attached to this task.
+    #[serde(default)]
     pub labels: Vec<String>,
 }
 

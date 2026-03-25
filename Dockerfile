@@ -17,7 +17,7 @@ COPY log/        log/
 COPY notes/      notes/
 COPY project/    project/
 COPY printer/    printer/
-COPY shopping/   shopping/
+COPY lists/      lists/
 COPY todo/       todo/
 COPY tui/        tui/
 COPY vikunja/    vikunja/
@@ -29,7 +29,10 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
+        tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+ENV TZ=America/Halifax
 
 COPY --from=builder /build/target/release/app /usr/local/bin/manage
 

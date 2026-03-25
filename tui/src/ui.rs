@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ShoppingCategory, ShoppingItem};
+use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyModifiers},
@@ -26,7 +26,7 @@ pub enum Screen {
     Todo,
     Notes,
     Project,
-    Shopping,
+    Lists,
     Quit,
 }
 
@@ -35,7 +35,6 @@ pub enum Screen {
 pub enum TodoEditMode {
     Normal,
     Adding,
-    Editing,
 }
 
 /// Represents the current input mode within the floating dialog.
@@ -45,19 +44,23 @@ pub enum InputMode {
     Insert,
 }
 
-/// Which panel is focused on the Shopping screen.
+/// Which panel is focused on the Lists screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShoppingFocus {
+pub enum ListsFocus {
+    Groups,
     Categories,
     Items,
 }
 
-/// Input mode for the Shopping screen.
+/// Input mode for the Lists screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShoppingInputMode {
+pub enum ListsInputMode {
     Normal,
+    AddingGroup,
     AddingCategory,
     AddingItem,
+    /// Browsing the common items overlay to quick-add to the list.
+    QuickAdd,
 }
 
 /// Represents which field is currently focused in the floating input form.
@@ -66,9 +69,9 @@ pub enum TodoInputFocus {
     Title,
     Description,
     Subtasks,
-    DueBy,          // NEW: Toggle Due Date/Time usage
-    CalendarDate,   // Focus on the calendar grid
-    CalendarTime,   // Focus on the time input buffer
+    DueBy,
+    CalendarDate,
+    CalendarTime,
     Priority,
     Submit,
 }
@@ -87,32 +90,32 @@ pub struct App {
     pub todo_items: Vec<TodoItem>,
     pub todo_list_state: ListState,
     pub todo_edit_mode: TodoEditMode, // Renamed from todo_input_mode
+    pub todo_hide_completed: bool,
     
-    // Floating Input Form State
-    pub input_mode: InputMode, // NEW: Input mode for the dialog
+    // Add Form State
+    pub input_mode: InputMode,
     pub todo_input_focus: TodoInputFocus,
-    pub editing_item_id: Option<i64>, // None for adding, Some(id) for editing
     pub title_buffer: String,
     pub description_buffer: String,
     pub subtasks_buffer: String,
-    pub subtasks_scroll: u16, // Vertical scroll offset for subtasks input
-
-    // NEW: Input buffers and toggles for new fields
-    pub due_by_toggle: bool, // NEW: Whether a due date/time is set/intended
-    pub calendar_date: NaiveDate, // Selected date in the picker
-    pub time_buffer: String, // Time input (HH:MM)
+    pub subtasks_scroll: u16,
+    pub due_by_toggle: bool,
+    pub calendar_date: NaiveDate,
+    pub time_buffer: String,
     pub priority_buffer: String,
 
-    // Removed: pub todo_summary: Option<TodoSummary>,
-
-    // Shopping State
-    pub shopping_categories: Vec<ShoppingCategory>,
-    pub shopping_items: Vec<ShoppingItem>,
-    pub shopping_category_state: ListState,
-    pub shopping_item_state: ListState,
-    pub shopping_focus: ShoppingFocus,
-    pub shopping_input_mode: ShoppingInputMode,
-    pub shopping_input_buffer: String,
+    // Lists State
+    pub list_groups: Vec<ListGroup>,
+    pub list_categories: Vec<ListCategory>,
+    pub list_items: Vec<ApiListItem>,
+    pub list_group_state: ListState,
+    pub list_category_state: ListState,
+    pub list_item_state: ListState,
+    pub lists_focus: ListsFocus,
+    pub lists_input_mode: ListsInputMode,
+    pub lists_input_buffer: String,
+    pub common_items: Vec<CommonItem>,
+    pub common_item_state: ListState,
 }
 
 /// Parses the multiline subtasks input buffer into a `Vec<Subtask>`.
@@ -151,28 +154,30 @@ impl App {
             todo_items: Vec::new(),
             todo_list_state: ListState::default(),
             todo_edit_mode: TodoEditMode::Normal,
+            todo_hide_completed: false,
             
-            input_mode: InputMode::Normal, // Initialize in Normal mode
+            input_mode: InputMode::Normal,
             todo_input_focus: TodoInputFocus::Title,
-            editing_item_id: None,
             title_buffer: String::new(),
             description_buffer: String::new(),
             subtasks_buffer: String::new(),
             subtasks_scroll: 0,
-
-            due_by_toggle: false, // Default to no due date
+            due_by_toggle: false,
             calendar_date: now,
             time_buffer: String::from("00:00"),
             priority_buffer: String::new(),
-            // Removed: todo_summary: None,
 
-            shopping_categories: Vec::new(),
-            shopping_items: Vec::new(),
-            shopping_category_state: ListState::default(),
-            shopping_item_state: ListState::default(),
-            shopping_focus: ShoppingFocus::Categories,
-            shopping_input_mode: ShoppingInputMode::Normal,
-            shopping_input_buffer: String::new(),
+            list_groups: Vec::new(),
+            list_categories: Vec::new(),
+            list_items: Vec::new(),
+            list_group_state: ListState::default(),
+            list_category_state: ListState::default(),
+            list_item_state: ListState::default(),
+            lists_focus: ListsFocus::Groups,
+            lists_input_mode: ListsInputMode::Normal,
+            lists_input_buffer: String::new(),
+            common_items: Vec::new(),
+            common_item_state: ListState::default(),
         }
     }
 
@@ -234,160 +239,299 @@ impl App {
         }
     }
 
-    // --- Shopping helpers ---
+    // --- Lists helpers ---
 
-    pub async fn fetch_shopping_categories(&mut self) {
-        match self.api_client.fetch_shopping_categories().await {
-            Ok(cats) => {
-                self.shopping_categories = cats;
-                if self.shopping_categories.is_empty() {
-                    self.shopping_category_state.select(None);
+    pub async fn fetch_list_groups(&mut self) {
+        match self.api_client.fetch_list_groups().await {
+            Ok(groups) => {
+                self.list_groups = groups;
+                self.list_categories.clear();
+                self.list_category_state.select(None);
+                self.list_items.clear();
+                self.list_item_state.select(None);
+                if self.list_groups.is_empty() {
+                    self.list_group_state.select(None);
                 } else {
-                    let sel = self.shopping_category_state.selected().unwrap_or(0)
-                        .min(self.shopping_categories.len().saturating_sub(1));
-                    self.shopping_category_state.select(Some(sel));
-                    self.fetch_shopping_items_for_selected().await;
+                    let sel = self.list_group_state.selected().unwrap_or(0)
+                        .min(self.list_groups.len().saturating_sub(1));
+                    self.list_group_state.select(Some(sel));
+                    self.fetch_list_categories_for_selected_group().await;
                 }
                 self.last_error = None;
             }
-            Err(e) => self.last_error = Some(format!("Shopping API error: {}", e)),
+            Err(e) => self.last_error = Some(format!("Lists API error: {}", e)),
         }
     }
 
-    pub async fn fetch_shopping_items_for_selected(&mut self) {
-        if let Some(idx) = self.shopping_category_state.selected() {
-            if let Some(cat) = self.shopping_categories.get(idx) {
+    pub async fn fetch_list_categories_for_selected_group(&mut self) {
+        let group_id = match self.list_group_state.selected()
+            .and_then(|i| self.list_groups.get(i))
+        {
+            Some(g) => g.id,
+            None => return,
+        };
+        match self.api_client.fetch_list_categories(group_id).await {
+            Ok(cats) => {
+                self.list_categories = cats;
+                self.list_items.clear();
+                self.list_item_state.select(None);
+                if self.list_categories.is_empty() {
+                    self.list_category_state.select(None);
+                } else {
+                    let sel = self.list_category_state.selected().unwrap_or(0)
+                        .min(self.list_categories.len().saturating_sub(1));
+                    self.list_category_state.select(Some(sel));
+                    self.fetch_list_items_for_selected().await;
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Lists API error: {}", e)),
+        }
+    }
+
+    pub async fn fetch_list_items_for_selected(&mut self) {
+        if let Some(idx) = self.list_category_state.selected() {
+            if let Some(cat) = self.list_categories.get(idx) {
                 let id = cat.id;
-                match self.api_client.fetch_shopping_items(id).await {
+                match self.api_client.fetch_list_items(id).await {
                     Ok(items) => {
-                        self.shopping_items = items;
-                        if self.shopping_items.is_empty() {
-                            self.shopping_item_state.select(None);
+                        self.list_items = items;
+                        if self.list_items.is_empty() {
+                            self.list_item_state.select(None);
                         } else {
-                            let sel = self.shopping_item_state.selected().unwrap_or(0)
-                                .min(self.shopping_items.len().saturating_sub(1));
-                            self.shopping_item_state.select(Some(sel));
+                            let sel = self.list_item_state.selected().unwrap_or(0)
+                                .min(self.list_items.len().saturating_sub(1));
+                            self.list_item_state.select(Some(sel));
                         }
                     }
-                    Err(e) => self.last_error = Some(format!("Shopping API error: {}", e)),
+                    Err(e) => self.last_error = Some(format!("Lists API error: {}", e)),
                 }
             }
         }
     }
 
-    fn shopping_move_category(&mut self, delta: i32) {
-        let len = self.shopping_categories.len();
+    fn lists_move_group(&mut self, delta: i32) {
+        let len = self.list_groups.len();
         if len == 0 { return; }
-        let cur = self.shopping_category_state.selected().unwrap_or(0) as i32;
+        let cur = self.list_group_state.selected().unwrap_or(0) as i32;
         let next = (cur + delta).rem_euclid(len as i32) as usize;
-        self.shopping_category_state.select(Some(next));
-        self.shopping_item_state.select(None);
-        self.shopping_items.clear();
+        self.list_group_state.select(Some(next));
+        self.list_categories.clear();
+        self.list_category_state.select(None);
+        self.list_items.clear();
+        self.list_item_state.select(None);
     }
 
-    fn shopping_move_item(&mut self, delta: i32) {
-        let len = self.shopping_items.len();
+    fn lists_move_category(&mut self, delta: i32) {
+        let len = self.list_categories.len();
         if len == 0 { return; }
-        let cur = self.shopping_item_state.selected().unwrap_or(0) as i32;
+        let cur = self.list_category_state.selected().unwrap_or(0) as i32;
         let next = (cur + delta).rem_euclid(len as i32) as usize;
-        self.shopping_item_state.select(Some(next));
+        self.list_category_state.select(Some(next));
+        self.list_item_state.select(None);
+        self.list_items.clear();
     }
 
-    pub async fn shopping_toggle_check(&mut self) {
-        if let Some(idx) = self.shopping_item_state.selected() {
-            if let Some(item) = self.shopping_items.get(idx) {
+    fn lists_move_item(&mut self, delta: i32) {
+        let len = self.list_items.len();
+        if len == 0 { return; }
+        let cur = self.list_item_state.selected().unwrap_or(0) as i32;
+        let next = (cur + delta).rem_euclid(len as i32) as usize;
+        self.list_item_state.select(Some(next));
+    }
+
+    pub async fn lists_toggle_check(&mut self) {
+        if let Some(idx) = self.list_item_state.selected() {
+            if let Some(item) = self.list_items.get(idx) {
                 let id = item.id;
                 let new_checked = !item.checked;
-                if let Err(e) = self.api_client.check_shopping_item(id, new_checked).await {
+                if let Err(e) = self.api_client.check_list_item(id, new_checked).await {
                     self.last_error = Some(format!("Check failed: {}", e));
                 } else {
-                    self.fetch_shopping_items_for_selected().await;
+                    self.fetch_list_items_for_selected().await;
                 }
             }
         }
     }
 
-    pub async fn shopping_delete_item(&mut self) {
-        if let Some(idx) = self.shopping_item_state.selected() {
-            if let Some(item) = self.shopping_items.get(idx) {
+    pub async fn lists_delete_item(&mut self) {
+        if let Some(idx) = self.list_item_state.selected() {
+            if let Some(item) = self.list_items.get(idx) {
                 let id = item.id;
-                if let Err(e) = self.api_client.delete_shopping_item(id).await {
+                if let Err(e) = self.api_client.delete_list_item(id).await {
                     self.last_error = Some(format!("Delete failed: {}", e));
                 } else {
-                    self.fetch_shopping_items_for_selected().await;
+                    self.fetch_list_items_for_selected().await;
                 }
             }
         }
     }
 
-    pub async fn shopping_delete_category(&mut self) {
-        if let Some(idx) = self.shopping_category_state.selected() {
-            if let Some(cat) = self.shopping_categories.get(idx) {
+    pub async fn lists_delete_category(&mut self) {
+        if let Some(idx) = self.list_category_state.selected() {
+            if let Some(cat) = self.list_categories.get(idx) {
                 let id = cat.id;
-                if let Err(e) = self.api_client.delete_shopping_category(id).await {
+                if let Err(e) = self.api_client.delete_list_category(id).await {
                     self.last_error = Some(format!("Delete failed: {}", e));
                 } else {
-                    self.fetch_shopping_categories().await;
+                    self.fetch_list_categories_for_selected_group().await;
                 }
             }
         }
     }
 
-    pub async fn shopping_clear_checked(&mut self) {
-        if let Some(idx) = self.shopping_category_state.selected() {
-            if let Some(cat) = self.shopping_categories.get(idx) {
+    pub async fn lists_delete_group(&mut self) {
+        if let Some(idx) = self.list_group_state.selected() {
+            if let Some(group) = self.list_groups.get(idx) {
+                let id = group.id;
+                if let Err(e) = self.api_client.delete_list_group(id).await {
+                    self.last_error = Some(format!("Delete failed: {}", e));
+                } else {
+                    self.fetch_list_groups().await;
+                }
+            }
+        }
+    }
+
+    pub async fn lists_clear_checked(&mut self) {
+        if let Some(idx) = self.list_category_state.selected() {
+            if let Some(cat) = self.list_categories.get(idx) {
                 let id = cat.id;
-                if let Err(e) = self.api_client.clear_shopping_checked(id).await {
+                if let Err(e) = self.api_client.clear_list_checked(id).await {
                     self.last_error = Some(format!("Clear failed: {}", e));
                 } else {
-                    self.fetch_shopping_items_for_selected().await;
+                    self.fetch_list_items_for_selected().await;
                 }
             }
         }
     }
 
-    pub async fn shopping_print_list(&mut self) {
-        if let Some(idx) = self.shopping_category_state.selected() {
-            if let Some(cat) = self.shopping_categories.get(idx) {
+    pub async fn lists_print_list(&mut self) {
+        if let Some(idx) = self.list_category_state.selected() {
+            if let Some(cat) = self.list_categories.get(idx) {
                 let id = cat.id;
-                if let Err(e) = self.api_client.print_shopping_list(id).await {
+                if let Err(e) = self.api_client.print_list(id).await {
                     self.last_error = Some(format!("Print failed: {}", e));
                 }
             }
         }
     }
 
-    pub async fn shopping_submit_input(&mut self) {
-        let input = self.shopping_input_buffer.trim().to_string();
+    pub async fn lists_submit_input(&mut self) {
+        let input = self.lists_input_buffer.trim().to_string();
         if input.is_empty() {
-            self.shopping_input_mode = ShoppingInputMode::Normal;
-            self.shopping_input_buffer.clear();
+            self.lists_input_mode = ListsInputMode::Normal;
+            self.lists_input_buffer.clear();
             return;
         }
-        match self.shopping_input_mode {
-            ShoppingInputMode::AddingCategory => {
-                if let Err(e) = self.api_client.add_shopping_category(&input).await {
-                    self.last_error = Some(format!("Add category failed: {}", e));
+        match self.lists_input_mode {
+            ListsInputMode::AddingGroup => {
+                if let Err(e) = self.api_client.add_list_group(&input).await {
+                    self.last_error = Some(format!("Add group failed: {}", e));
                 } else {
-                    self.fetch_shopping_categories().await;
+                    self.fetch_list_groups().await;
                 }
             }
-            ShoppingInputMode::AddingItem => {
-                if let Some(idx) = self.shopping_category_state.selected() {
-                    if let Some(cat) = self.shopping_categories.get(idx) {
+            ListsInputMode::AddingCategory => {
+                if let Some(group) = self.list_group_state.selected()
+                    .and_then(|i| self.list_groups.get(i))
+                {
+                    let group_id = group.id;
+                    if let Err(e) = self.api_client.add_list_category(group_id, &input).await {
+                        self.last_error = Some(format!("Add category failed: {}", e));
+                    } else {
+                        self.fetch_list_categories_for_selected_group().await;
+                    }
+                }
+            }
+            ListsInputMode::AddingItem => {
+                if let Some(idx) = self.list_category_state.selected() {
+                    if let Some(cat) = self.list_categories.get(idx) {
                         let cat_id = cat.id;
-                        if let Err(e) = self.api_client.add_shopping_item(cat_id, &input, None).await {
+                        if let Err(e) = self.api_client.add_list_item(cat_id, &input, None).await {
                             self.last_error = Some(format!("Add item failed: {}", e));
                         } else {
-                            self.fetch_shopping_items_for_selected().await;
+                            self.fetch_list_items_for_selected().await;
                         }
                     }
                 }
             }
-            ShoppingInputMode::Normal => {}
+            ListsInputMode::Normal | ListsInputMode::QuickAdd => {}
         }
-        self.shopping_input_mode = ShoppingInputMode::Normal;
-        self.shopping_input_buffer.clear();
+        self.lists_input_mode = ListsInputMode::Normal;
+        self.lists_input_buffer.clear();
+    }
+
+    /// Opens the QuickAdd overlay: fetches common items for the selected category.
+    pub async fn lists_open_quick_add(&mut self) {
+        if let Some(idx) = self.list_category_state.selected() {
+            if let Some(cat) = self.list_categories.get(idx) {
+                let id = cat.id;
+                match self.api_client.fetch_common_items(id).await {
+                    Ok(items) => {
+                        self.common_items = items;
+                        if self.common_items.is_empty() {
+                            self.common_item_state.select(None);
+                        } else {
+                            self.common_item_state.select(Some(0));
+                        }
+                        self.lists_input_mode = ListsInputMode::QuickAdd;
+                        self.last_error = None;
+                    }
+                    Err(e) => self.last_error = Some(format!("Failed to fetch common items: {}", e)),
+                }
+            }
+        }
+    }
+
+    /// Adds the currently highlighted common item to the active list.
+    pub async fn lists_quick_add_selected(&mut self) {
+        if let Some(idx) = self.common_item_state.selected() {
+            if let Some(common) = self.common_items.get(idx) {
+                let id = common.id;
+                if let Err(e) = self.api_client.add_item_from_common(id).await {
+                    self.last_error = Some(format!("Quick add failed: {}", e));
+                } else {
+                    self.fetch_list_items_for_selected().await;
+                }
+            }
+        }
+    }
+
+    /// Saves the currently selected list item as a common item for its category.
+    pub async fn lists_save_as_common(&mut self) {
+        if let Some(idx) = self.list_item_state.selected() {
+            if let Some(item) = self.list_items.get(idx) {
+                let cat_id = item.category_id;
+                let name = item.name.clone();
+                let qty = item.quantity.clone();
+                if let Err(e) = self.api_client.add_common_item(cat_id, &name, qty.as_deref()).await {
+                    self.last_error = Some(format!("Save as common failed: {}", e));
+                } else {
+                    self.last_error = None;
+                }
+            }
+        }
+    }
+
+    /// Deletes the highlighted common item from the saved templates.
+    pub async fn lists_delete_common_item(&mut self) {
+        if let Some(idx) = self.common_item_state.selected() {
+            if let Some(common) = self.common_items.get(idx) {
+                let id = common.id;
+                if let Err(e) = self.api_client.delete_common_item(id).await {
+                    self.last_error = Some(format!("Delete common failed: {}", e));
+                } else {
+                    self.common_items.remove(idx);
+                    let new_sel = if self.common_items.is_empty() {
+                        None
+                    } else {
+                        Some(idx.saturating_sub(1))
+                    };
+                    self.common_item_state.select(new_sel);
+                }
+            }
+        }
     }
 
     /// Handles input events specific to the current screen.
@@ -412,15 +556,29 @@ impl App {
                                 KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
                                 KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
                                 KeyCode::Char('c') => { self.toggle_completed().await; action_taken = true; }
+                                KeyCode::Char('f') => {
+                                    self.todo_hide_completed = !self.todo_hide_completed;
+                                    // Clamp selection to the new visible range
+                                    let visible_count = self.visible_todo_indices().len();
+                                    match self.todo_list_state.selected() {
+                                        Some(i) if i >= visible_count => {
+                                            self.todo_list_state.select(Some(visible_count.saturating_sub(1)));
+                                        }
+                                        None if visible_count > 0 => {
+                                            self.todo_list_state.select(Some(0));
+                                        }
+                                        _ => {}
+                                    }
+                                }
                                 KeyCode::Char('a') => self.start_add_mode(),
-                                KeyCode::Char('e') => self.start_edit_mode(),
                                 KeyCode::Char('p') => { self.print_selected().await; action_taken = true; }
                                 KeyCode::Char('x') => { self.archive_selected().await; action_taken = true; }
+                                KeyCode::Char('d') => { self.delete_selected().await; action_taken = true; }
                                 _ => {}
                             }
                         }
                     }
-                    TodoEditMode::Adding | TodoEditMode::Editing => {
+                    TodoEditMode::Adding => {
                         // Handle input for floating form
                         let previous_mode = self.todo_edit_mode;
                         self.handle_todo_input_form(event).await;
@@ -448,87 +606,150 @@ impl App {
                     }
                 }
             }
-            Screen::Shopping => {
+            Screen::Lists => {
                 if let CEvent::Key(key) = event {
-                    match self.shopping_input_mode {
-                        ShoppingInputMode::Normal => {
+                    match self.lists_input_mode {
+                        ListsInputMode::Normal => {
                             match key.code {
                                 KeyCode::Char('q') | KeyCode::Esc => {
                                     self.current_screen = Screen::Dashboard;
                                 }
                                 KeyCode::Tab => {
-                                    self.shopping_focus = match self.shopping_focus {
-                                        ShoppingFocus::Categories => ShoppingFocus::Items,
-                                        ShoppingFocus::Items => ShoppingFocus::Categories,
+                                    self.lists_focus = match self.lists_focus {
+                                        ListsFocus::Groups => ListsFocus::Categories,
+                                        ListsFocus::Categories => ListsFocus::Items,
+                                        ListsFocus::Items => ListsFocus::Groups,
                                     };
                                 }
                                 KeyCode::Up | KeyCode::Char('k') => {
-                                    match self.shopping_focus {
-                                        ShoppingFocus::Categories => {
-                                            self.shopping_move_category(-1);
-                                            self.fetch_shopping_items_for_selected().await;
+                                    match self.lists_focus {
+                                        ListsFocus::Groups => {
+                                            self.lists_move_group(-1);
+                                            self.fetch_list_categories_for_selected_group().await;
                                         }
-                                        ShoppingFocus::Items => self.shopping_move_item(-1),
+                                        ListsFocus::Categories => {
+                                            self.lists_move_category(-1);
+                                            self.fetch_list_items_for_selected().await;
+                                        }
+                                        ListsFocus::Items => self.lists_move_item(-1),
                                     }
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
-                                    match self.shopping_focus {
-                                        ShoppingFocus::Categories => {
-                                            self.shopping_move_category(1);
-                                            self.fetch_shopping_items_for_selected().await;
+                                    match self.lists_focus {
+                                        ListsFocus::Groups => {
+                                            self.lists_move_group(1);
+                                            self.fetch_list_categories_for_selected_group().await;
                                         }
-                                        ShoppingFocus::Items => self.shopping_move_item(1),
+                                        ListsFocus::Categories => {
+                                            self.lists_move_category(1);
+                                            self.fetch_list_items_for_selected().await;
+                                        }
+                                        ListsFocus::Items => self.lists_move_item(1),
                                     }
                                 }
                                 KeyCode::Char('a') => {
-                                    match self.shopping_focus {
-                                        ShoppingFocus::Categories => {
-                                            self.shopping_input_mode = ShoppingInputMode::AddingCategory;
-                                            self.shopping_input_buffer.clear();
+                                    match self.lists_focus {
+                                        ListsFocus::Groups => {
+                                            self.lists_input_mode = ListsInputMode::AddingGroup;
+                                            self.lists_input_buffer.clear();
                                         }
-                                        ShoppingFocus::Items => {
-                                            self.shopping_input_mode = ShoppingInputMode::AddingItem;
-                                            self.shopping_input_buffer.clear();
+                                        ListsFocus::Categories => {
+                                            self.lists_input_mode = ListsInputMode::AddingCategory;
+                                            self.lists_input_buffer.clear();
+                                        }
+                                        ListsFocus::Items => {
+                                            self.lists_input_mode = ListsInputMode::AddingItem;
+                                            self.lists_input_buffer.clear();
                                         }
                                     }
                                 }
                                 KeyCode::Char('d') => {
-                                    match self.shopping_focus {
-                                        ShoppingFocus::Categories => self.shopping_delete_category().await,
-                                        ShoppingFocus::Items => self.shopping_delete_item().await,
+                                    match self.lists_focus {
+                                        ListsFocus::Groups => self.lists_delete_group().await,
+                                        ListsFocus::Categories => self.lists_delete_category().await,
+                                        ListsFocus::Items => self.lists_delete_item().await,
                                     }
                                     action_taken = true;
                                 }
                                 KeyCode::Char(' ') | KeyCode::Char('c') => {
-                                    self.shopping_toggle_check().await;
+                                    self.lists_toggle_check().await;
                                     action_taken = true;
                                 }
                                 KeyCode::Char('C') => {
-                                    self.shopping_clear_checked().await;
+                                    self.lists_clear_checked().await;
                                     action_taken = true;
                                 }
                                 KeyCode::Char('p') => {
-                                    self.shopping_print_list().await;
+                                    self.lists_print_list().await;
+                                }
+                                // Save selected item as a common item template
+                                KeyCode::Char('s') => {
+                                    if self.lists_focus == ListsFocus::Items {
+                                        self.lists_save_as_common().await;
+                                    }
+                                }
+                                // Open Quick Add overlay (common items)
+                                KeyCode::Char('A') => {
+                                    if self.lists_focus == ListsFocus::Items
+                                        || self.lists_focus == ListsFocus::Categories
+                                    {
+                                        self.lists_open_quick_add().await;
+                                    }
                                 }
                                 KeyCode::Char('r') => {
-                                    self.fetch_shopping_categories().await;
+                                    self.fetch_list_groups().await;
                                     action_taken = true;
                                 }
                                 _ => {}
                             }
                         }
-                        ShoppingInputMode::AddingCategory | ShoppingInputMode::AddingItem => {
+                        ListsInputMode::QuickAdd => {
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('q') => {
+                                    self.lists_input_mode = ListsInputMode::Normal;
+                                    self.common_items.clear();
+                                    self.common_item_state.select(None);
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    let len = self.common_items.len();
+                                    if len > 0 {
+                                        let cur = self.common_item_state.selected().unwrap_or(0) as i32;
+                                        let next = (cur - 1).rem_euclid(len as i32) as usize;
+                                        self.common_item_state.select(Some(next));
+                                    }
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    let len = self.common_items.len();
+                                    if len > 0 {
+                                        let cur = self.common_item_state.selected().unwrap_or(0) as i32;
+                                        let next = (cur + 1).rem_euclid(len as i32) as usize;
+                                        self.common_item_state.select(Some(next));
+                                    }
+                                }
+                                KeyCode::Enter => {
+                                    self.lists_quick_add_selected().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Char('d') => {
+                                    self.lists_delete_common_item().await;
+                                }
+                                _ => {}
+                            }
+                        }
+                        ListsInputMode::AddingGroup
+                        | ListsInputMode::AddingCategory
+                        | ListsInputMode::AddingItem => {
                             match key.code {
                                 KeyCode::Enter => {
-                                    self.shopping_submit_input().await;
+                                    self.lists_submit_input().await;
                                     action_taken = true;
                                 }
                                 KeyCode::Esc => {
-                                    self.shopping_input_mode = ShoppingInputMode::Normal;
-                                    self.shopping_input_buffer.clear();
+                                    self.lists_input_mode = ListsInputMode::Normal;
+                                    self.lists_input_buffer.clear();
                                 }
-                                KeyCode::Backspace => { self.shopping_input_buffer.pop(); }
-                                KeyCode::Char(c) => { self.shopping_input_buffer.push(c); }
+                                KeyCode::Backspace => { self.lists_input_buffer.pop(); }
+                                KeyCode::Char(c) => { self.lists_input_buffer.push(c); }
                                 _ => {}
                             }
                         }
@@ -549,8 +770,8 @@ impl App {
                     // When entering todo screen, fetch the list immediately
                     self.fetch_todos().await;
                 }
-                Screen::Shopping => {
-                    self.fetch_shopping_categories().await;
+                Screen::Lists => {
+                    self.fetch_list_groups().await;
                 }
                 _ => {}
             }
@@ -578,7 +799,7 @@ impl App {
             KeyCode::Char('1') => self.current_screen = Screen::Todo,
             KeyCode::Char('2') => self.current_screen = Screen::Notes,
             KeyCode::Char('3') => self.current_screen = Screen::Project,
-            KeyCode::Char('4') => self.current_screen = Screen::Shopping,
+            KeyCode::Char('4') => self.current_screen = Screen::Lists,
             KeyCode::Char('r') => { /* update_status is called automatically */ }
             _ => {}
         }
@@ -622,15 +843,12 @@ impl App {
                                     self.submit_item().await;
                                 }
                                 TodoInputFocus::DueBy => {
-                                    // Toggle Due By status
                                     self.due_by_toggle = !self.due_by_toggle;
                                 }
                                 TodoInputFocus::CalendarDate => {
-                                    // ACTIVATE CALENDAR SELECTION MODE (InputMode::Insert)
                                     self.input_mode = InputMode::Insert;
                                 }
                                 TodoInputFocus::CalendarTime | TodoInputFocus::Priority | TodoInputFocus::Title | TodoInputFocus::Description | TodoInputFocus::Subtasks => {
-                                    // Enter/i switches to Insert mode for editable fields
                                     self.input_mode = InputMode::Insert;
                                 }
                             }
@@ -799,71 +1017,31 @@ impl App {
     fn start_add_mode(&mut self) {
         let now = Local::now().date_naive();
         self.todo_edit_mode = TodoEditMode::Adding;
-        self.input_mode = InputMode::Normal; // Start in Normal mode
-        self.editing_item_id = None;
+        self.input_mode = InputMode::Normal;
         self.title_buffer.clear();
         self.description_buffer.clear();
         self.subtasks_buffer.clear();
-        
-        self.due_by_toggle = false;
-        self.calendar_date = now; // Default to today
-        self.time_buffer = String::from("00:00");
-        self.priority_buffer.clear();
-        
-        self.subtasks_scroll = 0; // Reset scroll
-        self.todo_input_focus = TodoInputFocus::Title;
-        self.last_error = None;
-    }
-    
-    fn start_edit_mode(&mut self) {
-        if let Some(index) = self.todo_list_state.selected() {
-            if let Some(item) = self.todo_items.get(index) {
-                self.todo_edit_mode = TodoEditMode::Editing;
-                self.input_mode = InputMode::Normal; // Start in Normal mode
-                self.editing_item_id = item.id;
-                self.title_buffer = item.title.clone();
-                self.description_buffer = item.description.clone(); // Now required String
-                self.subtasks_buffer = item.subtasks.iter()
-                    .map(|s| format!("{} {}", if s.done { "[x]" } else { "[ ]" }, s.title))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                
-                // NEW: Populate date/time/toggle
-                if let Some(dt) = item.due_date {
-                    self.due_by_toggle = true;
-                    self.calendar_date = dt.date_naive();
-                    self.time_buffer = dt.format("%H:%M").to_string();
-                } else {
-                    self.due_by_toggle = false;
-                    let now = Local::now().date_naive();
-                    self.calendar_date = now;
-                    self.time_buffer = String::from("00:00");
-                }
-                self.priority_buffer = item.priority.to_string();
-
-                self.subtasks_scroll = 0; // Reset scroll on edit start
-                self.todo_input_focus = TodoInputFocus::Title;
-                self.last_error = None;
-            }
-        }
-    }
-    
-    fn cancel_edit_mode(&mut self) {
-        let now = Local::now().date_naive();
-        self.todo_edit_mode = TodoEditMode::Normal;
-        self.input_mode = InputMode::Normal; // Reset mode
-        self.editing_item_id = None;
-        self.title_buffer.clear();
-        self.description_buffer.clear();
-        self.subtasks_buffer.clear();
-        
-        // Reset calendar state
         self.due_by_toggle = false;
         self.calendar_date = now;
         self.time_buffer = String::from("00:00");
         self.priority_buffer.clear();
-        
-        self.subtasks_scroll = 0; // Reset scroll
+        self.subtasks_scroll = 0;
+        self.todo_input_focus = TodoInputFocus::Title;
+        self.last_error = None;
+    }
+
+    fn cancel_edit_mode(&mut self) {
+        let now = Local::now().date_naive();
+        self.todo_edit_mode = TodoEditMode::Normal;
+        self.input_mode = InputMode::Normal;
+        self.title_buffer.clear();
+        self.description_buffer.clear();
+        self.subtasks_buffer.clear();
+        self.due_by_toggle = false;
+        self.calendar_date = now;
+        self.time_buffer = String::from("00:00");
+        self.priority_buffer.clear();
+        self.subtasks_scroll = 0;
     }
     
     async fn submit_item(&mut self) {
@@ -875,12 +1053,6 @@ impl App {
         
         if title.is_empty() {
             self.last_error = Some("Todo title cannot be empty.".to_string());
-            return;
-        }
-        
-        // Description is now required
-        if description.is_empty() {
-            self.last_error = Some("Todo description cannot be empty.".to_string());
             return;
         }
         
@@ -939,42 +1111,11 @@ impl App {
         
         let parsed_subtasks = parse_subtasks_buffer(&subtasks);
 
-        let result = match self.todo_edit_mode {
-            TodoEditMode::Adding => {
-                let mut new_item = TodoItem::new(title, description);
-                new_item.subtasks = parsed_subtasks;
-                new_item.due_date = due_date_opt;
-                new_item.priority = priority;
-                self.api_client.create_todo(new_item).await.map(|_| ())
-            }
-            TodoEditMode::Editing => {
-                let id = self.editing_item_id.expect("Editing mode requires an ID");
-
-                let existing_item = self.todo_items.iter().find(|i| i.id == Some(id)).cloned();
-
-                if let Some(existing) = existing_item {
-                    let updated_item = TodoItem {
-                        id: Some(id),
-                        title,
-                        description,
-                        completed: existing.completed,
-                        created_at: existing.created_at,
-                        updated_at: Local::now(),
-                        completed_at: existing.completed_at,
-                        printed_at: existing.printed_at,
-                        subtasks: parsed_subtasks,
-                        archived: existing.archived,
-                        due_date: due_date_opt,
-                        priority,
-                    };
-                    self.api_client.update_todo(updated_item).await
-                } else {
-                    self.last_error = Some(format!("Cannot find item ID {} for editing.", id));
-                    return;
-                }
-            }
-            _ => return,
-        };
+        let mut new_item = TodoItem::new(title, description);
+        new_item.subtasks = parsed_subtasks;
+        new_item.due_date = due_date_opt;
+        new_item.priority = priority;
+        let result = self.api_client.create_todo(new_item).await.map(|_| ());
         
         match result {
             Ok(_) => {
@@ -987,87 +1128,109 @@ impl App {
         }
     }
 
+    /// Returns the indices into `todo_items` that are currently visible
+    /// (respecting the hide-completed filter).
+    fn visible_todo_indices(&self) -> Vec<usize> {
+        self.todo_items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| !(self.todo_hide_completed && item.completed))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     fn move_selection(&mut self, delta: i32) {
-        if self.todo_items.is_empty() {
+        let visible = self.visible_todo_indices();
+        if visible.is_empty() {
             self.todo_list_state.select(None);
             return;
         }
-        
         let current_index = self.todo_list_state.selected().unwrap_or(0);
         let new_index = (current_index as i32 + delta)
-            .rem_euclid(self.todo_items.len() as i32) as usize;
+            .rem_euclid(visible.len() as i32) as usize;
         self.todo_list_state.select(Some(new_index));
     }
     
     async fn toggle_completed(&mut self) {
-        if let Some(index) = self.todo_list_state.selected() {
-            if let Some(item) = self.todo_items.get_mut(index) {
-                item.completed = !item.completed;
-                
-                // Update timestamps locally before sending, although the API/DB will finalize updated_at
-                if item.completed {
-                    item.completed_at = Some(Local::now());
-                } else {
-                    item.completed_at = None;
-                }
-                item.updated_at = Local::now();
-                
-                let updated_item = item.clone();
-                
-                if let Err(e) = self.api_client.update_todo(updated_item).await {
-                    self.last_error = Some(format!("Failed to toggle completion: {}", e));
-                    // Revert local change if API fails
-                    // We rely on the subsequent refresh to sync state
-                } else {
-                    self.last_error = None;
+        let visible = self.visible_todo_indices();
+        if let Some(vis_index) = self.todo_list_state.selected() {
+            if let Some(&index) = visible.get(vis_index) {
+                if let Some(item) = self.todo_items.get(index) {
+                    if let Some(id) = item.id {
+                        let new_done = !item.completed;
+                        match self.api_client.complete_todo(id, new_done).await {
+                            Ok(()) => { self.last_error = None; }
+                            Err(e) => {
+                                self.last_error = Some(format!("Failed to toggle completion: {}", e));
+                            }
+                        }
+                    }
                 }
             }
         }
     }
     
+    fn selected_todo_item(&self) -> Option<&TodoItem> {
+        let visible = self.visible_todo_indices();
+        let vis_index = self.todo_list_state.selected()?;
+        let &real_index = visible.get(vis_index)?;
+        self.todo_items.get(real_index)
+    }
+
     async fn print_selected(&mut self) {
-        if let Some(index) = self.todo_list_state.selected() {
-            if let Some(item) = self.todo_items.get(index) {
-                if let Some(id) = item.id {
-                    self.last_error = Some(format!("Attempting manual print for ID {}...", id));
-                    match self.api_client.print_todo(id).await {
-                        Ok(_) => {
-                            self.last_error = Some(format!("Print job sent for ID {}.", id));
-                            // Refresh is handled by action_taken logic
-                        }
-                        Err(e) => {
-                            self.last_error = Some(format!("Failed to send print job for ID {}: {}", id, e));
-                        }
+        if let Some(item) = self.selected_todo_item() {
+            if let Some(id) = item.id {
+                self.last_error = Some(format!("Attempting manual print for ID {}...", id));
+                match self.api_client.print_todo(id).await {
+                    Ok(_) => {
+                        self.last_error = Some(format!("Print job sent for ID {}.", id));
                     }
-                } else {
-                    self.last_error = Some("Cannot print unsaved item.".to_string());
+                    Err(e) => {
+                        self.last_error = Some(format!("Failed to send print job for ID {}: {}", id, e));
+                    }
                 }
+            } else {
+                self.last_error = Some("Cannot print unsaved item.".to_string());
             }
         } else {
             self.last_error = Some("No item selected to print.".to_string());
         }
     }
-    
+
     async fn archive_selected(&mut self) {
-        if let Some(index) = self.todo_list_state.selected() {
-            if let Some(item) = self.todo_items.get(index) {
-                if let Some(id) = item.id {
-                    self.last_error = Some(format!("Attempting to archive ID {}...", id));
-                    match self.api_client.archive_todo(id).await {
-                        Ok(_) => {
-                            self.last_error = Some(format!("Item ID {} archived successfully.", id));
-                            // Refresh is handled by action_taken logic
-                        }
-                        Err(e) => {
-                            self.last_error = Some(format!("Failed to archive item ID {}: {}", id, e));
-                        }
+        if let Some(item) = self.selected_todo_item() {
+            if let Some(id) = item.id {
+                self.last_error = Some(format!("Attempting to archive ID {}...", id));
+                match self.api_client.archive_todo(id).await {
+                    Ok(_) => {
+                        self.last_error = Some(format!("Item ID {} archived successfully.", id));
                     }
-                } else {
-                    self.last_error = Some("Cannot archive unsaved item.".to_string());
+                    Err(e) => {
+                        self.last_error = Some(format!("Failed to archive item ID {}: {}", id, e));
+                    }
                 }
+            } else {
+                self.last_error = Some("Cannot archive unsaved item.".to_string());
             }
         } else {
             self.last_error = Some("No item selected to archive.".to_string());
+        }
+    }
+
+    async fn delete_selected(&mut self) {
+        if let Some(item) = self.selected_todo_item() {
+            if let Some(id) = item.id {
+                match self.api_client.delete_todo(id).await {
+                    Ok(_) => { self.last_error = None; }
+                    Err(e) => {
+                        self.last_error = Some(format!("Failed to delete item ID {}: {}", id, e));
+                    }
+                }
+            } else {
+                self.last_error = Some("Cannot delete unsaved item.".to_string());
+            }
+        } else {
+            self.last_error = Some("No item selected to delete.".to_string());
         }
     }
 }
@@ -1094,7 +1257,7 @@ impl Tui {
                 Screen::Todo => draw_todo_screen(frame, app, area),
                 Screen::Notes => draw_notes_placeholder(frame, area),
                 Screen::Project => draw_project_placeholder(frame, area),
-                Screen::Shopping => draw_shopping_screen(frame, app, area),
+                Screen::Lists => draw_lists_screen(frame, app, area),
                 _ => {}
             }
         })?;
@@ -1215,7 +1378,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
             status_to_line("project", systems.project),
             status_to_line("printer", systems.printer),
             status_to_line("todo", systems.todo),
-            status_to_line("shopping", systems.shopping),
+            status_to_line("lists", systems.lists),
         ]
     } else {
         vec![Line::from(app.last_error.as_deref().unwrap_or("Waiting for API status...").fg(Color::Red))]
@@ -1251,7 +1414,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
 
 
     // Footer/Menu
-    let footer_text = "Q: Quit | 1: Todo | 2: Notes | 3: Project | 4: Shopping | R: Refresh";
+    let footer_text = "Q: Quit | 1: Todo | 2: Notes | 3: Project | 4: Lists | R: Refresh";
     let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan));
     frame.render_widget(footer, footer_area);
 }
@@ -1271,7 +1434,9 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
     let (list_area, details_area, footer_area) = (main_chunks[0], main_chunks[1], main_chunks[2]);
 
     // --- 1. Todo List Rendering ---
-    let items: Vec<ListItem> = app.todo_items.iter().map(|item| {
+    let visible_indices = app.visible_todo_indices();
+    let items: Vec<ListItem> = visible_indices.iter().map(|&i| {
+        let item = &app.todo_items[i];
         let status = if item.completed { "[X]" } else { "[ ]" };
         
         let created_str = item.created_at.format("%Y-%m-%d %H:%M").to_string();
@@ -1308,9 +1473,14 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
     }).collect();
 
     let list_title = match app.todo_edit_mode {
-        TodoEditMode::Normal => "TODO List (A: Add, E: Edit, C: Toggle Complete | P: Print | X: Archive | J/K: Navigate)",
+        TodoEditMode::Normal => {
+            if app.todo_hide_completed {
+                "TODO List [F: Show All] (A: Add | C: Toggle Complete | P: Print | X: Archive | D: Delete | J/K: Navigate)"
+            } else {
+                "TODO List [F: Hide Done] (A: Add | C: Toggle Complete | P: Print | X: Archive | D: Delete | J/K: Navigate)"
+            }
+        }
         TodoEditMode::Adding => "TODO List (Adding Item)",
-        TodoEditMode::Editing => "TODO List (Editing Item)",
     };
 
     let list = List::new(items)
@@ -1323,8 +1493,8 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
     
     let details_block = Block::default().borders(Borders::ALL).title("Item Details");
     
-    if let Some(index) = app.todo_list_state.selected() {
-        if let Some(item) = app.todo_items.get(index) {
+    if let Some(vis_index) = app.todo_list_state.selected() {
+        if let Some(item) = visible_indices.get(vis_index).and_then(|&i| app.todo_items.get(i)) {
             let mut text_lines = vec![
                 Line::from(format!("ID: {}", item.id.unwrap_or(0))),
                 Line::from(format!("Title: {}", item.title)).bold(),
@@ -1340,7 +1510,6 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
             
             text_lines.push(Line::from(""));
             
-            // Description (now required)
             text_lines.push(Line::from("Description:").underlined());
             text_lines.extend(Text::from(item.description.as_str()).lines.into_iter().map(|l| Line::from(format!("  {}", l))));
             text_lines.push(Line::from(""));
@@ -1383,7 +1552,7 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
 
 
     // --- 3. Footer/Menu ---
-    let footer_text = "Q: Back | R: Refresh | C: Toggle Complete | A: Add New | E: Edit Selected | P: Print Ticket | X: Archive";
+    let footer_text = "Q: Back | R: Refresh | C: Toggle Complete | A: Add New | P: Print | X: Archive | D: Delete";
     let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan));
     frame.render_widget(footer, footer_area);
     
@@ -1509,7 +1678,7 @@ fn draw_calendar_picker(frame: &mut ratatui::Frame, area: Rect, date: NaiveDate,
 fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: Rect) {
     // Calculate the size and position of the floating window
     let width = parent_area.width.min(80);
-    let height = 29; // FIX: Increased height to 29 (27 inner lines + 2 borders)
+    let height = 31; // 29 inner lines + 2 borders (accommodates calendar + completed field)
     let x = (parent_area.width.saturating_sub(width)) / 2;
     let y = (parent_area.height.saturating_sub(height)) / 2;
     let area = Rect::new(x, y, width, height);
@@ -1519,11 +1688,7 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
         InputMode::Insert => "INSERT (Esc/Ctrl+C: Normal | Enter: Newline in Subtasks)",
     };
 
-    let title = match app.todo_edit_mode {
-        TodoEditMode::Adding => format!("Add New Todo Item | {}", mode_indicator),
-        TodoEditMode::Editing => format!("Edit Todo Item | {}", mode_indicator),
-        _ => unreachable!(),
-    };
+    let title = format!("Add New Todo Item | {}", mode_indicator);
 
     // 1. Clear the area behind the floating widget
     frame.render_widget(Clear, area); 
@@ -1544,30 +1709,28 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
 
     // Adjust constraints based on whether the calendar grid is visible
     let constraints = if grid_is_visible {
-        // Show calendar grid (9 lines required for 7 rows + borders/title)
         vec![
             Constraint::Length(2), // 0: Title
-            Constraint::Length(4), // 1: Description (FIX: Increased to 4 lines)
+            Constraint::Length(4), // 1: Description
             Constraint::Length(4), // 2: Subtasks
-            Constraint::Length(2), // 3: Due By Toggle (NEW)
+            Constraint::Length(2), // 3: Due By Toggle
             Constraint::Length(1), // 4: Date Label
-            Constraint::Length(1), // 5: Date Input (Year/Month/Day display)
-            Constraint::Length(9), // 6: Calendar Grid (FIX: Increased to 9 lines)
+            Constraint::Length(1), // 5: Date Input
+            Constraint::Length(9), // 6: Calendar Grid
             Constraint::Length(2), // 7: Calendar Time
             Constraint::Length(2), // 8: Priority
             Constraint::Length(1), // 9: Spacer
             Constraint::Length(1), // 10: Submit button
         ]
     } else {
-        // Hide calendar grid, collapsing the 9 lines into 0
         vec![
             Constraint::Length(2), // 0: Title
-            Constraint::Length(4), // 1: Description (FIX: Increased to 4 lines)
+            Constraint::Length(4), // 1: Description
             Constraint::Length(4), // 2: Subtasks
-            Constraint::Length(2), // 3: Due By Toggle (NEW)
+            Constraint::Length(2), // 3: Due By Toggle
             Constraint::Length(1), // 4: Date Label
-            Constraint::Length(1), // 5: Date Input (Year/Month/Day display)
-            Constraint::Length(0), // 6: Calendar Grid (Collapsed)
+            Constraint::Length(1), // 5: Date Input
+            Constraint::Length(0), // 6: Calendar Grid (collapsed)
             Constraint::Length(2), // 7: Calendar Time
             Constraint::Length(2), // 8: Priority
             Constraint::Length(1), // 9: Spacer
@@ -1609,7 +1772,7 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
     frame.render_widget(title_input, title_label_chunks[1]);
     let title_input_area = title_label_chunks[1]; // Used for cursor positioning
 
-    // --- Description Input (Required, Multiline) ---
+    // --- Description Input (Multiline) ---
     let desc_style = if is_active(TodoInputFocus::Description) {
         Style::default().fg(Color::Yellow)
     } else {
@@ -1840,7 +2003,6 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
     frame.render_widget(priority_input, priority_chunks[1]);
     let priority_input_area = priority_chunks[1]; // Used for cursor positioning
 
-
     // --- Submit Button ---
     let submit_style = if is_active(TodoInputFocus::Submit) {
         // Change highlighting to blue background, black foreground
@@ -1850,11 +2012,7 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
         Style::default().fg(Color::Green)
     };
     
-    let submit_text = match app.todo_edit_mode {
-        TodoEditMode::Adding => " [ SUBMIT ] ",
-        TodoEditMode::Editing => " [ SAVE ] ",
-        _ => unreachable!(),
-    };
+    let submit_text = " [ SUBMIT ] ";
     
     frame.render_widget(Paragraph::new(submit_text)
         .style(submit_style)
@@ -1917,57 +2075,69 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
     }
 }
 
-// --- Shopping Screen ---
+// --- Lists Screen ---
 
-fn draw_shopping_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(3),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Min(3), Constraint::Length(3)])
         .split(area);
 
     let main_area = chunks[0];
     let footer_area = chunks[1];
 
-    // Split main area into category list (left) and items (right)
+    // Three-column layout: Groups | Categories | Items
     let panels = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .constraints([
+            Constraint::Percentage(20),
+            Constraint::Percentage(30),
+            Constraint::Percentage(50),
+        ])
         .split(main_area);
 
-    let cat_area = panels[0];
-    let item_area = panels[1];
+    let group_area   = panels[0];
+    let cat_area     = panels[1];
+    let item_area    = panels[2];
 
-    // --- Category list ---
-    let cat_items: Vec<ListItem> = app.shopping_categories.iter().map(|c| {
+    let focused_style   = Style::default().fg(Color::Yellow);
+    let unfocused_style = Style::default().fg(Color::White);
+
+    // --- Groups panel ---
+    let group_items: Vec<ListItem> = app.list_groups.iter().map(|g| {
+        ListItem::new(g.name.clone())
+    }).collect();
+
+    let group_list = List::new(group_items)
+        .block(Block::default().borders(Borders::ALL).title("Groups")
+            .border_style(if app.lists_focus == ListsFocus::Groups { focused_style } else { unfocused_style }))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Yellow))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(group_list, group_area, &mut app.list_group_state);
+
+    // --- Categories panel ---
+    let cat_items: Vec<ListItem> = app.list_categories.iter().map(|c| {
         ListItem::new(c.name.clone())
     }).collect();
 
-    let cat_focused = app.shopping_focus == ShoppingFocus::Categories;
-    let cat_border = if cat_focused {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::White)
-    };
     let cat_list = List::new(cat_items)
-        .block(Block::default().borders(Borders::ALL).title("Categories").border_style(cat_border))
+        .block(Block::default().borders(Borders::ALL).title("Lists")
+            .border_style(if app.lists_focus == ListsFocus::Categories { focused_style } else { unfocused_style }))
         .highlight_style(Style::default().fg(Color::Black).bg(Color::Yellow))
         .highlight_symbol("> ");
-    frame.render_stateful_widget(cat_list, cat_area, &mut app.shopping_category_state);
+    frame.render_stateful_widget(cat_list, cat_area, &mut app.list_category_state);
 
-    // --- Item list ---
-    let category_name = app.shopping_category_state.selected()
-        .and_then(|i| app.shopping_categories.get(i))
+    // --- Items panel ---
+    let category_name = app.list_category_state.selected()
+        .and_then(|i| app.list_categories.get(i))
         .map(|c| c.name.as_str())
         .unwrap_or("—");
 
-    let item_items: Vec<ListItem> = app.shopping_items.iter().map(|item| {
+    let item_items: Vec<ListItem> = app.list_items.iter().map(|item| {
         let marker = if item.checked { "[x]" } else { "[ ]" };
         let label = match &item.quantity {
             Some(q) => format!("{} {} ({})", marker, item.name, q),
-            None => format!("{} {}", marker, item.name),
+            None    => format!("{} {}",      marker, item.name),
         };
         let style = if item.checked {
             Style::default().fg(Color::DarkGray)
@@ -1977,46 +2147,76 @@ fn draw_shopping_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         ListItem::new(label).style(style)
     }).collect();
 
-    let item_focused = app.shopping_focus == ShoppingFocus::Items;
-    let item_border = if item_focused {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::White)
-    };
-    let title = format!("Items — {}", category_name);
+    let item_title = format!("Items — {}", category_name);
     let item_list = List::new(item_items)
-        .block(Block::default().borders(Borders::ALL).title(title).border_style(item_border))
+        .block(Block::default().borders(Borders::ALL).title(item_title)
+            .border_style(if app.lists_focus == ListsFocus::Items { focused_style } else { unfocused_style }))
         .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
         .highlight_symbol("> ");
-    frame.render_stateful_widget(item_list, item_area, &mut app.shopping_item_state);
+    frame.render_stateful_widget(item_list, item_area, &mut app.list_item_state);
 
     // --- Footer / input bar ---
-    let footer_content = match app.shopping_input_mode {
-        ShoppingInputMode::AddingCategory => {
-            format!("New list name: {}_", app.shopping_input_buffer)
-        }
-        ShoppingInputMode::AddingItem => {
-            format!("New item: {}_", app.shopping_input_buffer)
-        }
-        ShoppingInputMode::Normal => {
-            "Q:Back | Tab:Switch | j/k:Navigate | a:Add | d:Delete | Space:Check | C:Clear checked | p:Print | r:Refresh".to_string()
-        }
+    let footer_content = match app.lists_input_mode {
+        ListsInputMode::AddingGroup    => format!("New group name: {}_",  app.lists_input_buffer),
+        ListsInputMode::AddingCategory => format!("New list name: {}_",   app.lists_input_buffer),
+        ListsInputMode::AddingItem     => format!("New item: {}_",         app.lists_input_buffer),
+        ListsInputMode::QuickAdd       =>
+            "Quick Add — j/k:Navigate | Enter:Add to list | d:Delete template | Esc:Close".to_string(),
+        ListsInputMode::Normal =>
+            "Q:Back | Tab:Focus | j/k:Nav | a:Add | d:Del | Space:Check | C:Clear | p:Print | s:Save common | A:Quick add | r:Refresh".to_string(),
     };
 
-    let footer_style = match app.shopping_input_mode {
-        ShoppingInputMode::Normal => Style::default().fg(Color::Cyan),
-        _ => Style::default().fg(Color::Yellow),
+    let footer_style = match app.lists_input_mode {
+        ListsInputMode::Normal => Style::default().fg(Color::Cyan),
+        _                      => Style::default().fg(Color::Yellow),
     };
     let footer = Paragraph::new(footer_content)
         .style(footer_style)
         .block(Block::default().borders(Borders::ALL));
     frame.render_widget(footer, footer_area);
+
+    // --- Quick Add overlay ---
+    if app.lists_input_mode == ListsInputMode::QuickAdd {
+        draw_quick_add_overlay(frame, app, item_area);
+    }
 }
 
-// Placeholder for other screens
-fn draw_todo_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-    let text = Paragraph::new("TODO Screen (Press Q to quit TUI)").block(Block::default().borders(Borders::ALL).title("TODO List"));
-    frame.render_widget(text, area);
+fn draw_quick_add_overlay(frame: &mut ratatui::Frame, app: &mut App, anchor: Rect) {
+    // Centre a popup within the items panel area
+    let height = (app.common_items.len() as u16 + 2).max(5).min(anchor.height.saturating_sub(2));
+    let width = anchor.width.saturating_sub(4);
+    let x = anchor.x + 2;
+    let y = anchor.y + (anchor.height.saturating_sub(height)) / 2;
+    let popup_area = Rect { x, y, width, height };
+
+    // Clear background
+    frame.render_widget(Clear, popup_area);
+
+    if app.common_items.is_empty() {
+        let msg = Paragraph::new("No saved items.  Press 's' on an item to save it as a template.")
+            .style(Style::default().fg(Color::Gray))
+            .block(Block::default().borders(Borders::ALL)
+                .title(" Quick Add ")
+                .border_style(Style::default().fg(Color::Green)));
+        frame.render_widget(msg, popup_area);
+        return;
+    }
+
+    let items: Vec<ListItem> = app.common_items.iter().map(|c| {
+        let label = match &c.quantity {
+            Some(q) => format!("{} ({})", c.name, q),
+            None    => c.name.clone(),
+        };
+        ListItem::new(label)
+    }).collect();
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL)
+            .title(" Quick Add — Enter to add, d to delete ")
+            .border_style(Style::default().fg(Color::Green)))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Green))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(list, popup_area, &mut app.common_item_state);
 }
 
 fn draw_notes_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {

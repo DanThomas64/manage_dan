@@ -5,10 +5,7 @@
 
 use crate::prelude::*;
 use warp::{Filter, Rejection, Reply, http::StatusCode};
-use std::sync::Arc;
-use todo::todo_prelude::TodoItem; // FIX: Import TodoItem from the todo prelude
-use todo::TodoSummary; // NEW: Import TodoSummary
-use db::models::LogEntry; // NEW: Import LogEntry from db models
+use todo::todo_prelude::TodoItem;
 use warp::query::query; // NEW: Import query filter
 
 /// State shared across API handlers.
@@ -91,6 +88,20 @@ pub async fn update_todo_handler(id: i64, item: TodoItem) -> Result<impl Reply, 
     }
 }
 
+/// PATCH /api/v1/todo/:id/done - Toggle completed state without touching other fields
+#[derive(Deserialize)]
+pub struct SetDoneBody { pub done: bool }
+
+pub async fn set_todo_done_handler(id: i64, body: SetDoneBody) -> Result<impl Reply, Rejection> {
+    match todo::complete_item(id, body.done).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to set done for todo item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::TodoOperationFailed))
+        }
+    }
+}
+
 /// POST /api/v1/todo/:id/print - Manually print a todo item ticket
 pub async fn print_todo_handler(id: i64) -> Result<impl Reply, Rejection> {
     match todo::print_item(id).await {
@@ -124,112 +135,197 @@ pub async fn delete_todo_handler(id: i64) -> Result<impl Reply, Rejection> {
     }
 }
 
-// --- Shopping Endpoints ---
+// --- List Endpoints ---
 
-/// GET /api/v1/shopping/categories
-pub async fn list_shopping_categories_handler() -> Result<impl Reply, Rejection> {
-    match shopping::list_categories().await {
-        Ok(cats) => Ok(warp::reply::json(&cats)),
+/// GET /api/v1/lists/groups
+pub async fn list_groups_handler() -> Result<impl Reply, Rejection> {
+    match lists::list_groups().await {
+        Ok(groups) => Ok(warp::reply::json(&groups)),
         Err(e) => {
-            error!("Failed to list shopping categories: {}", e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            error!("Failed to list groups: {}", e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
 
-/// POST /api/v1/shopping/categories
+/// POST /api/v1/lists/groups
+#[derive(Deserialize)]
+pub struct AddGroupBody { pub name: String }
+
+pub async fn add_group_handler(body: AddGroupBody) -> Result<impl Reply, Rejection> {
+    match lists::add_group(&body.name).await {
+        Ok(group) => Ok(warp::reply::with_status(warp::reply::json(&group), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add group: {}", e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/lists/groups/:id
+pub async fn delete_group_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::delete_group(id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to delete group {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/lists/groups/:group_id/categories
+pub async fn list_categories_handler(group_id: i64) -> Result<impl Reply, Rejection> {
+    match lists::list_categories(group_id).await {
+        Ok(cats) => Ok(warp::reply::json(&cats)),
+        Err(e) => {
+            error!("Failed to list categories for group {}: {}", group_id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/lists/groups/:group_id/categories
 #[derive(Deserialize)]
 pub struct AddCategoryBody { pub name: String }
 
-pub async fn add_shopping_category_handler(body: AddCategoryBody) -> Result<impl Reply, Rejection> {
-    match shopping::add_category(&body.name).await {
+pub async fn add_category_handler(group_id: i64, body: AddCategoryBody) -> Result<impl Reply, Rejection> {
+    match lists::add_category(group_id, &body.name).await {
         Ok(cat) => Ok(warp::reply::with_status(warp::reply::json(&cat), StatusCode::CREATED)),
         Err(e) => {
-            error!("Failed to add shopping category: {}", e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            error!("Failed to add category: {}", e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
 
-/// DELETE /api/v1/shopping/categories/:id
-pub async fn delete_shopping_category_handler(id: i64) -> Result<impl Reply, Rejection> {
-    match shopping::delete_category(id).await {
+/// DELETE /api/v1/lists/categories/:id
+pub async fn delete_category_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::delete_category(id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
-            error!("Failed to delete shopping category {}: {}", id, e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            error!("Failed to delete category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
 
-/// GET /api/v1/shopping/categories/:id/items
-pub async fn list_shopping_items_handler(id: i64) -> Result<impl Reply, Rejection> {
-    match shopping::list_items(id).await {
+/// GET /api/v1/lists/categories/:id/items
+pub async fn list_items_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::list_items(id).await {
         Ok(items) => Ok(warp::reply::json(&items)),
         Err(e) => {
-            error!("Failed to list shopping items for category {}: {}", id, e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            error!("Failed to list items for category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
 
-/// POST /api/v1/shopping/categories/:id/items
+/// POST /api/v1/lists/categories/:id/items
 #[derive(Deserialize)]
 pub struct AddItemBody { pub name: String, pub quantity: Option<String> }
 
-pub async fn add_shopping_item_handler(cat_id: i64, body: AddItemBody) -> Result<impl Reply, Rejection> {
-    match shopping::add_item(cat_id, &body.name, body.quantity.as_deref()).await {
+pub async fn add_item_handler(cat_id: i64, body: AddItemBody) -> Result<impl Reply, Rejection> {
+    match lists::add_item(cat_id, &body.name, body.quantity.as_deref()).await {
         Ok(item) => Ok(warp::reply::with_status(warp::reply::json(&item), StatusCode::CREATED)),
         Err(e) => {
-            error!("Failed to add shopping item: {}", e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            error!("Failed to add item: {}", e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
 
-/// PATCH /api/v1/shopping/items/:id/check
+/// PATCH /api/v1/lists/items/:id/check
 #[derive(Deserialize)]
 pub struct CheckItemBody { pub checked: bool }
 
-pub async fn check_shopping_item_handler(id: i64, body: CheckItemBody) -> Result<impl Reply, Rejection> {
-    match shopping::check_item(id, body.checked).await {
+pub async fn check_item_handler(id: i64, body: CheckItemBody) -> Result<impl Reply, Rejection> {
+    match lists::check_item(id, body.checked).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
-            error!("Failed to check shopping item {}: {}", id, e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            error!("Failed to check item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
 
-/// DELETE /api/v1/shopping/items/:id
-pub async fn delete_shopping_item_handler(id: i64) -> Result<impl Reply, Rejection> {
-    match shopping::delete_item(id).await {
+/// DELETE /api/v1/lists/items/:id
+pub async fn delete_item_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::delete_item(id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
-            error!("Failed to delete shopping item {}: {}", id, e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            error!("Failed to delete item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
 
-/// POST /api/v1/shopping/categories/:id/clear
-pub async fn clear_shopping_checked_handler(id: i64) -> Result<impl Reply, Rejection> {
-    match shopping::clear_checked(id).await {
+/// POST /api/v1/lists/categories/:id/clear
+pub async fn clear_checked_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::clear_checked(id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
             error!("Failed to clear checked items for category {}: {}", id, e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
 
-/// POST /api/v1/shopping/categories/:id/print
-pub async fn print_shopping_list_handler(id: i64) -> Result<impl Reply, Rejection> {
-    match shopping::print_list(id).await {
+/// POST /api/v1/lists/categories/:id/print
+pub async fn print_list_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::print_list(id).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
-            error!("Failed to print shopping list for category {}: {}", id, e);
-            Err(warp::reject::custom(ApiError::ShoppingOperationFailed))
+            error!("Failed to print list for category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+// --- Common Items Endpoints ---
+
+/// GET /api/v1/lists/categories/:id/common
+pub async fn list_common_items_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::list_common_items(id).await {
+        Ok(items) => Ok(warp::reply::json(&items)),
+        Err(e) => {
+            error!("Failed to list common items for category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/lists/categories/:id/common
+#[derive(Deserialize)]
+pub struct AddCommonItemBody { pub name: String, pub quantity: Option<String> }
+
+pub async fn add_common_item_handler(id: i64, body: AddCommonItemBody) -> Result<impl Reply, Rejection> {
+    match lists::add_common_item(id, &body.name, body.quantity.as_deref()).await {
+        Ok(item) => Ok(warp::reply::with_status(warp::reply::json(&item), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add common item: {}", e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/lists/common/:id
+pub async fn delete_common_item_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::delete_common_item(id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to delete common item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/lists/common/:id/add
+pub async fn add_item_from_common_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::add_item_from_common(id).await {
+        Ok(item) => Ok(warp::reply::with_status(warp::reply::json(&item), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add item from common {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
 }
@@ -263,7 +359,7 @@ enum ApiError {
     TodoOperationFailed,
     MismatchedId,
     LogOperationFailed,
-    ShoppingOperationFailed,
+    ListsOperationFailed,
 }
 
 impl warp::reject::Reject for ApiError {}
@@ -276,8 +372,8 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
         Ok(warp::reply::with_status("ID in path does not match ID in body", StatusCode::BAD_REQUEST))
     } else if let Some(ApiError::LogOperationFailed) = err.find() {
         Ok(warp::reply::with_status("Log operation failed", StatusCode::INTERNAL_SERVER_ERROR))
-    } else if let Some(ApiError::ShoppingOperationFailed) = err.find() {
-        Ok(warp::reply::with_status("Shopping operation failed", StatusCode::INTERNAL_SERVER_ERROR))
+    } else if let Some(ApiError::ListsOperationFailed) = err.find() {
+        Ok(warp::reply::with_status("Lists operation failed", StatusCode::INTERNAL_SERVER_ERROR))
     } else {
         Err(err)
     }
@@ -313,6 +409,14 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::body::json())
         .and_then(|id, item| update_todo_handler(id, item));
         
+    // PATCH /api/v1/todo/:id/done
+    let set_done = todo_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path("done"))
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(|id, body| set_todo_done_handler(id, body));
+
     // POST /api/v1/todo/:id/print
     let print = todo_base
         .and(warp::path::param::<i64>())
@@ -333,7 +437,7 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::delete())
         .and_then(delete_todo_handler);
 
-    summary.or(create).or(read_all).or(update).or(print).or(archive).or(delete)
+    summary.or(create).or(read_all).or(update).or(set_done).or(print).or(archive).or(delete)
 }
 
 /// Defines routes related to system status.
@@ -351,91 +455,166 @@ fn status_routes(
         .and_then(get_status)
 }
 
-/// Defines routes related to shopping lists.
-fn shopping_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    let shopping = warp::path("shopping");
+/// Defines routes for the generic lists module.
+///
+/// URL structure:
+///   /api/v1/lists/groups                          — list groups CRUD
+///   /api/v1/lists/groups/:gid/categories          — categories within a group
+///   /api/v1/lists/categories/:id/items            — items within a category
+///   /api/v1/lists/items/:id/check                 — toggle item checked
+fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    let lists      = warp::path("lists");
+    let groups_seg = warp::path("groups");
     let categories = warp::path("categories");
-    let items = warp::path("items");
+    let items      = warp::path("items");
 
-    // GET /api/v1/shopping/categories
-    let list_cats = shopping
+    // GET /api/v1/lists/groups
+    let list_groups = lists
+        .and(groups_seg)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_groups_handler);
+
+    // POST /api/v1/lists/groups
+    let add_group = lists
+        .and(groups_seg)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(add_group_handler);
+
+    // DELETE /api/v1/lists/groups/:id
+    let delete_group = lists
+        .and(groups_seg)
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_group_handler);
+
+    // GET /api/v1/lists/groups/:group_id/categories
+    let list_cats = lists
+        .and(groups_seg)
+        .and(warp::path::param::<i64>())
         .and(categories)
         .and(warp::path::end())
         .and(warp::get())
-        .and_then(list_shopping_categories_handler);
+        .and_then(list_categories_handler);
 
-    // POST /api/v1/shopping/categories
-    let add_cat = shopping
+    // POST /api/v1/lists/groups/:group_id/categories
+    let add_cat = lists
+        .and(groups_seg)
+        .and(warp::path::param::<i64>())
         .and(categories)
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
-        .and_then(add_shopping_category_handler);
+        .and_then(|gid, body| add_category_handler(gid, body));
 
-    // DELETE /api/v1/shopping/categories/:id
-    let delete_cat = shopping
+    // DELETE /api/v1/lists/categories/:id
+    let delete_cat = lists
         .and(categories)
         .and(warp::path::param::<i64>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and_then(delete_shopping_category_handler);
+        .and_then(delete_category_handler);
 
-    // GET /api/v1/shopping/categories/:id/items
-    let list_items = shopping
+    // GET /api/v1/lists/categories/:id/items
+    let list_items = lists
         .and(categories)
         .and(warp::path::param::<i64>())
         .and(items)
         .and(warp::path::end())
         .and(warp::get())
-        .and_then(list_shopping_items_handler);
+        .and_then(list_items_handler);
 
-    // POST /api/v1/shopping/categories/:id/items
-    let add_item = shopping
+    // POST /api/v1/lists/categories/:id/items
+    let add_item = lists
         .and(categories)
         .and(warp::path::param::<i64>())
         .and(items)
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
-        .and_then(|id, body| add_shopping_item_handler(id, body));
+        .and_then(|id, body| add_item_handler(id, body));
 
-    // PATCH /api/v1/shopping/items/:id/check
-    let check_item = shopping
+    // PATCH /api/v1/lists/items/:id/check
+    let check_item = lists
         .and(items)
         .and(warp::path::param::<i64>())
         .and(warp::path("check"))
         .and(warp::path::end())
         .and(warp::patch())
         .and(warp::body::json())
-        .and_then(|id, body| check_shopping_item_handler(id, body));
+        .and_then(|id, body| check_item_handler(id, body));
 
-    // DELETE /api/v1/shopping/items/:id
-    let delete_item = shopping
+    // DELETE /api/v1/lists/items/:id
+    let delete_item = lists
         .and(items)
         .and(warp::path::param::<i64>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and_then(delete_shopping_item_handler);
+        .and_then(delete_item_handler);
 
-    // POST /api/v1/shopping/categories/:id/clear
-    let clear = shopping
+    // POST /api/v1/lists/categories/:id/clear
+    let clear = lists
         .and(categories)
         .and(warp::path::param::<i64>())
         .and(warp::path("clear"))
         .and(warp::path::end())
         .and(warp::post())
-        .and_then(clear_shopping_checked_handler);
+        .and_then(clear_checked_handler);
 
-    // POST /api/v1/shopping/categories/:id/print
-    let print = shopping
+    // POST /api/v1/lists/categories/:id/print
+    let print = lists
         .and(categories)
         .and(warp::path::param::<i64>())
         .and(warp::path("print"))
         .and(warp::path::end())
         .and(warp::post())
-        .and_then(print_shopping_list_handler);
+        .and_then(print_list_handler);
 
-    list_cats
+    let common_seg = warp::path("common");
+
+    // GET /api/v1/lists/categories/:id/common
+    let list_common = lists
+        .and(categories)
+        .and(warp::path::param::<i64>())
+        .and(common_seg)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_common_items_handler);
+
+    // POST /api/v1/lists/categories/:id/common
+    let add_common = lists
+        .and(categories)
+        .and(warp::path::param::<i64>())
+        .and(common_seg)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(|id, body| add_common_item_handler(id, body));
+
+    // DELETE /api/v1/lists/common/:id
+    let delete_common = lists
+        .and(common_seg)
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_common_item_handler);
+
+    // POST /api/v1/lists/common/:id/add
+    let add_from_common = lists
+        .and(common_seg)
+        .and(warp::path::param::<i64>())
+        .and(warp::path("add"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and_then(add_item_from_common_handler);
+
+    list_groups
+        .or(add_group)
+        .or(delete_group)
+        .or(list_cats)
         .or(add_cat)
         .or(delete_cat)
         .or(list_items)
@@ -444,6 +623,10 @@ fn shopping_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .or(delete_item)
         .or(clear)
         .or(print)
+        .or(list_common)
+        .or(add_common)
+        .or(delete_common)
+        .or(add_from_common)
 }
 
 /// Defines routes related to logging.
@@ -466,7 +649,7 @@ pub fn routes(
         status_routes(systems_status, go_nogo_status)
         .or(todo_routes())
         .or(log_routes())
-        .or(shopping_routes())
+        .or(list_routes())
     )
     .recover(handle_rejection)
 }

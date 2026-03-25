@@ -1,4 +1,4 @@
-pub use crate::shopping_error::{ShoppingLibError, ShoppingLibResult};
+pub use crate::lists_error::{ListsLibError, ListsLibResult};
 
 pub use anyhow::Result;
 pub use thiserror::Error;

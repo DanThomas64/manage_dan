@@ -26,7 +26,7 @@ pub struct SystemsStatus {
     pub project: Status,
     pub printer: Status,
     pub todo: Status,
-    pub shopping: Status,
+    pub lists: Status,
 }
 
 /// Holds the overall Go/NoGo status of the application.
@@ -119,7 +119,7 @@ impl SystemsStatus {
             project: Status::Init,
             printer: Status::Init,
             todo: Status::Init,
-            shopping: Status::Init,
+            lists: Status::Init,
         }
     }
     // TODO: Create Error handling for this
@@ -180,13 +180,13 @@ impl SystemsStatus {
             false => self.update("todo", Status::Nogo),
         };
 
-        // initialize shopping
-        match shopping::init()
-            .map_err(|e| AppError::Shopping(e).print())
+        // initialize lists
+        match lists::init()
+            .map_err(|e| AppError::Lists(e).print())
             .is_ok()
         {
-            true => self.update("shopping", Status::Go),
-            false => self.update("shopping", Status::Nogo),
+            true => self.update("lists", Status::Go),
+            false => self.update("lists", Status::Nogo),
         };
 
         *self
@@ -209,7 +209,7 @@ impl SystemsStatus {
             "project" => self.project = status,
             "printer" => self.printer = status,
             "todo" => self.todo = status,
-            "shopping" => self.shopping = status,
+            "lists" => self.lists = status,
             _ => _ = Status::Unknown,
         }
         *self
@@ -233,7 +233,7 @@ impl Iterator for SystemsIter {
             3 => Some(("project", self.systems.project)),
             4 => Some(("printer", self.systems.printer)),
             5 => Some(("todo", self.systems.todo)),
-            6 => Some(("shopping", self.systems.shopping)),
+            6 => Some(("lists", self.systems.lists)),
             _ => None,
         };
         self.index += 1;

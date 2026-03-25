@@ -374,6 +374,30 @@ pub async fn update_item(item: TodoItem) -> TodoLibResult {
     Ok(())
 }
 
+/// Marks a task as completed or pending without touching any other fields.
+///
+/// This is the correct path for a simple done-toggle: it fetches the current
+/// task state from Vikunja, flips only the `done` flag, and posts back.
+/// Subtasks are left entirely untouched.
+pub async fn complete_item(id: i64, completed: bool) -> TodoLibResult {
+    info!("Setting todo item {} done={}", id, completed);
+    let client = VikunjaClient::get()?;
+    let current = client.get_task(id).await?;
+    let payload = TaskPayload {
+        title: current.title.clone(),
+        description: if current.description.as_deref().unwrap_or("").is_empty() {
+            None
+        } else {
+            current.description.clone()
+        },
+        done: completed,
+        due_date: current.due_date,
+        priority: current.priority,
+    };
+    client.update_task(id, payload).await?;
+    Ok(())
+}
+
 /// Manually prints a ticket for a TodoItem by ID.
 pub async fn print_item(id: i64) -> TodoLibResult {
     info!("Manual print request for todo item ID: {}", id);

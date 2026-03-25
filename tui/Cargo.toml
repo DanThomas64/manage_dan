@@ -8,16 +8,16 @@ edition.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] } # Added features for TUI runtime
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "fmt", "json", "chrono"] }
+tracing-appender = "0.2.3"
+tokio = { version = "1.40.0", features = ["macros", "rt-multi-thread"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-chrono = { workspace = true } # Added chrono dependency
+chrono = { workspace = true }
 
 # TUI Dependencies
 ratatui = "0.27"
 crossterm = "0.27"
 
 # HTTP Client
-# Ensure reqwest uses a TLS backend (like rustls) for robust networking,
-# and relies on tokio for async runtime integration.
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }

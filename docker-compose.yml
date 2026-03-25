@@ -20,6 +20,8 @@ services:
       - APP_LOGGING_FILE=/data/logs/app.log
       # Set to "false" to suppress stdout logging (fully headless).
       - LOG_STDOUT=${LOG_STDOUT:-true}
+      # Timezone — override with e.g. TZ=America/Toronto in .env or shell.
+      - TZ=${TZ:-America/Halifax}
 
     # ── USB printer passthrough ──────────────────────────────────────────────
     # Passes the host USB bus into the container so the app can talk to a

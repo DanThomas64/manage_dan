@@ -9,9 +9,8 @@ use nogo::{SystemsGoNogo, Status};
 use notes;
 use project;
 use printer;
-use shopping;
+use lists;
 use todo;
-use tokio::time::{sleep, Duration};
 
 pub mod config;
 pub mod error;

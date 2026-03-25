@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#1a1d27" />
-  <title>Shopping Lists</title>
+  <title>Lists</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -180,6 +180,114 @@
       flex-shrink: 0;
     }
 
+    /* ── Group section (vertical list in sidebar) ── */
+    .group-section {
+      display: flex;
+      flex-direction: column;
+      border-bottom: 2px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .group-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px 6px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .group-list {
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0 8px 4px;
+      max-height: 220px;
+    }
+
+    .group-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 10px;
+      min-height: 48px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.15s;
+      gap: 8px;
+    }
+
+    .group-item:hover { background: var(--surface2); }
+
+    .group-item.active {
+      background: var(--accent-dim);
+      color: #c5d9ff;
+      font-weight: 500;
+    }
+
+    .group-item-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .group-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 4px 6px;
+      min-width: 30px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .group-item:hover .group-delete { opacity: 1; }
+    .group-delete:hover { color: var(--red); }
+
+    .btn-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      padding: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .btn-icon:hover { background: var(--surface2); color: var(--text); }
+
+    .add-group-form {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      border-top: 1px solid var(--border);
+      background: var(--surface2);
+      flex-shrink: 0;
+    }
+
+    .add-group-form input { font-size: 14px; }
+
     /* ── Items panel ── */
     .panel {
       display: flex;
@@ -313,6 +421,108 @@
 
     .item-row-container:hover .item-delete { opacity: 1; }
     .item-delete:hover { color: var(--red); }
+
+    .item-save {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 4px 4px;
+      min-width: 26px;
+      min-height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .item-row-container:hover .item-save { opacity: 1; }
+    .item-save:hover { color: var(--green); }
+
+    /* ── Quick-add (saved/common items) ── */
+    .quick-add-section {
+      border-top: 2px solid var(--border);
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      max-height: 240px;
+    }
+    .quick-add-header {
+      display: flex;
+      align-items: center;
+      padding: 8px 16px 6px;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .quick-add-label {
+      flex: 1;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-muted);
+    }
+    .quick-add-list {
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      flex: 1;
+    }
+    .quick-add-item {
+      display: flex;
+      align-items: center;
+      padding: 11px 16px;
+      min-height: 48px;
+      cursor: pointer;
+      transition: background 0.12s;
+      gap: 10px;
+      user-select: none;
+    }
+    .quick-add-item:hover { background: var(--surface2); }
+    .quick-add-item:active { background: var(--accent-dim); opacity: 0.9; }
+    .quick-add-item-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .quick-add-item-qty {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .quick-add-item-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 4px 6px;
+      min-width: 30px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .quick-add-item:hover .quick-add-item-delete { opacity: 1; }
+    .quick-add-item-delete:hover { color: var(--red); }
+    .quick-add-section.editing .quick-add-item-delete { opacity: 0.55; }
+    .btn-icon-sm {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      border-radius: 6px;
+    }
+    .btn-icon-sm.active { color: var(--accent); border-color: var(--accent); }
 
     .items-divider {
       margin: 16px 0 8px;
@@ -459,10 +669,20 @@
       .main.show-panel .sidebar { transform: translateX(-25%); opacity: 0; pointer-events: none; }
 
       /* Larger list items for thumbs */
+      .group-item { min-height: 56px; padding: 14px 10px; }
       .category-item { min-height: 56px; padding: 14px 10px; }
+      .quick-add-item { min-height: 56px; padding: 14px 16px; }
 
       /* Delete always somewhat visible on touch (no hover) */
+      .group-delete { opacity: 0.55; }
       .category-delete { opacity: 0.55; }
+      .quick-add-item-delete { opacity: 0.55; }
+
+      /* Quick-add: more room on mobile */
+      .quick-add-section { max-height: 280px; }
+
+      /* Group list: allow more room on mobile */
+      .group-list { max-height: 280px; }
 
       /* Panel header on mobile: tighter */
       .panel-header { padding: 12px 16px; }
@@ -509,10 +729,23 @@
       .btn-sm { padding: 11px 16px; font-size: 0.95rem; }
 
       /* Sidebar list items: tall and generous */
+      .group-item {
+        min-height: 72px;
+        padding: 18px 14px;
+        font-size: 1rem;
+      }
+
       .category-item {
         min-height: 72px;
         padding: 18px 14px;
         font-size: 1rem;
+      }
+
+      .group-delete {
+        opacity: 0.65;
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 1.4rem;
       }
 
       .category-delete {
@@ -521,6 +754,22 @@
         min-height: 44px;
         font-size: 1.4rem;
       }
+
+      .quick-add-item {
+        min-height: 72px;
+        padding: 18px 16px;
+        font-size: 1rem;
+      }
+
+      .quick-add-item-delete {
+        opacity: 0.65;
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 1.4rem;
+      }
+
+      .quick-add-section { max-height: none; }
+      .group-list { max-height: none; }
 
       /* Panel header */
       .panel-header { padding: 16px 16px; }
@@ -564,8 +813,9 @@
         padding-bottom: max(10px, calc(8px + var(--safe-bottom)));
       }
 
-      /* Sidebar header label */
+      /* Sidebar header labels */
       .sidebar-header { font-size: 0.75rem; padding: 16px 16px 10px; }
+      .group-section-header { font-size: 0.75rem; padding: 16px 16px 10px; }
     }
   </style>
 </head>
@@ -576,7 +826,7 @@
   <header>
     <div class="header-left">
       <button id="btn-back" class="btn-ghost btn-sm" onclick="goBack()">&#8592; Lists</button>
-      <h1 id="header-title"><span>&#9676;</span> Shopping Lists</h1>
+      <h1 id="header-title"><span>&#9676;</span> Lists</h1>
     </div>
     <div class="header-actions">
       <button class="btn-ghost btn-sm" id="btn-clear" disabled onclick="clearChecked()">Clear checked</button>
@@ -586,8 +836,23 @@
 
   <div class="main" id="main">
 
-    <!-- Sidebar: list of categories -->
+    <!-- Sidebar: group list + category list -->
     <aside class="sidebar">
+      <!-- Group selector -->
+      <div class="group-section">
+        <div class="group-section-header">
+          <span>Groups</span>
+          <button class="btn-icon" onclick="toggleAddGroupForm()" title="New group">+</button>
+        </div>
+        <div class="group-list" id="group-tabs"></div>
+        <div class="add-group-form" id="add-group-form" style="display:none;">
+          <input type="text" id="new-group-input" placeholder="Group name…"
+                 autocomplete="off" autocorrect="off" onkeydown="groupKeydown(event)" />
+          <button class="btn-primary btn-sm" onclick="submitAddGroup()">Add</button>
+          <button class="btn-ghost btn-sm" onclick="toggleAddGroupForm()">&#215;</button>
+        </div>
+      </div>
+      <!-- Lists within selected group -->
       <div class="sidebar-header">Lists</div>
       <div class="category-list" id="category-list">
         <div class="empty-state"><span class="icon">&#128722;</span><span>No lists yet</span></div>
@@ -617,6 +882,14 @@
         </div>
       </div>
 
+      <div class="quick-add-section" id="quick-add-section" style="display:none;">
+        <div class="quick-add-header">
+          <span class="quick-add-label">&#9733; Quick Add</span>
+          <button class="btn-icon-sm" id="btn-edit-common" onclick="toggleEditCommon()">Edit</button>
+        </div>
+        <div class="quick-add-list" id="quick-add-chips"></div>
+      </div>
+
       <div class="add-item-form" id="add-item-form" style="display:none;">
         <input type="text" id="new-item-name" placeholder="Item name…"
                autocomplete="off" autocorrect="off" onkeydown="itemKeydown(event)" />
@@ -632,11 +905,15 @@
 <div id="toast"></div>
 
 <script>
-  const API = '/api/v1/shopping';
+  const API = '/api/v1/lists';
 
+  let groups            = [];
+  let selectedGroupId   = null;
   let categories        = [];
   let selectedCategoryId = null;
   let items             = [];
+  let commonItems       = [];
+  let editingCommon     = false;
 
   // Treat as mobile when the primary input is touch (no fine pointer / no hover).
   // This correctly catches folding phones at any resolution.
@@ -647,7 +924,7 @@
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
   async function init() {
-    await loadCategories();
+    await loadGroups();
   }
 
   // ── Mobile navigation ──────────────────────────────────────────────────────
@@ -657,25 +934,128 @@
     document.getElementById('main').classList.add('show-panel');
     const backBtn = document.getElementById('btn-back');
     backBtn.style.display = 'flex';
-    // Replace title with list name so the user always knows where they are
     document.getElementById('header-title').textContent = listName;
   }
 
   function goBack() {
     document.getElementById('main').classList.remove('show-panel');
     document.getElementById('btn-back').style.display = 'none';
-    document.getElementById('header-title').innerHTML = '<span>&#9676;</span> Shopping Lists';
+    document.getElementById('header-title').innerHTML = '<span>&#9676;</span> Lists';
   }
+
+  // ── Groups ─────────────────────────────────────────────────────────────────
+
+  async function loadGroups() {
+    try {
+      const res = await fetch(`${API}/groups`);
+      if (!res.ok) throw new Error(await res.text());
+      groups = await res.json();
+      renderGroupTabs();
+      if (groups.length > 0 && selectedGroupId === null) {
+        await selectGroup(groups[0].id);
+      }
+    } catch (e) {
+      toast('Failed to load groups: ' + e.message, true);
+    }
+  }
+
+  function renderGroupTabs() {
+    const el = document.getElementById('group-tabs');
+    if (!groups.length) {
+      el.innerHTML = '<div class="empty-state" style="padding:12px 8px;font-size:0.85rem;">No groups yet</div>';
+      return;
+    }
+    el.innerHTML = groups.map(g => `
+      <div class="group-item${g.id === selectedGroupId ? ' active' : ''}"
+           onclick="selectGroup(${g.id})">
+        <span class="group-item-name">${esc(g.name)}</span>
+        <button class="group-delete" onclick="event.stopPropagation(); deleteGroup(${g.id})"
+                title="Delete group">&#215;</button>
+      </div>
+    `).join('');
+  }
+
+  async function selectGroup(id) {
+    selectedGroupId = id;
+    selectedCategoryId = null;
+    items = [];
+    renderGroupTabs();
+    // Reset the items panel
+    document.getElementById('item-list').innerHTML =
+      '<div class="empty-state"><span class="icon">&#8592;</span><span>Pick a list to get started</span></div>';
+    document.getElementById('panel-title').innerHTML = 'Select a list';
+    document.getElementById('add-item-form').style.display = 'none';
+    document.getElementById('btn-print').disabled = true;
+    document.getElementById('btn-clear').disabled = true;
+    document.getElementById('quick-add-section').style.display = 'none';
+    commonItems = [];
+    editingCommon = false;
+    if (isMobile()) {
+      document.getElementById('main').classList.remove('show-panel');
+      document.getElementById('btn-back').style.display = 'none';
+      document.getElementById('header-title').innerHTML = '<span>&#9676;</span> Lists';
+    }
+    await loadCategories();
+  }
+
+  function toggleAddGroupForm() {
+    const form = document.getElementById('add-group-form');
+    const visible = form.style.display !== 'none';
+    form.style.display = visible ? 'none' : 'flex';
+    if (!visible) document.getElementById('new-group-input').focus();
+  }
+
+  async function submitAddGroup() {
+    const input = document.getElementById('new-group-input');
+    const name  = input.value.trim();
+    if (!name) return;
+    try {
+      const res = await fetch(`${API}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      input.value = '';
+      toggleAddGroupForm();
+      await loadGroups();
+      const added = groups.find(g => g.name === name);
+      if (added) selectGroup(added.id);
+    } catch (e) {
+      toast('Failed to add group: ' + e.message, true);
+    }
+  }
+
+  async function deleteGroup(id) {
+    const group = groups.find(g => g.id === id);
+    if (!confirm(`Delete group "${group?.name}"?\nThis removes all its lists and items.`)) return;
+    try {
+      const res = await fetch(`${API}/groups/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      if (selectedGroupId === id) {
+        selectedGroupId = null;
+        selectedCategoryId = null;
+        categories = [];
+        items = [];
+      }
+      await loadGroups();
+      toast(`Deleted "${group?.name}"`);
+    } catch (e) {
+      toast('Failed to delete group: ' + e.message, true);
+    }
+  }
+
+  function groupKeydown(e) { if (e.key === 'Enter') submitAddGroup(); }
 
   // ── Categories ─────────────────────────────────────────────────────────────
 
   async function loadCategories() {
+    if (!selectedGroupId) return;
     try {
-      const res = await fetch(`${API}/categories`);
+      const res = await fetch(`${API}/groups/${selectedGroupId}/categories`);
       if (!res.ok) throw new Error(await res.text());
       categories = await res.json();
       renderCategories();
-      // Auto-select the first category on initial load
       if (categories.length > 0 && selectedCategoryId === null) {
         await selectCategory(categories[0].id);
       }
@@ -711,15 +1091,17 @@
     document.getElementById('btn-clear').disabled = false;
     showPanel(cat.name);
     await loadItems(id);
+    await loadCommonItems(id);
     if (!isMobile()) document.getElementById('new-item-name').focus();
   }
 
   async function addCategory() {
+    if (!selectedGroupId) return;
     const input = document.getElementById('new-cat-input');
     const name  = input.value.trim();
     if (!name) return;
     try {
-      const res = await fetch(`${API}/categories`, {
+      const res = await fetch(`${API}/groups/${selectedGroupId}/categories`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -743,10 +1125,13 @@
       if (selectedCategoryId === id) {
         selectedCategoryId = null;
         items = [];
+        commonItems = [];
+        editingCommon = false;
         document.getElementById('item-list').innerHTML =
           '<div class="empty-state"><span class="icon">&#8592;</span><span>Pick a list to get started</span></div>';
         document.getElementById('panel-title').innerHTML = 'Select a list';
         document.getElementById('add-item-form').style.display = 'none';
+        document.getElementById('quick-add-section').style.display = 'none';
         document.getElementById('btn-print').disabled = true;
         document.getElementById('btn-clear').disabled = true;
         goBack();
@@ -795,6 +1180,7 @@
                  onchange="checkItem(${i.id}, this.checked)" />
           <span class="item-label${i.checked ? ' checked' : ''}">${esc(i.name)}</span>
           ${i.quantity ? `<span class="item-qty">${esc(i.quantity)}</span>` : ''}
+          <button class="item-save" title="Save to quick-add" onclick="saveItemAsCommon(${i.id})">&#9733;</button>
           <button class="item-delete" title="Remove" onclick="deleteItem(${i.id})">&#215;</button>
         </div>
       </div>`;
@@ -888,6 +1274,95 @@
   }
 
   function itemKeydown(e) { if (e.key === 'Enter') addItem(); }
+
+  // ── Common / saved items ────────────────────────────────────────────────────
+
+  async function loadCommonItems(categoryId) {
+    try {
+      const res = await fetch(`${API}/categories/${categoryId}/common`);
+      if (!res.ok) throw new Error(await res.text());
+      commonItems = await res.json();
+      renderCommonItems();
+      document.getElementById('quick-add-section').style.display = '';
+    } catch (e) {
+      toast('Failed to load saved items: ' + e.message, true);
+    }
+  }
+
+  function renderCommonItems() {
+    const el = document.getElementById('quick-add-chips');
+    if (commonItems.length === 0) {
+      el.innerHTML = '<div class="empty-state" style="padding:10px 16px;font-size:0.85rem;">Tap &#9733; on an item to save it here</div>';
+    } else {
+      el.innerHTML = commonItems.map(c => `
+        <div class="quick-add-item" onclick="addItemFromCommon(${c.id})">
+          <span class="quick-add-item-name">${esc(c.name)}</span>
+          ${c.quantity ? `<span class="quick-add-item-qty">${esc(c.quantity)}</span>` : ''}
+          <button class="quick-add-item-delete" onclick="event.stopPropagation(); deleteCommonItem(${c.id})" title="Remove">&#215;</button>
+        </div>
+      `).join('');
+    }
+  }
+
+  async function addItemFromCommon(commonId) {
+    try {
+      const res = await fetch(`${API}/common/${commonId}/add`, { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      if (navigator.vibrate) navigator.vibrate(8);
+      await loadItems(selectedCategoryId);
+    } catch (e) {
+      toast('Failed to add item: ' + e.message, true);
+    }
+  }
+
+  async function deleteCommonItem(id) {
+    try {
+      const res = await fetch(`${API}/common/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      commonItems = commonItems.filter(c => c.id !== id);
+      renderCommonItems();
+    } catch (e) {
+      toast('Failed to remove saved item: ' + e.message, true);
+    }
+  }
+
+  async function saveItemAsCommon(itemId) {
+    const item = items.find(i => i.id === itemId);
+    if (!item || !selectedCategoryId) return;
+    if (commonItems.some(c => c.name.toLowerCase() === item.name.toLowerCase())) {
+      toast(`"${item.name}" is already saved`);
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/common`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: item.name, quantity: item.quantity || null }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const added = await res.json();
+      commonItems.push(added);
+      renderCommonItems();
+      toast(`Saved "${item.name}" to quick-add`);
+    } catch (e) {
+      toast('Failed to save item: ' + e.message, true);
+    }
+  }
+
+  function toggleEditCommon() {
+    editingCommon = !editingCommon;
+    const section = document.getElementById('quick-add-section');
+    const btn = document.getElementById('btn-edit-common');
+    if (editingCommon) {
+      section.classList.add('editing');
+      btn.textContent = 'Done';
+      btn.classList.add('active');
+    } else {
+      section.classList.remove('editing');
+      btn.textContent = 'Edit';
+      btn.classList.remove('active');
+    }
+  }
 
   // ── Swipe gestures ─────────────────────────────────────────────────────────
   //

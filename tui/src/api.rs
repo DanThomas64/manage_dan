@@ -31,7 +31,7 @@ pub struct SystemsStatus {
     pub project: Status,
     pub printer: Status,
     pub todo: Status,
-    pub shopping: Status,
+    pub lists: Status,
 }
 
 /// Overall Go/NoGo status (mirrors app::nogo::SystemsGoNogo).
@@ -108,29 +108,35 @@ impl TodoItem {
     }
 }
 
-// --- Todo Summary Structure ---
+// --- Lists Data Structures ---
 
-/// Summary statistics for pending Todo items (mirrors todo::TodoSummary).
+/// A top-level list group (mirrors lists::models::ListGroup).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TodoSummary {
-    pub total_pending: usize,
-    pub high_priority_pending: usize, // Priority >= 8
-    pub due_today: usize,
-    pub overdue: usize,
-}
-
-// --- Shopping Data Structures ---
-
-/// A named shopping list (mirrors shopping::models::ShoppingCategory).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShoppingCategory {
+pub struct ListGroup {
     pub id: i64,
     pub name: String,
 }
 
-/// A single item on a shopping list (mirrors shopping::models::ShoppingItem).
+/// A named list within a group (mirrors lists::models::ListCategory).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShoppingItem {
+pub struct ListCategory {
+    pub id: i64,
+    pub group_id: i64,
+    pub name: String,
+}
+
+/// A saved common item template (mirrors lists::models::CommonItem).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommonItem {
+    pub id: i64,
+    pub category_id: i64,
+    pub name: String,
+    pub quantity: Option<String>,
+}
+
+/// A single item on a list (mirrors lists::models::ListItem).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListItem {
     pub id: i64,
     pub category_id: i64,
     pub name: String,
@@ -177,14 +183,6 @@ impl ApiClient {
 
     // --- Todo CRUD Methods ---
 
-    /// Fetches the Todo summary statistics.
-    pub async fn fetch_summary(&self) -> Result<TodoSummary> {
-        let url = format!("{}/api/v1/todo/summary", self.base_url);
-        let response = self.client.get(&url).send().await?.error_for_status()?;
-        let summary: TodoSummary = response.json().await?;
-        Ok(summary)
-    }
-
     /// Creates a new Todo item.
     pub async fn create_todo(&self, item: TodoItem) -> Result<TodoItem> {
         let url = format!("{}/api/v1/todo", self.base_url);
@@ -202,11 +200,13 @@ impl ApiClient {
         Ok(items)
     }
 
-    /// Updates an existing Todo item.
-    pub async fn update_todo(&self, item: TodoItem) -> Result<()> {
-        let id = item.id.ok_or(anyhow::anyhow!("Cannot update item without ID"))?;
-        let url = format!("{}/api/v1/todo/{}", self.base_url, id);
-        self.client.put(&url).json(&item).send().await?.error_for_status()?;
+    /// Sets the completed state of a Todo item without touching any other fields.
+    pub async fn complete_todo(&self, id: i64, done: bool) -> Result<()> {
+        let url = format!("{}/api/v1/todo/{}/done", self.base_url, id);
+        self.client
+            .patch(&url)
+            .json(&serde_json::json!({ "done": done }))
+            .send().await?.error_for_status()?;
         Ok(())
     }
     
@@ -231,61 +231,102 @@ impl ApiClient {
         Ok(())
     }
 
-    // --- Shopping Methods ---
+    // --- Lists Methods ---
 
-    pub async fn fetch_shopping_categories(&self) -> Result<Vec<ShoppingCategory>> {
-        let url = format!("{}/api/v1/shopping/categories", self.base_url);
+    pub async fn fetch_list_groups(&self) -> Result<Vec<ListGroup>> {
+        let url = format!("{}/api/v1/lists/groups", self.base_url);
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
     }
 
-    pub async fn add_shopping_category(&self, name: &str) -> Result<ShoppingCategory> {
-        let url = format!("{}/api/v1/shopping/categories", self.base_url);
+    pub async fn add_list_group(&self, name: &str) -> Result<ListGroup> {
+        let url = format!("{}/api/v1/lists/groups", self.base_url);
         Ok(self.client.post(&url)
             .json(&serde_json::json!({ "name": name }))
             .send().await?.error_for_status()?.json().await?)
     }
 
-    pub async fn delete_shopping_category(&self, id: i64) -> Result<()> {
-        let url = format!("{}/api/v1/shopping/categories/{}", self.base_url, id);
+    pub async fn delete_list_group(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/lists/groups/{}", self.base_url, id);
         self.client.delete(&url).send().await?.error_for_status()?;
         Ok(())
     }
 
-    pub async fn fetch_shopping_items(&self, category_id: i64) -> Result<Vec<ShoppingItem>> {
-        let url = format!("{}/api/v1/shopping/categories/{}/items", self.base_url, category_id);
+    pub async fn fetch_list_categories(&self, group_id: i64) -> Result<Vec<ListCategory>> {
+        let url = format!("{}/api/v1/lists/groups/{}/categories", self.base_url, group_id);
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
     }
 
-    pub async fn add_shopping_item(&self, category_id: i64, name: &str, quantity: Option<&str>) -> Result<ShoppingItem> {
-        let url = format!("{}/api/v1/shopping/categories/{}/items", self.base_url, category_id);
+    pub async fn add_list_category(&self, group_id: i64, name: &str) -> Result<ListCategory> {
+        let url = format!("{}/api/v1/lists/groups/{}/categories", self.base_url, group_id);
+        Ok(self.client.post(&url)
+            .json(&serde_json::json!({ "name": name }))
+            .send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn delete_list_category(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/lists/categories/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn fetch_list_items(&self, category_id: i64) -> Result<Vec<ListItem>> {
+        let url = format!("{}/api/v1/lists/categories/{}/items", self.base_url, category_id);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn add_list_item(&self, category_id: i64, name: &str, quantity: Option<&str>) -> Result<ListItem> {
+        let url = format!("{}/api/v1/lists/categories/{}/items", self.base_url, category_id);
         Ok(self.client.post(&url)
             .json(&serde_json::json!({ "name": name, "quantity": quantity }))
             .send().await?.error_for_status()?.json().await?)
     }
 
-    pub async fn check_shopping_item(&self, id: i64, checked: bool) -> Result<()> {
-        let url = format!("{}/api/v1/shopping/items/{}/check", self.base_url, id);
+    pub async fn check_list_item(&self, id: i64, checked: bool) -> Result<()> {
+        let url = format!("{}/api/v1/lists/items/{}/check", self.base_url, id);
         self.client.patch(&url)
             .json(&serde_json::json!({ "checked": checked }))
             .send().await?.error_for_status()?;
         Ok(())
     }
 
-    pub async fn delete_shopping_item(&self, id: i64) -> Result<()> {
-        let url = format!("{}/api/v1/shopping/items/{}", self.base_url, id);
+    pub async fn delete_list_item(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/lists/items/{}", self.base_url, id);
         self.client.delete(&url).send().await?.error_for_status()?;
         Ok(())
     }
 
-    pub async fn clear_shopping_checked(&self, category_id: i64) -> Result<()> {
-        let url = format!("{}/api/v1/shopping/categories/{}/clear", self.base_url, category_id);
+    pub async fn clear_list_checked(&self, category_id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/lists/categories/{}/clear", self.base_url, category_id);
         self.client.post(&url).send().await?.error_for_status()?;
         Ok(())
     }
 
-    pub async fn print_shopping_list(&self, category_id: i64) -> Result<()> {
-        let url = format!("{}/api/v1/shopping/categories/{}/print", self.base_url, category_id);
+    pub async fn print_list(&self, category_id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/lists/categories/{}/print", self.base_url, category_id);
         self.client.post(&url).send().await?.error_for_status()?;
         Ok(())
+    }
+
+    pub async fn fetch_common_items(&self, category_id: i64) -> Result<Vec<CommonItem>> {
+        let url = format!("{}/api/v1/lists/categories/{}/common", self.base_url, category_id);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn add_common_item(&self, category_id: i64, name: &str, quantity: Option<&str>) -> Result<CommonItem> {
+        let url = format!("{}/api/v1/lists/categories/{}/common", self.base_url, category_id);
+        Ok(self.client.post(&url)
+            .json(&serde_json::json!({ "name": name, "quantity": quantity }))
+            .send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn delete_common_item(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/lists/common/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn add_item_from_common(&self, common_id: i64) -> Result<ListItem> {
+        let url = format!("{}/api/v1/lists/common/{}/add", self.base_url, common_id);
+        Ok(self.client.post(&url).send().await?.error_for_status()?.json().await?)
     }
 }

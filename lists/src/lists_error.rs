@@ -1,13 +1,16 @@
-//! Error types specific to the Shopping subsystem.
+//! Error types specific to the Lists subsystem.
 
 use thiserror::Error;
 
-pub type ShoppingLibResult<T = ()> = Result<T, ShoppingLibError>;
+pub type ListsLibResult<T = ()> = Result<T, ListsLibError>;
 
 #[derive(Error, Debug)]
-pub enum ShoppingLibError {
-    #[error("unable to initialize shopping system: {0}")]
+pub enum ListsLibError {
+    #[error("unable to initialize lists system: {0}")]
     CannotInitialize(String),
+
+    #[error("list group not found: {0}")]
+    GroupNotFound(i64),
 
     #[error("category not found: {0}")]
     CategoryNotFound(i64),
@@ -21,6 +24,6 @@ pub enum ShoppingLibError {
     #[error("print error: {0}")]
     Print(#[from] printer::printer_error::PrinterLibError),
 
-    #[error("unknown shopping error")]
+    #[error("unknown lists error")]
     Unknown,
 }

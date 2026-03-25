@@ -11,7 +11,7 @@ notes   = { path = "../notes" }
 project = { path = "../project" }
 printer = { path = "../printer" }
 todo     = { path = "../todo" }
-shopping = { path = "../shopping" }
+lists = { path = "../lists" }
 vikunja = { path = "../vikunja" }
 tracing-subscriber = { version = "0.3.18", features = ["chrono"] }
 anyhow.workspace = true
