@@ -452,13 +452,22 @@
       flex-direction: column;
       max-height: 240px;
     }
+    .quick-add-section.collapsed {
+      max-height: none; /* shrinks to header only */
+    }
+    .quick-add-section.collapsed .quick-add-list {
+      display: none;
+    }
     .quick-add-header {
       display: flex;
       align-items: center;
       padding: 8px 16px 6px;
       gap: 6px;
       flex-shrink: 0;
+      cursor: pointer;
+      user-select: none;
     }
+    .quick-add-header:hover { background: var(--surface2); }
     .quick-add-label {
       flex: 1;
       font-size: 0.7rem;
@@ -466,6 +475,15 @@
       text-transform: uppercase;
       letter-spacing: 0.12em;
       color: var(--text-muted);
+    }
+    .quick-add-chevron {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+      line-height: 1;
+    }
+    .quick-add-section.collapsed .quick-add-chevron {
+      transform: rotate(-90deg);
     }
     .quick-add-list {
       overflow-y: auto;
@@ -885,9 +903,11 @@
       </div>
 
       <div class="quick-add-section" id="quick-add-section" style="display:none;">
-        <div class="quick-add-header">
+        <div class="quick-add-header" onclick="toggleQuickAddCollapsed()">
           <span class="quick-add-label">&#9733; Quick Add</span>
-          <button class="btn-icon-sm" id="btn-edit-common" onclick="toggleEditCommon()">Edit</button>
+          <span class="quick-add-chevron">&#9660;</span>
+          <button class="btn-icon-sm" id="btn-edit-common"
+                  onclick="event.stopPropagation(); toggleEditCommon()">Edit</button>
         </div>
         <div class="quick-add-list" id="quick-add-chips"></div>
       </div>
@@ -916,6 +936,8 @@
   let items             = [];
   let commonItems       = [];
   let editingCommon     = false;
+  let quickAddCollapsed = false;
+  let wasAutoCollapsed  = false;
 
   // Treat as mobile when the primary input is touch (no fine pointer / no hover).
   // This correctly catches folding phones at any resolution.
@@ -930,6 +952,7 @@
   function onViewportResize() {
     const app = document.querySelector('.app');
     app.style.height = window.visualViewport.height + 'px';
+    checkAutoCollapse();
   }
 
   if (window.visualViewport) {
@@ -1095,6 +1118,10 @@
 
   async function selectCategory(id) {
     selectedCategoryId = id;
+    // Reset collapse state for the new list so auto-collapse runs fresh
+    quickAddCollapsed = false;
+    wasAutoCollapsed  = false;
+    document.getElementById('quick-add-section').classList.remove('collapsed');
     renderCategories();
     const cat = categories.find(c => c.id === id);
     document.getElementById('panel-title').innerHTML =
@@ -1297,6 +1324,7 @@
       commonItems = await res.json();
       renderCommonItems();
       document.getElementById('quick-add-section').style.display = '';
+      checkAutoCollapse();
     } catch (e) {
       toast('Failed to load saved items: ' + e.message, true);
     }
@@ -1360,6 +1388,51 @@
     } catch (e) {
       toast('Failed to save item: ' + e.message, true);
     }
+  }
+
+  // Min item-list height before auto-collapse kicks in (~3 compact rows)
+  const MIN_ITEM_LIST_H = 120;
+
+  function setQuickAddCollapsed(collapsed, auto = false) {
+    quickAddCollapsed = collapsed;
+    if (collapsed && auto)  wasAutoCollapsed = true;
+    if (!collapsed)         wasAutoCollapsed = false;
+    const section = document.getElementById('quick-add-section');
+    section.classList.toggle('collapsed', collapsed);
+  }
+
+  function toggleQuickAddCollapsed() {
+    wasAutoCollapsed = false; // manual action: disable auto-expand
+    setQuickAddCollapsed(!quickAddCollapsed, false);
+  }
+
+  function checkAutoCollapse() {
+    const section = document.getElementById('quick-add-section');
+    if (!section || section.style.display === 'none') return;
+
+    const panel      = document.querySelector('.panel');
+    const headerEl   = document.querySelector('.panel-header');
+    const addFormEl  = document.getElementById('add-item-form');
+
+    const panelH    = panel.offsetHeight;
+    const headerH   = headerEl ? headerEl.offsetHeight : 0;
+    const addFormH  = (addFormEl && addFormEl.style.display !== 'none') ? addFormEl.offsetHeight : 0;
+    // Estimate how much vertical space quick-add would need when fully open
+    const quickAddH = section.scrollHeight || 240;
+
+    const usableH            = panelH - headerH - addFormH;
+    const spaceForItemsIfOpen = usableH - quickAddH;
+
+    if (spaceForItemsIfOpen < MIN_ITEM_LIST_H && !quickAddCollapsed) {
+      setQuickAddCollapsed(true, true);
+    } else if (spaceForItemsIfOpen >= MIN_ITEM_LIST_H && quickAddCollapsed && wasAutoCollapsed) {
+      setQuickAddCollapsed(false, false);
+    }
+  }
+
+  // Watch for panel height changes (window resize, keyboard, orientation)
+  if (window.ResizeObserver) {
+    new ResizeObserver(checkAutoCollapse).observe(document.querySelector('.panel'));
   }
 
   function toggleEditCommon() {
