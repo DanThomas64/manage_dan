@@ -384,8 +384,8 @@
 
     .item-label {
       flex: 1;
-      font-size: 0.9rem;
-      line-height: 1.3;
+      font-size: 0.82rem;
+      line-height: 1.25;
       transition: color 0.15s, text-decoration 0.15s;
     }
 
@@ -395,10 +395,10 @@
     }
 
     .item-qty {
-      font-size: 0.8rem;
+      font-size: 0.74rem;
       color: var(--text-muted);
       background: var(--surface2);
-      padding: 2px 7px;
+      padding: 1px 6px;
       border-radius: 12px;
       flex-shrink: 0;
     }
@@ -922,6 +922,20 @@
   const isMobile = () =>
     window.matchMedia('(hover: none) and (pointer: coarse)').matches ||
     window.innerWidth <= 1024;
+
+  // ── Keyboard avoidance ─────────────────────────────────────────────────────
+  // When the virtual keyboard opens, shrink .app to the visual viewport height
+  // so the add-item bar stays pinned above the keyboard rather than behind it.
+
+  function onViewportResize() {
+    const app = document.querySelector('.app');
+    app.style.height = window.visualViewport.height + 'px';
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onViewportResize);
+    // Restore full height when keyboard closes (resize fires again with full height)
+  }
 
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
