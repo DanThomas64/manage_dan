@@ -10,6 +10,7 @@ pub mod todo_prelude;
 pub mod models;
 pub mod monitor;
 pub mod daily_summary;
+pub mod recurring;
 
 use chrono::{DateTime, Local, Utc};
 use tracing::{info, warn};

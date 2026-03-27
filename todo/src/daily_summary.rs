@@ -161,6 +161,18 @@ pub async fn print_summary(level: SummaryLevel) {
         }
     }
 
+    // --- Recurring tasks due today ---
+    let recurring = crate::recurring::due_today();
+    lines.push(String::new());
+    lines.push(format!("RECURRING TODAY ({}):", recurring.len()));
+    if recurring.is_empty() {
+        lines.push("  None".to_string());
+    } else {
+        for task in &recurring {
+            lines.push(format!("  ~ {}", task.title));
+        }
+    }
+
     lines.push(String::new());
 
     // --- Footer ---
@@ -173,6 +185,38 @@ pub async fn print_summary(level: SummaryLevel) {
         warn!("Daily summary: print failed: {}", e);
     } else {
         info!("Daily summary printed successfully");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Startup guard
+// ---------------------------------------------------------------------------
+
+const LAST_SUMMARY_DATE_KEY: &str = "last_summary_date";
+
+/// Prints the daily summary only if it hasn't been printed yet today.
+/// Records today's date in the DB after a successful print so subsequent
+/// startups within the same day are skipped.
+pub async fn print_summary_if_not_today(level: SummaryLevel) {
+    let today = Local::now().date_naive();
+    let today_str = today.format("%Y-%m-%d").to_string();
+
+    match db::setting_get(LAST_SUMMARY_DATE_KEY).await {
+        Ok(Some(ref stored)) if stored == &today_str => {
+            info!("Daily summary already printed today ({}), skipping startup print", today_str);
+            return;
+        }
+        Err(e) => {
+            warn!("Daily summary: could not read last_summary_date: {}", e);
+            // fall through and print anyway
+        }
+        _ => {}
+    }
+
+    print_summary(level).await;
+
+    if let Err(e) = db::setting_set(LAST_SUMMARY_DATE_KEY, today_str.clone()).await {
+        warn!("Daily summary: failed to record last_summary_date: {}", e);
     }
 }
 
@@ -201,6 +245,12 @@ pub async fn run(hour: u32, level: SummaryLevel) {
     loop {
         info!("Daily summary: running");
         print_summary(level).await;
+        crate::recurring::print_due_today_if_not_printed().await;
+
+        let today_str = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        if let Err(e) = db::setting_set(LAST_SUMMARY_DATE_KEY, today_str).await {
+            warn!("Daily summary: failed to record last_summary_date: {}", e);
+        }
 
         let wait = secs_until_next_hour(hour);
         sleep(tokio::time::Duration::from_secs(wait)).await;

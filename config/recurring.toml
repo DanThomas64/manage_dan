@@ -1,0 +1,44 @@
+# Recurring tasks configuration.
+#
+# Tasks defined here are never stored in Vikunja and never appear in the
+# GUI or TUI.  Each day a task is due, a dedicated ticket is printed once
+# and the task is listed in the daily summary under "RECURRING TODAY".
+#
+# Schedule syntax:
+#   "daily"              — every calendar day
+#   "N:daily"            — every N days          e.g. "2:daily"
+#   "weekly:<day>"       — every week on <day>   e.g. "weekly:monday", "weekly:fri"
+#   "N:weekly:<day>"     — every N weeks on day  e.g. "2:weekly:monday"
+#   "monthly:<d>"        — every month on day d  e.g. "monthly:1"
+#   "N:monthly:<d>"      — every N months        e.g. "3:monthly:1"
+#
+# Multi-period schedules are anchored to 1970-01-01 by default.  Add an
+# optional `reference_date = "YYYY-MM-DD"` field to anchor to a specific date
+# instead (e.g. the Monday you started a fortnightly meeting).
+
+# ---------------------------------------------------------------------------
+# Examples — uncomment and edit as needed
+# ---------------------------------------------------------------------------
+
+# [[tasks]]
+# title = "Weekly review"
+# description = "Review goals, clear inbox, plan the coming week."
+# schedule = "weekly:friday"
+
+# [[tasks]]
+# title = "Fortnightly catch-up"
+# description = "Every other Monday, starting from a known date."
+# schedule = "2:weekly:monday"
+# reference_date = "2026-03-23"  # must be a Monday (or any date — first Monday >= it is used)
+
+# [[tasks]]
+# title = "Pay rent"
+# schedule = "monthly:1"
+
+# [[tasks]]
+# title = "Quarterly review"
+# schedule = "3:monthly:1"
+
+# [[tasks]]
+# title = "Morning standup notes"
+# schedule = "daily"

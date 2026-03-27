@@ -106,9 +106,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interval = AppConfig::get().monitor_interval_secs;
     tokio::spawn(todo::monitor::run(interval));
 
-    // 5c. Print an immediate daily summary at startup, then schedule the recurring one
+    // 5c. Print recurring task tickets and the daily summary at startup
+    //     (each skipped if already printed today), then schedule the daily run.
+    todo::recurring::print_due_today_if_not_printed().await;
     let summary_level = todo::daily_summary::SummaryLevel::from_str(&AppConfig::get().summary_level);
-    todo::daily_summary::print_summary(summary_level).await;
+    todo::daily_summary::print_summary_if_not_today(summary_level).await;
     let summary_hour = AppConfig::get().summary_hour;
     tokio::spawn(todo::daily_summary::run(summary_hour, summary_level));
 

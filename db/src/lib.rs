@@ -66,6 +66,23 @@ pub fn init() -> DbLibResult {
         [],
     );
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS settings (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS recurring_printed (
+            date       TEXT NOT NULL,
+            task_title TEXT NOT NULL,
+            PRIMARY KEY (date, task_title)
+        )",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -216,6 +233,65 @@ pub async fn printed_at_delete(task_id: i64) -> DbLibResult {
     })
     .await
     .map_err(|e| DbLibError::Internal(format!("DB error deleting printed_at: {}", e)))
+}
+
+// --- Settings ---
+
+/// Reads a settings value by key.
+pub async fn setting_get(key: &'static str) -> DbLibResult<Option<String>> {
+    execute_async(move |conn| {
+        conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading setting '{}': {}", key, e)))
+}
+
+/// Writes (upserts) a settings value.
+pub async fn setting_set(key: &'static str, value: String) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error writing setting '{}': {}", key, e)))
+}
+
+// --- recurring_printed ---
+
+/// Returns true if the given recurring task has already been printed on the given date.
+pub async fn recurring_printed_check(date: String, task_title: String) -> DbLibResult<bool> {
+    execute_async(move |conn| {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM recurring_printed WHERE date = ?1 AND task_title = ?2",
+            params![date, task_title],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error checking recurring_printed: {}", e)))
+}
+
+/// Records that the given recurring task was printed on the given date.
+pub async fn recurring_printed_record(date: String, task_title: String) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO recurring_printed (date, task_title) VALUES (?1, ?2)",
+            params![date, task_title],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error recording recurring_printed: {}", e)))
 }
 
 // --- Generic helper ---
