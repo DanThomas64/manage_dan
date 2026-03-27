@@ -356,6 +356,49 @@ pub async fn clear_checked(category_id: i64) -> ListsLibResult {
 }
 
 // ---------------------------------------------------------------------------
+// Stats
+// ---------------------------------------------------------------------------
+
+/// Aggregate statistics for the lists subsystem.
+#[derive(Debug, Default)]
+pub struct ListStats {
+    /// Number of list groups (e.g. "Shopping Lists", "General Lists").
+    pub groups: usize,
+    /// Number of named lists / categories across all groups.
+    pub lists: usize,
+    /// Total number of items across all lists.
+    pub items: usize,
+    /// Items that are not yet checked off.
+    pub items_pending: usize,
+}
+
+/// Returns aggregate counts for groups, lists, and items.
+pub async fn stats() -> ListsLibResult<ListStats> {
+    db::execute_async(|conn| {
+        let groups: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM shopping_list_groups", [], |r| r.get(0)
+        ).unwrap_or(0);
+        let lists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM shopping_categories", [], |r| r.get(0)
+        ).unwrap_or(0);
+        let items: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM shopping_items", [], |r| r.get(0)
+        ).unwrap_or(0);
+        let items_pending: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM shopping_items WHERE checked = 0", [], |r| r.get(0)
+        ).unwrap_or(0);
+        Ok(ListStats {
+            groups:        groups        as usize,
+            lists:         lists         as usize,
+            items:         items         as usize,
+            items_pending: items_pending as usize,
+        })
+    })
+    .await
+    .map_err(ListsLibError::Db)
+}
+
+// ---------------------------------------------------------------------------
 // Printing
 // ---------------------------------------------------------------------------
 

@@ -9,5 +9,5 @@ chrono.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-project = { version = "0.1.0", path = "../project" }
-todo = { version = "0.1.0", path = "../todo" }
+project = { path = "../project" }
+todo = { path = "../todo" }
