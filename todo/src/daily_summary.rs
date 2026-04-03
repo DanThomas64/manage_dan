@@ -12,7 +12,7 @@
 //! If no category has items the ticket is still printed so you always get a
 //! morning confirmation that nothing is outstanding.
 
-use chrono::{Duration, Local, TimeZone};
+use chrono::{Duration, Local, NaiveDate, TimeZone};
 use tracing::{info, warn};
 use tokio::time::sleep;
 
@@ -192,31 +192,33 @@ pub async fn print_summary(level: SummaryLevel) {
 // Startup guard
 // ---------------------------------------------------------------------------
 
-const LAST_SUMMARY_DATE_KEY: &str = "last_summary_date";
+const LAST_SUMMARY_DATE_KEY: &'static str = "last_summary_date";
 
-/// Prints the daily summary only if it hasn't been printed yet today.
-/// Records today's date in the DB after a successful print so subsequent
-/// startups within the same day are skipped.
-pub async fn print_summary_if_not_today(level: SummaryLevel) {
-    let today = Local::now().date_naive();
+/// Checks whether the summary has already been printed on `today`.
+/// If not, atomically marks it as printed and returns `true` (caller should print).
+/// If already marked, returns `false` (caller should skip).
+async fn check_and_mark(today: NaiveDate) -> bool {
     let today_str = today.format("%Y-%m-%d").to_string();
-
     match db::setting_get(LAST_SUMMARY_DATE_KEY).await {
         Ok(Some(ref stored)) if stored == &today_str => {
-            info!("Daily summary already printed today ({}), skipping startup print", today_str);
-            return;
+            info!("Daily summary already printed today ({}), skipping", today_str);
+            return false;
         }
         Err(e) => {
             warn!("Daily summary: could not read last_summary_date: {}", e);
-            // fall through and print anyway
         }
         _ => {}
     }
-
-    print_summary(level).await;
-
-    if let Err(e) = db::setting_set(LAST_SUMMARY_DATE_KEY, today_str.clone()).await {
+    if let Err(e) = db::setting_set(LAST_SUMMARY_DATE_KEY, today_str).await {
         warn!("Daily summary: failed to record last_summary_date: {}", e);
+    }
+    true
+}
+
+/// Prints the daily summary only if it hasn't been printed yet today.
+pub async fn print_summary_if_not_today(level: SummaryLevel) {
+    if check_and_mark(Local::now().date_naive()).await {
+        print_summary(level).await;
     }
 }
 
@@ -244,15 +246,84 @@ pub async fn run(hour: u32, level: SummaryLevel) {
 
     loop {
         info!("Daily summary: running");
-        print_summary(level).await;
+        print_summary_if_not_today(level).await;
         crate::recurring::print_due_today_if_not_printed().await;
-
-        let today_str = Local::now().date_naive().format("%Y-%m-%d").to_string();
-        if let Err(e) = db::setting_set(LAST_SUMMARY_DATE_KEY, today_str).await {
-            warn!("Daily summary: failed to record last_summary_date: {}", e);
-        }
 
         let wait = secs_until_next_hour(hour);
         sleep(tokio::time::Duration::from_secs(wait)).await;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use std::sync::Mutex;
+
+    /// Serializes all DB-touching tests so `set_current_dir` doesn't race.
+    static TEST_DB_LOCK: Mutex<()> = Mutex::new(());
+
+    fn setup_test_db() {
+        let dir = std::env::temp_dir().join("manage_dan_summary_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let _ = std::fs::remove_file(dir.join(db::DB_FILE));
+        std::env::set_current_dir(&dir).unwrap();
+        db::init().unwrap();
+    }
+
+    /// Simulates the fixed behaviour: startup fires before summary hour, then the
+    /// scheduler fires at the summary hour — both on the same calendar day.
+    /// The summary should only be printed once.
+    #[tokio::test]
+    async fn same_day_startup_and_scheduler_prints_once() {
+        let _guard = TEST_DB_LOCK.lock().unwrap();
+        setup_test_db();
+
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+
+        // Startup (before summary hour): not yet printed → should print.
+        assert!(check_and_mark(day).await, "startup: should want to print");
+
+        // Scheduler fires at summary hour same day → should skip.
+        assert!(!check_and_mark(day).await, "scheduler: should skip, already printed today");
+
+        // Any further spurious calls same day → still skip.
+        assert!(!check_and_mark(day).await, "extra call: should still skip");
+    }
+
+    /// Simulates three consecutive days: each day triggers exactly one print
+    /// regardless of how many times the guard is called.
+    #[tokio::test]
+    async fn each_new_day_triggers_exactly_one_print() {
+        let _guard = TEST_DB_LOCK.lock().unwrap();
+        setup_test_db();
+
+        for day_offset in 0..3i64 {
+            let day = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()
+                + chrono::Duration::days(day_offset);
+
+            // First call of the day: should print.
+            assert!(
+                check_and_mark(day).await,
+                "day {}: first call should print",
+                day_offset + 1
+            );
+
+            // Subsequent calls same day (startup + scheduler overlap): should skip.
+            assert!(
+                !check_and_mark(day).await,
+                "day {}: second call should skip",
+                day_offset + 1
+            );
+            assert!(
+                !check_and_mark(day).await,
+                "day {}: third call should skip",
+                day_offset + 1
+            );
+        }
     }
 }
