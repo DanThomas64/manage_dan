@@ -1,0 +1,45 @@
+# Reminders configuration.
+#
+# Reminders defined here appear in the daily summary under "REMINDERS TODAY"
+# and in the Monday weekly overview ticket.  They are never stored in Vikunja
+# and never printed as individual tickets (unlike recurring tasks).
+#
+# Schedule syntax is identical to recurring.toml:
+#   "daily"              — every calendar day
+#   "N:daily"            — every N days          e.g. "2:daily"
+#   "weekly:<day>"       — every week on <day>   e.g. "weekly:monday", "weekly:fri"
+#   "N:weekly:<day>"     — every N weeks on day  e.g. "2:weekly:monday"
+#   "monthly:<d>"        — every month on day d  e.g. "monthly:1"
+#   "N:monthly:<d>"      — every N months        e.g. "3:monthly:1"
+#
+# Multi-period schedules are anchored to 1970-01-01 by default.  Add an
+# optional `reference_date = "YYYY-MM-DD"` field to anchor to a specific date.
+
+# ---------------------------------------------------------------------------
+# Examples — uncomment and edit as needed
+# ---------------------------------------------------------------------------
+
+# [[reminders]]
+# title = "Team standup"
+# schedule = "weekly:monday"
+
+# [[reminders]]
+# title = "Submit timesheet"
+# schedule = "weekly:friday"
+
+# [[reminders]]
+# title = "Pay credit card"
+# schedule = "monthly:15"
+
+# [[reminders]]
+# title = "Fortnightly 1-on-1"
+# schedule = "2:weekly:wednesday"
+# reference_date = "2026-04-16"  # anchor to a known occurrence
+
+# [[reminders]]
+# title = "Quarterly goals review"
+# schedule = "3:monthly:1"
+
+# [[reminders]]
+# title = "Take medication"
+# schedule = "daily"
