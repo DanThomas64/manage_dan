@@ -11,6 +11,7 @@ pub mod models;
 pub mod monitor;
 pub mod daily_summary;
 pub mod recurring;
+pub mod reminders;
 
 use chrono::{DateTime, Local, Utc};
 use tracing::{info, warn};
@@ -142,6 +143,11 @@ pub(crate) fn from_vikunja_task(
 
     let labels: Vec<String> = task.labels.iter().map(|l| l.title.clone()).collect();
 
+    let reminders: Vec<chrono::DateTime<Local>> = task.reminder_dates.iter()
+        .filter_map(|r| r.reminder)
+        .map(|dt| dt.with_timezone(&Local))
+        .collect();
+
     TodoItem {
         id: Some(task.id),
         title: task.title,
@@ -157,6 +163,7 @@ pub(crate) fn from_vikunja_task(
         priority: (task.priority.clamp(0, 5)) as u8,
         project_title,
         labels,
+        reminders,
     }
 }
 
@@ -246,6 +253,7 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
     ));
 
     PrintJob::new(origin, title, lines)
+        .with_qr(format!("manage-dan://todo/{}", id))
         .execute(0, 0)
         .await
 }
@@ -483,6 +491,15 @@ pub async fn get_summary() -> TodoLibResult<TodoSummary> {
 }
 
 /// Initializes the Todo subsystem (Vikunja client).
+/// Fetches a single TodoItem by its Vikunja task ID.
+pub async fn get_item(id: i64) -> TodoLibResult<TodoItem> {
+    let client = VikunjaClient::get()?;
+    let task = client.get_task(id).await?;
+    let printed_at = db::printed_at_get(id).await.unwrap_or(None);
+    let project_title = client.get_project(task.project_id).await.ok().map(|p| p.title);
+    Ok(from_vikunja_task(task, printed_at, project_title))
+}
+
 pub fn init(base_url: &str, api_token: &str, project_id: i64) -> TodoLibResult {
     info!("initializing todo");
     vikunja::init(base_url, api_token, project_id)

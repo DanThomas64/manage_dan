@@ -2,7 +2,9 @@ package com.manage_dan.app
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.VibrationEffect
@@ -158,8 +160,41 @@ class MainActivity : AppCompatActivity() {
         if (savedUrl == null) {
             promptForUrl(firstRun = true)
         } else {
-            webView.loadUrl(savedUrl)
+            // Check for an incoming deep-link before loading the default URL.
+            if (!handleDeepLink(intent)) {
+                webView.loadUrl(savedUrl)
+            }
         }
+    }
+
+    // Called when the activity is already running (singleTop) and a new intent arrives.
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    /**
+     * Handles `manage-dan://todo/:id` deep links from QR-code scans.
+     *
+     * Extracts the task ID from the URI path and loads the task detail page
+     * using the stored server URL, so the correct server is always used even
+     * if the IP embedded in the QR code has since changed.
+     *
+     * Returns true if a deep link was handled, false otherwise.
+     */
+    private fun handleDeepLink(intent: Intent): Boolean {
+        val uri: Uri = intent.data ?: return false
+        if (uri.scheme != "manage-dan" || uri.host != "todo") return false
+
+        val taskId = uri.pathSegments.firstOrNull() ?: return false
+        taskId.toLongOrNull() ?: return false  // validate it's a number
+
+        val serverUrl = prefs.getString("server_url", null) ?: run {
+            promptForUrl(firstRun = true)
+            return true
+        }
+        webView.loadUrl("$serverUrl/todo/$taskId")
+        return true
     }
 
     private fun promptForUrl(firstRun: Boolean = false) {

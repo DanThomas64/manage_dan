@@ -173,6 +173,24 @@ pub async fn print_summary(level: SummaryLevel) {
         }
     }
 
+    // --- Reminders today ---
+    let cfg_reminders = crate::reminders::config_due_today();
+    let vjk_reminders = crate::reminders::vikunja_due_today(&items);
+    let total_reminders = cfg_reminders.len() + vjk_reminders.len();
+    lines.push(String::new());
+    lines.push(format!("REMINDERS TODAY ({}):", total_reminders));
+    if total_reminders == 0 {
+        lines.push("  None".to_string());
+    } else {
+        for item in &vjk_reminders {
+            let id_tag = item.id.map(|id| format!(" [#{}]", id)).unwrap_or_default();
+            lines.push(format!("  ~ {}{}", item.title, id_tag));
+        }
+        for task in &cfg_reminders {
+            lines.push(format!("  ~ {}", task.title));
+        }
+    }
+
     lines.push(String::new());
 
     // --- Footer ---
@@ -186,6 +204,8 @@ pub async fn print_summary(level: SummaryLevel) {
     } else {
         info!("Daily summary printed successfully");
     }
+
+    crate::reminders::print_weekly_if_not_printed(&items).await;
 }
 
 // ---------------------------------------------------------------------------

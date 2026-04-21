@@ -40,6 +40,9 @@ pub struct TodoItem {
     /// Label titles attached to this task.
     #[serde(default)]
     pub labels: Vec<String>,
+    /// Reminder datetimes set on this task in Vikunja.
+    #[serde(default)]
+    pub reminders: Vec<DateTime<Local>>,
 }
 
 impl TodoItem {
@@ -60,6 +63,7 @@ impl TodoItem {
             priority: 0,
             project_title: None,
             labels: Vec::new(),
+            reminders: Vec::new(),
         }
     }
 }

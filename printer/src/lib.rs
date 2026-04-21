@@ -152,6 +152,13 @@ impl PrinterManager {
 
         printer.feeds(1)?;
 
+        // QR code at the top so it can be scanned immediately on pickup.
+        if let Some(ref url) = job.qr_url {
+            printer.justify(JustifyMode::CENTER)?;
+            printer.qrcode(url)?;
+            printer.writeln("")?;
+        }
+
         // Header — centred, bold + double-strike for extra weight on the title line.
         printer.justify(JustifyMode::CENTER)?;
         printer.bold(true)?;
@@ -210,6 +217,9 @@ impl PrinterManager {
 
         println!();
         println!("{}", top);
+        if let Some(ref url) = job.qr_url {
+            println!("{}", pad(&format!("URL: {}", url)));
+        }
         println!("{}", pad(&job.title));
         println!("{}", pad(&job.origin));
         // Blank line between the task title and the dividing border.
@@ -250,11 +260,18 @@ pub struct PrintJob {
     pub origin: String,
     pub title: String,
     pub lines: Vec<String>,
+    pub qr_url: Option<String>,
 }
 
 impl PrintJob {
     pub fn new(origin: String, title: String, lines: Vec<String>) -> Self {
-        PrintJob { origin, title, lines }
+        PrintJob { origin, title, lines, qr_url: None }
+    }
+
+    /// Attaches a URL to be printed as a QR code at the top of the ticket.
+    pub fn with_qr(mut self, url: String) -> Self {
+        self.qr_url = Some(url);
+        self
     }
 
     /// Executes the print job via the globally initialized backend.

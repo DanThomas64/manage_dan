@@ -135,6 +135,136 @@ pub async fn delete_todo_handler(id: i64) -> Result<impl Reply, Rejection> {
     }
 }
 
+/// GET /api/v1/todo/:id - Fetch a single todo item as JSON
+pub async fn get_single_todo_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match todo::get_item(id).await {
+        Ok(item) => Ok(warp::reply::json(&item)),
+        Err(e) => {
+            error!("Failed to get todo item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::TodoOperationFailed))
+        }
+    }
+}
+
+/// GET /todo/:id - Task detail page with a "Mark Complete" button
+pub async fn get_todo_page_handler(id: i64) -> Result<impl Reply, Rejection> {
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task #{id}</title>
+<style>
+:root{{--bg:#1a1a2e;--surface:#16213e;--surface2:#0f3460;--accent:#e94560;--text:#eaeaea;--text-dim:#9a9ab0;--success:#4caf50;--radius:12px;}}
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:600px;margin:0 auto;}}
+.card{{background:var(--surface);border-radius:var(--radius);padding:20px;margin-bottom:12px;}}
+.task-id{{color:var(--text-dim);font-size:12px;margin-bottom:8px;}}
+.task-title{{font-size:22px;font-weight:700;margin-bottom:12px;line-height:1.3;}}
+.meta-row{{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;}}
+.badge{{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--surface2);}}
+.badge.project{{background:#1a3a5c;color:#64b5f6;}}
+.badge.due{{background:#2d1f3d;color:#ce93d8;}}
+.badge.label{{background:#1b3a2d;color:#a5d6a7;}}
+.badge.p1{{background:#1b3a1b;color:#4caf50;}}
+.badge.p2,.badge.p3{{background:#3a2e1b;color:#ff9800;}}
+.badge.p4,.badge.p5{{background:#3a1b1b;color:#f44336;}}
+.section-label{{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}}
+.description{{line-height:1.6;white-space:pre-wrap;}}
+.subtask{{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);}}
+.subtask:last-child{{border-bottom:none;}}
+.check{{width:18px;height:18px;border-radius:4px;border:2px solid var(--text-dim);flex-shrink:0;display:flex;align-items:center;justify-content:center;}}
+.check.done{{background:var(--accent);border-color:var(--accent);}}
+.check.done::after{{content:'✓';color:#fff;font-size:11px;}}
+.sub-title.done{{text-decoration:line-through;color:var(--text-dim);}}
+.btn{{width:100%;padding:16px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-size:16px;font-weight:700;cursor:pointer;margin-top:4px;transition:opacity .2s,transform .1s;}}
+.btn:active{{transform:scale(.98);opacity:.9;}}
+.btn:disabled{{background:var(--surface2);color:var(--text-dim);cursor:not-allowed;}}
+.btn.done{{background:#2d5a2d;color:#a5d6a7;}}
+.msg{{text-align:center;padding:12px;border-radius:8px;margin-top:8px;font-weight:600;display:none;}}
+.msg.ok{{background:#1b3a1b;color:var(--success);display:block;}}
+.msg.err{{background:#3a1b1b;color:#f44336;display:block;}}
+#loading{{text-align:center;padding:60px;color:var(--text-dim);}}
+#err{{text-align:center;padding:60px;color:#f44336;display:none;}}
+#app{{display:none;}}
+</style>
+</head>
+<body>
+<div id="loading">Loading task&hellip;</div>
+<div id="err">Task not found</div>
+<div id="app">
+  <div class="card">
+    <div class="task-id" id="tid"></div>
+    <div class="task-title" id="title"></div>
+    <div class="meta-row" id="meta"></div>
+  </div>
+  <div class="card" id="desc-card" style="display:none">
+    <div class="section-label">Description</div>
+    <div class="description" id="desc"></div>
+  </div>
+  <div class="card" id="subs-card" style="display:none">
+    <div class="section-label" id="subs-label"></div>
+    <div id="subs"></div>
+  </div>
+  <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
+  <div class="msg" id="msg"></div>
+</div>
+<script>
+const ID={id};
+const PRI=['UNSET','LOW','MEDIUM','HIGH','URGENT','DO NOW'];
+function fmtDate(d){{if(!d)return null;return new Date(d).toLocaleDateString('en-GB',{{weekday:'short',day:'numeric',month:'short',year:'numeric'}});}}
+async function load(){{
+  try{{
+    const r=await fetch('/api/v1/todo/'+ID);
+    if(!r.ok)throw 0;
+    render(await r.json());
+  }}catch{{
+    document.getElementById('loading').style.display='none';
+    document.getElementById('err').style.display='block';
+  }}
+}}
+function render(t){{
+  document.getElementById('tid').textContent='TODO #'+(t.id||ID);
+  document.getElementById('title').textContent=t.title;
+  const m=document.getElementById('meta');
+  if(t.project_title)m.innerHTML+=`<span class="badge project">&#128193; ${{t.project_title}}</span>`;
+  if(t.due_date)m.innerHTML+=`<span class="badge due">&#128197; ${{fmtDate(t.due_date)}}</span>`;
+  if(t.priority>0)m.innerHTML+=`<span class="badge p${{t.priority}}">&#9873; ${{PRI[Math.min(t.priority,5)]}}</span>`;
+  (t.labels||[]).forEach(l=>m.innerHTML+=`<span class="badge label">${{l}}</span>`);
+  if(t.description){{document.getElementById('desc').textContent=t.description;document.getElementById('desc-card').style.display='block';}}
+  const subs=t.subtasks||[];
+  if(subs.length){{
+    const done=subs.filter(s=>s.done).length;
+    document.getElementById('subs-label').textContent=`Subtasks [${{done}}/${{subs.length}}]`;
+    const c=document.getElementById('subs');
+    subs.forEach(s=>c.innerHTML+=`<div class="subtask"><div class="check ${{s.done?'done':''}}"></div><span class="sub-title ${{s.done?'done':''}}">${{s.title}}</span></div>`);
+    document.getElementById('subs-card').style.display='block';
+  }}
+  const btn=document.getElementById('btn');
+  if(t.completed){{btn.textContent='Already Completed';btn.classList.add('done');btn.disabled=true;}}
+  document.getElementById('loading').style.display='none';
+  document.getElementById('app').style.display='block';
+}}
+async function complete(){{
+  const btn=document.getElementById('btn'),msg=document.getElementById('msg');
+  btn.disabled=true;btn.textContent='Completing\u2026';msg.className='msg';
+  try{{
+    const r=await fetch('/api/v1/todo/'+ID+'/done',{{method:'PATCH',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{done:true}})}});
+    if(!r.ok)throw 0;
+    btn.textContent='\u2713 Completed!';btn.classList.add('done');
+    msg.textContent='Task marked as complete!';msg.className='msg ok';
+  }}catch{{
+    btn.disabled=false;btn.textContent='Mark Complete';
+    msg.textContent='Failed to complete task. Please try again.';msg.className='msg err';
+  }}
+}}
+load();
+</script>
+</body>
+</html>"#, id = id);
+    Ok(warp::reply::html(html))
+}
+
 // --- List Endpoints ---
 
 /// GET /api/v1/lists/groups
@@ -437,7 +567,14 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::delete())
         .and_then(delete_todo_handler);
 
-    summary.or(create).or(read_all).or(update).or(set_done).or(print).or(archive).or(delete)
+    // GET /api/v1/todo/:id — single task JSON
+    let get_one = todo_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(get_single_todo_handler);
+
+    summary.or(read_all).or(get_one).or(create).or(update).or(set_done).or(print).or(archive).or(delete)
 }
 
 /// Defines routes related to system status.
@@ -645,11 +782,20 @@ pub fn routes(
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let api_v1 = warp::path("api").and(warp::path("v1"));
 
-    api_v1.and(
-        status_routes(systems_status, go_nogo_status)
-        .or(todo_routes())
-        .or(log_routes())
-        .or(list_routes())
+    // Task detail page — lives outside /api/v1/ so QR-code URLs are short.
+    let task_page = warp::path("todo")
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(get_todo_page_handler);
+
+    task_page.or(
+        api_v1.and(
+            status_routes(systems_status, go_nogo_status)
+            .or(todo_routes())
+            .or(log_routes())
+            .or(list_routes())
+        )
     )
     .recover(handle_rejection)
 }

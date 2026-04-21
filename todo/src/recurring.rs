@@ -118,23 +118,27 @@ impl RecurringTask {
         None
     }
 
-    /// Returns `true` if this task is due on today's local date.
-    pub fn is_due_today(&self) -> bool {
-        let today = Local::now().date_naive();
+    /// Returns `true` if this task is due on the given date.
+    pub fn is_due_on(&self, date: NaiveDate) -> bool {
         let reference = self.reference_date.unwrap_or_else(EPOCH);
         match self.parsed_schedule() {
             Some(Schedule::Daily(1))       => true,
-            Some(Schedule::Daily(n))       => days_since_ref(today, reference) % n as i64 == 0,
-            Some(Schedule::Weekly(1, day)) => today.weekday() == day,
+            Some(Schedule::Daily(n))       => days_since_ref(date, reference) % n as i64 == 0,
+            Some(Schedule::Weekly(1, day)) => date.weekday() == day,
             Some(Schedule::Weekly(n, day)) => {
-                today.weekday() == day && weeks_since_ref(today, day, reference) % n as i64 == 0
+                date.weekday() == day && weeks_since_ref(date, day, reference) % n as i64 == 0
             }
-            Some(Schedule::Monthly(1, d))  => today.day() == d,
+            Some(Schedule::Monthly(1, d))  => date.day() == d,
             Some(Schedule::Monthly(n, d))  => {
-                today.day() == d && months_since_ref(today, reference) % n as i64 == 0
+                date.day() == d && months_since_ref(date, reference) % n as i64 == 0
             }
             None => false,
         }
+    }
+
+    /// Returns `true` if this task is due on today's local date.
+    pub fn is_due_today(&self) -> bool {
+        self.is_due_on(Local::now().date_naive())
     }
 
     /// Human-readable schedule description, e.g. "Every 2 Mondays".

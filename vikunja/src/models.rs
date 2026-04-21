@@ -72,6 +72,15 @@ pub struct VikunjaLabel {
     pub hex_color: Option<String>,
 }
 
+/// A single reminder attached to a Vikunja task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VikunjaReminder {
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default, with = "vikunja_date")]
+    pub reminder: Option<DateTime<Utc>>,
+}
+
 /// A Vikunja task as returned by the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VikunjaTask {
@@ -103,6 +112,10 @@ pub struct VikunjaTask {
     /// The project this task belongs to.
     #[serde(default)]
     pub project_id: i64,
+    /// Reminder datetimes set on this task.
+    /// Go serialises a nil slice as JSON `null`; `null_default` turns that into `[]`.
+    #[serde(default, deserialize_with = "null_default")]
+    pub reminder_dates: Vec<VikunjaReminder>,
 }
 
 /// Request body for creating or updating a task.
