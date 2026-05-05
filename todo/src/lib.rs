@@ -253,7 +253,7 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
     ));
 
     PrintJob::new(origin, title, lines)
-        .with_qr(format!("manage_dan://todo/{}", id))
+        .with_qr(format!("manage-dan://todo/{}", id))
         .execute(0, 0)
         .await
 }
