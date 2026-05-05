@@ -30,6 +30,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private val prefs by lazy { getSharedPreferences("manage_dan_prefs", Context.MODE_PRIVATE) }
 
+    // URL to load on the next onResume — set by deep-link intents so that
+    // webView.loadUrl() is always called once the WebView is fully active.
+    private var pendingUrl: String? = null
+
     /** Exposed to JavaScript as `window.AndroidVibrator`. */
     private inner class VibrationBridge {
         @JavascriptInterface
@@ -160,41 +164,43 @@ class MainActivity : AppCompatActivity() {
         if (savedUrl == null) {
             promptForUrl(firstRun = true)
         } else {
-            // Check for an incoming deep-link before loading the default URL.
-            if (!handleDeepLink(intent)) {
-                webView.loadUrl(savedUrl)
-            }
+            // Queue whichever URL should open — deep link wins over default.
+            pendingUrl = deepLinkUrl(intent) ?: savedUrl
+        }
+    }
+
+    // webView.loadUrl() must be called once the WebView is fully active.
+    // onResume is the correct place: it runs after onNewIntent and after the
+    // activity window is visible, so the load always takes effect.
+    override fun onResume() {
+        super.onResume()
+        pendingUrl?.let {
+            webView.loadUrl(it)
+            pendingUrl = null
         }
     }
 
     // Called when the activity is already running (singleTop) and a new intent arrives.
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handleDeepLink(intent)
+        // Store the URL; onResume fires next and loads it.
+        deepLinkUrl(intent)?.let { pendingUrl = it }
     }
 
     /**
-     * Handles `manage-dan://todo/:id` deep links from QR-code scans.
-     *
-     * Extracts the task ID from the URI path and loads the task detail page
-     * using the stored server URL, so the correct server is always used even
-     * if the IP embedded in the QR code has since changed.
-     *
-     * Returns true if a deep link was handled, false otherwise.
+     * Extracts a `manage-dan://todo/:id` deep-link URL from the intent and
+     * maps it to the corresponding task detail URL on the configured server.
+     * Returns null if the intent is not a recognised deep link.
      */
-    private fun handleDeepLink(intent: Intent): Boolean {
-        val uri: Uri = intent.data ?: return false
-        if (uri.scheme != "manage-dan" || uri.host != "todo") return false
+    private fun deepLinkUrl(intent: Intent): String? {
+        val uri: Uri = intent.data ?: return null
+        if (uri.scheme != "manage-dan" || uri.host != "todo") return null
 
-        val taskId = uri.pathSegments.firstOrNull() ?: return false
-        taskId.toLongOrNull() ?: return false  // validate it's a number
+        val taskId = uri.pathSegments.firstOrNull() ?: return null
+        taskId.toLongOrNull() ?: return null  // validate it's a number
 
-        val serverUrl = prefs.getString("server_url", null) ?: run {
-            promptForUrl(firstRun = true)
-            return true
-        }
-        webView.loadUrl("$serverUrl/todo/$taskId")
-        return true
+        val serverUrl = prefs.getString("server_url", null) ?: return null
+        return "$serverUrl/todo/$taskId"
     }
 
     private fun promptForUrl(firstRun: Boolean = false) {
@@ -217,9 +223,8 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(getString(R.string.dialog_connect)) { _, _ ->
                 val url = input.text.toString().trim().trimEnd('/')
                 prefs.edit().putString("server_url", url).apply()
-                if (!handleDeepLink(intent)) {
-                    webView.loadUrl(url)
-                }
+                // Load deep-link target if one was pending, otherwise the main page.
+                webView.loadUrl(deepLinkUrl(intent) ?: url)
             }
             .apply { if (!firstRun) setNegativeButton("Cancel", null) }
             .setCancelable(!firstRun)
