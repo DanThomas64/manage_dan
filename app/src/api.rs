@@ -187,6 +187,11 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
 #loading{{text-align:center;padding:60px;color:var(--text-dim);}}
 #err{{text-align:center;padding:60px;color:#f44336;display:none;}}
 #app{{display:none;}}
+.info-row{{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:12px;color:var(--text-dim);}}
+.info-item{{display:flex;align-items:center;gap:4px;}}
+.reminder-list{{display:flex;flex-direction:column;gap:6px;}}
+.reminder-item{{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;background:var(--surface2);border-radius:6px;}}
+.completed-banner{{background:#1b3a1b;border-radius:8px;padding:12px 16px;margin-bottom:12px;color:#a5d6a7;font-weight:600;font-size:13px;}}
 </style>
 </head>
 <body>
@@ -197,6 +202,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
     <div class="task-id" id="tid"></div>
     <div class="task-title" id="title"></div>
     <div class="meta-row" id="meta"></div>
+    <div class="info-row" id="info"></div>
   </div>
   <div class="card" id="desc-card" style="display:none">
     <div class="section-label">Description</div>
@@ -206,6 +212,11 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
     <div class="section-label" id="subs-label"></div>
     <div id="subs"></div>
   </div>
+  <div class="card" id="rem-card" style="display:none">
+    <div class="section-label">Reminders</div>
+    <div class="reminder-list" id="rems"></div>
+  </div>
+  <div class="completed-banner" id="comp-banner" style="display:none"></div>
   <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
   <div class="msg" id="msg"></div>
   <button class="btn" id="close-btn" onclick="history.back()" style="margin-top:8px;background:var(--surface2);color:var(--text-dim);">Close</button>
@@ -240,6 +251,24 @@ function render(t){{
     const c=document.getElementById('subs');
     subs.forEach(s=>c.innerHTML+=`<div class="subtask"><div class="check ${{s.done?'done':''}}"></div><span class="sub-title ${{s.done?'done':''}}">${{s.title}}</span></div>`);
     document.getElementById('subs-card').style.display='block';
+  }}
+  const info=document.getElementById('info');
+  if(t.created_at)info.innerHTML+=`<span class="info-item">&#128197; Created: ${{fmtDate(t.created_at)}}</span>`;
+  if(t.printed_at)info.innerHTML+=`<span class="info-item">&#128438; Printed: ${{fmtDate(t.printed_at)}}</span>`;
+  const rems=t.reminders||[];
+  if(rems.length){{
+    const rc=document.getElementById('rems');
+    rems.sort((a,b)=>new Date(a)-new Date(b)).forEach(r=>{{
+      const d=new Date(r);
+      const past=d<new Date();
+      rc.innerHTML+=`<div class="reminder-item">${{past?'&#9201;':'&#9200;'}} ${{d.toLocaleDateString('en-GB',{{weekday:'short',day:'numeric',month:'short',year:'numeric'}})}} ${{d.toLocaleTimeString('en-GB',{{hour:'2-digit',minute:'2-digit'}})}}</div>`;
+    }});
+    document.getElementById('rem-card').style.display='block';
+  }}
+  if(t.completed&&t.completed_at){{
+    const cb=document.getElementById('comp-banner');
+    cb.textContent='✓ Completed on '+fmtDate(t.completed_at);
+    cb.style.display='block';
   }}
   const btn=document.getElementById('btn');
   if(t.completed){{btn.textContent='Already Completed';btn.classList.add('done');btn.disabled=true;}}
