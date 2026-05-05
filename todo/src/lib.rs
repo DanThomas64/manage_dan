@@ -203,11 +203,18 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
         .unwrap_or_else(|| "None".to_string());
     let info_row = format!("Due: {}  |  Pri: {} {}", due_str, bar, pri_label);
 
-    let mut lines = vec![info_row];
+    let mut lines = Vec::new();
 
+    // Project — centred at the top of the body so it stands out on pickup.
     if let Some(ref project) = item.project_title {
-        lines.push(format!("Project: {}", project));
+        let label = format!("[ {} ]", project.to_uppercase());
+        let padding = width.saturating_sub(label.len()) / 2;
+        lines.push(format!("{}{}", " ".repeat(padding), label));
+        lines.push(sep.clone());
     }
+
+    lines.push(info_row);
+
     if !item.labels.is_empty() {
         lines.push(format!("Labels: {}", item.labels.join(", ")));
     }
