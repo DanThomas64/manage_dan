@@ -217,7 +217,9 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(getString(R.string.dialog_connect)) { _, _ ->
                 val url = input.text.toString().trim().trimEnd('/')
                 prefs.edit().putString("server_url", url).apply()
-                webView.loadUrl(url)
+                if (!handleDeepLink(intent)) {
+                    webView.loadUrl(url)
+                }
             }
             .apply { if (!firstRun) setNegativeButton("Cancel", null) }
             .setCancelable(!firstRun)
