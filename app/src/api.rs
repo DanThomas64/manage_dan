@@ -208,6 +208,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
   </div>
   <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
   <div class="msg" id="msg"></div>
+  <button class="btn" id="close-btn" onclick="history.back()" style="margin-top:8px;background:var(--surface2);color:var(--text-dim);">Close</button>
 </div>
 <script>
 const ID={id};
