@@ -419,6 +419,20 @@ pub async fn delete_item_handler(id: i64) -> Result<impl Reply, Rejection> {
     }
 }
 
+/// PATCH /api/v1/lists/categories/:id/name
+#[derive(Deserialize)]
+pub struct RenameCategoryBody { pub name: String }
+
+pub async fn rename_category_handler(id: i64, body: RenameCategoryBody) -> Result<impl Reply, Rejection> {
+    match lists::rename_category(id, body.name).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to rename category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
 /// PATCH /api/v1/lists/categories/:id/checkboxes
 #[derive(Deserialize)]
 pub struct SetCheckboxesBody { pub has_checkboxes: bool }
@@ -750,6 +764,16 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::delete())
         .and_then(delete_item_handler);
 
+    // PATCH /api/v1/lists/categories/:id/name
+    let rename_cat = lists
+        .and(categories)
+        .and(warp::path::param::<i64>())
+        .and(warp::path("name"))
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(|id, body| rename_category_handler(id, body));
+
     // PATCH /api/v1/lists/categories/:id/checkboxes
     let set_checkboxes = lists
         .and(categories)
@@ -836,6 +860,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .or(add_item)
         .or(check_item)
         .or(delete_item)
+        .or(rename_cat)
         .or(set_checkboxes)
         .or(reorder)
         .or(clear)

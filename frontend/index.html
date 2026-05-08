@@ -319,6 +319,34 @@
 
     .panel-actions { display: flex; gap: 8px; }
 
+    /* ── Category hamburger menu ── */
+    .cat-menu-wrap { position: relative; }
+    .cat-menu-btn  { background: none; border: none; cursor: pointer; font-size: 1.1rem;
+                     padding: 2px 6px; color: var(--text-muted); line-height: 1; }
+    .cat-menu-btn:hover { color: var(--text); }
+    .cat-menu-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      min-width: 160px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+      z-index: 200;
+    }
+    .cat-menu-dropdown.open { display: block; }
+    .cat-menu-item {
+      display: flex; align-items: center; gap: 8px;
+      width: 100%; padding: 10px 14px;
+      background: none; border: none; cursor: pointer;
+      color: var(--text); font-size: 0.9rem; text-align: left;
+      white-space: nowrap;
+    }
+    .cat-menu-item:hover { background: var(--surface3, #333); }
+    .cat-menu-item .menu-check { font-size: 0.75rem; color: var(--accent); margin-left: auto; }
+
     .item-list {
       flex: 1;
       min-height: 0; /* allow flex shrink so the add-bar stays pinned at the bottom */
@@ -919,10 +947,19 @@
     <!-- Panel: items in the selected category -->
     <main class="panel">
       <div class="panel-header">
-        <div class="panel-title" id="panel-title">Select a list</div>
+        <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+          <div class="cat-menu-wrap" id="cat-menu-wrap" style="display:none;">
+            <button class="cat-menu-btn" onclick="toggleCategoryMenu(event)" title="List options">&#9776;</button>
+            <div class="cat-menu-dropdown" id="cat-menu-dropdown">
+              <button class="cat-menu-item" onclick="renameCategory()">&#9998; Rename</button>
+              <button class="cat-menu-item" id="menu-item-checkboxes" onclick="toggleCheckboxes()">
+                &#9745; Checkboxes <span class="menu-check" id="menu-checkboxes-check"></span>
+              </button>
+            </div>
+          </div>
+          <div class="panel-title" id="panel-title">Select a list</div>
+        </div>
         <div class="panel-actions" id="panel-actions" style="display:none;">
-          <button class="btn-ghost btn-sm" id="btn-checkboxes"
-                  onclick="toggleCheckboxes()" title="Toggle checkboxes">&#9745;</button>
           <button class="btn-ghost btn-sm" id="btn-reorder"
                   onclick="toggleReorderMode()" title="Reorder items">&#8597;</button>
         </div>
@@ -1065,6 +1102,7 @@
     document.getElementById('btn-clear').disabled = true;
     document.getElementById('quick-add-section').style.display = 'none';
     document.getElementById('panel-actions').style.display = 'none';
+    document.getElementById('cat-menu-wrap').style.display = 'none';
     commonItems = [];
     editingCommon = false;
     if (isMobile()) {
@@ -1169,6 +1207,7 @@
     document.getElementById('add-item-form').style.display = 'flex';
     document.getElementById('btn-print').disabled = false;
     document.getElementById('panel-actions').style.display = 'flex';
+    document.getElementById('cat-menu-wrap').style.display = 'block';
     updatePanelButtons();
     showPanel(cat.name);
     await loadItems(id);
@@ -1216,6 +1255,7 @@
         document.getElementById('add-item-form').style.display = 'none';
         document.getElementById('quick-add-section').style.display = 'none';
         document.getElementById('panel-actions').style.display = 'none';
+        document.getElementById('cat-menu-wrap').style.display = 'none';
         document.getElementById('btn-print').disabled = true;
         document.getElementById('btn-clear').disabled = true;
         goBack();
@@ -1521,14 +1561,12 @@
   // ── Panel button state ─────────────────────────────────────────────────────
 
   function updatePanelButtons() {
-    const btnCheckboxes = document.getElementById('btn-checkboxes');
-    const btnReorder    = document.getElementById('btn-reorder');
-    const btnClear      = document.getElementById('btn-clear');
+    const btnReorder = document.getElementById('btn-reorder');
+    const btnClear   = document.getElementById('btn-clear');
+    const menuCheck  = document.getElementById('menu-checkboxes-check');
 
-    if (btnCheckboxes) {
-      btnCheckboxes.textContent = currentCategoryHasCheckboxes ? '☑' : '☐';
-      btnCheckboxes.classList.toggle('btn-toggle-active', !currentCategoryHasCheckboxes);
-      btnCheckboxes.title = currentCategoryHasCheckboxes ? 'Disable checkboxes' : 'Enable checkboxes';
+    if (menuCheck) {
+      menuCheck.textContent = currentCategoryHasCheckboxes ? '✓' : '';
     }
     if (btnReorder) {
       btnReorder.classList.toggle('btn-toggle-active', reorderMode);
@@ -1539,7 +1577,43 @@
     }
   }
 
+  function toggleCategoryMenu(e) {
+    e.stopPropagation();
+    document.getElementById('cat-menu-dropdown').classList.toggle('open');
+  }
+
+  function closeCategoryMenu() {
+    const d = document.getElementById('cat-menu-dropdown');
+    if (d) d.classList.remove('open');
+  }
+
+  document.addEventListener('click', closeCategoryMenu);
+
+  async function renameCategory() {
+    closeCategoryMenu();
+    if (!selectedCategoryId) return;
+    const cat = categories.find(c => c.id === selectedCategoryId);
+    if (!cat) return;
+    const newName = prompt('Rename list:', cat.name);
+    if (!newName || !newName.trim() || newName.trim() === cat.name) return;
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/name`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim() }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      cat.name = newName.trim();
+      document.getElementById('panel-title').innerHTML =
+        `${esc(cat.name)} <small id="item-count"></small>`;
+      renderCategories();
+    } catch (e) {
+      toast('Failed to rename: ' + e.message, true);
+    }
+  }
+
   async function toggleCheckboxes() {
+    closeCategoryMenu();
     if (!selectedCategoryId) return;
     const newVal = !currentCategoryHasCheckboxes;
     try {

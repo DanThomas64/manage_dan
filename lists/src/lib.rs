@@ -389,6 +389,19 @@ pub async fn delete_item(id: i64) -> ListsLibResult {
     .map_err(|e| ListsLibError::Db(e))
 }
 
+/// Renames a category.
+pub async fn rename_category(category_id: i64, name: String) -> ListsLibResult {
+    db::execute_async(move |conn| {
+        conn.execute(
+            "UPDATE shopping_categories SET name = ?1 WHERE id = ?2",
+            params![name, category_id],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ListsLibError::Db(e))
+}
+
 /// Sets whether a category uses checkboxes.
 pub async fn set_checkboxes(category_id: i64, has_checkboxes: bool) -> ListsLibResult {
     let val: i64 = if has_checkboxes { 1 } else { 0 };
