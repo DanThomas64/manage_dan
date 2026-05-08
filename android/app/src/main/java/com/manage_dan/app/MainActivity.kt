@@ -158,7 +158,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.webChromeClient = WebChromeClient()
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onJsPrompt(
+                view: WebView,
+                url: String?,
+                message: String?,
+                defaultValue: String?,
+                result: android.webkit.JsPromptResult
+            ): Boolean {
+                val input = EditText(this@MainActivity).apply {
+                    setText(defaultValue ?: "")
+                    setSelection(text.length)
+                    setTextColor(Color.WHITE)
+                    setPadding(48, 32, 48, 32)
+                }
+                val container = FrameLayout(this@MainActivity).apply { addView(input) }
+                AlertDialog.Builder(this@MainActivity)
+                    .setMessage(message)
+                    .setView(container)
+                    .setPositiveButton("OK") { _, _ -> result.confirm(input.text.toString()) }
+                    .setNegativeButton("Cancel") { _, _ -> result.cancel() }
+                    .setOnCancelListener { result.cancel() }
+                    .show()
+                return true
+            }
+        }
 
         val savedUrl = prefs.getString("server_url", null)
         if (savedUrl == null) {
