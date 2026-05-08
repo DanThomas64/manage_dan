@@ -125,7 +125,11 @@ pub async fn print_summary(level: SummaryLevel) {
             let due_str = item.due_date
                 .map(|d| d.format("%Y-%m-%d").to_string())
                 .unwrap_or_default();
-            lines.push(format!("  [{}] {} (due {})", item.priority, item.title, due_str));
+            let proj = item.project_title.as_deref()
+                .filter(|s| !s.is_empty())
+                .map(|p| format!(" [{}]", p))
+                .unwrap_or_default();
+            lines.push(format!("  [{}] {}{} (due {})", item.priority, item.title, proj, due_str));
         }
     }
 
@@ -140,7 +144,11 @@ pub async fn print_summary(level: SummaryLevel) {
                 let due_str = item.due_date
                     .map(|d| format!("due {}", d.format("%Y-%m-%d")))
                     .unwrap_or_else(|| "no due date".to_string());
-                lines.push(format!("  [{}] {} ({})", item.priority, item.title, due_str));
+                let proj = item.project_title.as_deref()
+                    .filter(|s| !s.is_empty())
+                    .map(|p| format!(" [{}]", p))
+                    .unwrap_or_default();
+                lines.push(format!("  [{}] {}{} ({})", item.priority, item.title, proj, due_str));
             }
         }
     }
@@ -156,7 +164,11 @@ pub async fn print_summary(level: SummaryLevel) {
                 let due_str = item.due_date
                     .map(|d| d.format("%a %d %b").to_string())
                     .unwrap_or_default();
-                lines.push(format!("  [{}] {} ({})", item.priority, item.title, due_str));
+                let proj = item.project_title.as_deref()
+                    .filter(|s| !s.is_empty())
+                    .map(|p| format!(" [{}]", p))
+                    .unwrap_or_default();
+                lines.push(format!("  [{}] {}{} ({})", item.priority, item.title, proj, due_str));
             }
         }
     }
@@ -184,7 +196,11 @@ pub async fn print_summary(level: SummaryLevel) {
     } else {
         for item in &vjk_reminders {
             let id_tag = item.id.map(|id| format!(" [#{}]", id)).unwrap_or_default();
-            lines.push(format!("  ~ {}{}", item.title, id_tag));
+            let proj = item.project_title.as_deref()
+                .filter(|s| !s.is_empty())
+                .map(|p| format!(" [{}]", p))
+                .unwrap_or_default();
+            lines.push(format!("  ~ {}{}{}", item.title, id_tag, proj));
         }
         for task in &cfg_reminders {
             lines.push(format!("  ~ {}", task.title));

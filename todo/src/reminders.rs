@@ -196,7 +196,11 @@ pub async fn print_weekly_summary(items: &[TodoItem]) {
             lines.push(day.format("%a %d %b").to_string().to_uppercase());
             for item in &vjk_day {
                 let id_tag = item.id.map(|id| format!(" [#{}]", id)).unwrap_or_default();
-                lines.push(format!("  ~ {}{}", item.title, id_tag));
+                let proj = item.project_title.as_deref()
+                    .filter(|s| !s.is_empty())
+                    .map(|p| format!(" [{}]", p))
+                    .unwrap_or_default();
+                lines.push(format!("  ~ {}{}{}", item.title, id_tag, proj));
             }
             for task in &cfg_day {
                 lines.push(format!("  ~ {}", task.title));

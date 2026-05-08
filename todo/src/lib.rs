@@ -329,11 +329,13 @@ pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
     let (tasks, projects) = tokio::join!(client.list_all_tasks(), client.list_projects());
     let tasks = tasks?;
 
-    let project_map: std::collections::HashMap<i64, String> = projects
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| (p.id, p.title))
-        .collect();
+    let project_map: std::collections::HashMap<i64, String> = match projects {
+        Ok(list) => list.into_iter().map(|p| (p.id, p.title)).collect(),
+        Err(e) => {
+            warn!("read_items: list_projects failed, project titles will be missing: {}", e);
+            std::collections::HashMap::new()
+        }
+    };
 
     // Collect IDs of tasks that appear as subtasks of other tasks so we can
     // exclude them from the top-level list.
