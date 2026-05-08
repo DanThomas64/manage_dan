@@ -10,6 +10,7 @@ pub mod todo_prelude;
 pub mod models;
 pub mod monitor;
 pub mod daily_summary;
+pub mod completed_summary;
 pub mod recurring;
 pub mod reminders;
 

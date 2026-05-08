@@ -30,6 +30,12 @@ summary_hour = 8
 #          "full" (overdue + high priority + upcoming 7 days)
 summary_level = "full"
 
+# Whether to print an end-of-day summary of tasks completed during the day.
+completed_summary_enabled = true
+
+# Local hour (0-23) at which the completed-task summary is printed.
+completed_summary_hour = 20
+
 [logging]
 # Path to the log file (relative to the working directory, or absolute).
 # Native default: data/logs/app.log  (relative to project root)

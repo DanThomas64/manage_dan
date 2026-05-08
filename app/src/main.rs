@@ -143,6 +143,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let summary_hour = AppConfig::get().summary_hour;
     tokio::spawn(todo::daily_summary::run(summary_hour, summary_level));
 
+    if AppConfig::get().completed_summary_enabled {
+        let completed_hour = AppConfig::get().completed_summary_hour;
+        tokio::spawn(todo::completed_summary::run(completed_hour));
+    }
+
     // 6. Start the HTTP API server
     info!("Application initialized. Starting API server.");
     

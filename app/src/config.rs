@@ -54,6 +54,10 @@ pub struct AppConfig {
     pub summary_hour: u32,
     /// Detail level for the daily summary: "minimal", "standard", or "full".
     pub summary_level: String,
+    /// Local hour (0–23) at which the completed-task summary is printed.
+    pub completed_summary_hour: u32,
+    /// Whether the end-of-day completed-task summary is enabled.
+    pub completed_summary_enabled: bool,
     /// File logging settings.
     pub logging: LoggingConfig,
 }
@@ -85,6 +89,8 @@ impl AppConfig {
             .set_default("monitor_interval_secs", 30u64)?
             .set_default("summary_hour", 8u64)?
             .set_default("summary_level", "full")?
+            .set_default("completed_summary_hour", 20u64)?
+            .set_default("completed_summary_enabled", true)?
             .set_default("logging.file", "data/logs/app.log")?
 
             // 2. Load default config file
