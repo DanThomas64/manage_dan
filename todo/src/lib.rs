@@ -315,7 +315,7 @@ pub async fn create_item(item: TodoItem) -> TodoLibResult<TodoItem> {
 
     // 3. Fetch the full task with subtasks populated
     let full = client.get_task(parent.id).await?;
-    let project_title = client.get_project(full.project_id).await.ok().map(|p| p.title);
+    let project_title = client.get_project(full.project_id).await.ok().map(|p| p.identifier);
     let mut result = from_vikunja_task(full, None, project_title);
 
     // 4. Attempt automatic print
@@ -331,7 +331,7 @@ pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
     let tasks = tasks?;
 
     let project_map: std::collections::HashMap<i64, String> = match projects {
-        Ok(list) => list.into_iter().map(|p| (p.id, p.title)).collect(),
+        Ok(list) => list.into_iter().map(|p| (p.id, p.identifier)).collect(),
         Err(e) => {
             warn!("read_items: list_projects failed, project titles will be missing: {}", e);
             std::collections::HashMap::new()
@@ -423,7 +423,7 @@ pub async fn print_item(id: i64) -> TodoLibResult {
     let client = VikunjaClient::get()?;
     let task = client.get_task(id).await?;
     let printed_at = db::printed_at_get(id).await.unwrap_or(None);
-    let project_title = client.get_project(task.project_id).await.ok().map(|p| p.title);
+    let project_title = client.get_project(task.project_id).await.ok().map(|p| p.identifier);
     let item = from_vikunja_task(task, printed_at, project_title);
 
     match print_ticket(&item).await {
@@ -506,7 +506,7 @@ pub async fn get_item(id: i64) -> TodoLibResult<TodoItem> {
     let client = VikunjaClient::get()?;
     let task = client.get_task(id).await?;
     let printed_at = db::printed_at_get(id).await.unwrap_or(None);
-    let project_title = client.get_project(task.project_id).await.ok().map(|p| p.title);
+    let project_title = client.get_project(task.project_id).await.ok().map(|p| p.identifier);
     Ok(from_vikunja_task(task, printed_at, project_title))
 }
 

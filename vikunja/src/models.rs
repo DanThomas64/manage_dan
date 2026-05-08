@@ -62,6 +62,8 @@ pub struct VikunjaProject {
     pub id: i64,
     #[serde(default, deserialize_with = "null_default")]
     pub title: String,
+    #[serde(default, deserialize_with = "null_default")]
+    pub identifier: String,
 }
 
 /// A label attached to a Vikunja task.
