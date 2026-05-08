@@ -1452,9 +1452,11 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
 
         let due_date_str = item.due_date.map(|dt| dt.format("Due: %m-%d").to_string()).unwrap_or_default();
         
+        let project_str = item.project_title.as_deref().unwrap_or("");
         let metadata = format!(
-            " ({}, {} | Created: {})",
-            priority_str, due_date_str, created_str
+            " ({}, {} | Created: {}{})",
+            priority_str, due_date_str, created_str,
+            if project_str.is_empty() { String::new() } else { format!(" | {}", project_str) }
         );
         
         let content = format!("{:<3} {:<50} {}", status, item.title, metadata);
@@ -1500,8 +1502,9 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
                 Line::from(format!("Title: {}", item.title)).bold(),
                 Line::from(format!("Status: {}", if item.completed { "COMPLETED" } else { "PENDING" })),
                 Line::from(format!("Priority: {}", item.priority)).fg(if item.priority >= 8 { Color::Red } else { Color::White }),
+                Line::from(format!("Project: {}", item.project_title.as_deref().unwrap_or("—"))),
             ];
-            
+
             if let Some(due_date) = item.due_date {
                 text_lines.push(Line::from(format!("Due Date: {}", due_date.format("%Y-%m-%d %H:%M:%S"))).fg(Color::Yellow));
             } else {

@@ -86,6 +86,7 @@ pub struct TodoItem {
     pub archived: bool,
     pub due_date: Option<DateTime<Local>>,
     pub priority: u8,
+    pub project_title: Option<String>,
 }
 
 impl TodoItem {
@@ -104,6 +105,7 @@ impl TodoItem {
             archived: false,
             due_date: None,
             priority: 0,
+            project_title: None,
         }
     }
 }
