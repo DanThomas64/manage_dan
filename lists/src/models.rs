@@ -16,6 +16,7 @@ pub struct ListCategory {
     pub id: i64,
     pub group_id: i64,
     pub name: String,
+    pub has_checkboxes: bool,
 }
 
 /// A saved common item template for a list (used for quick re-add).
@@ -39,4 +40,6 @@ pub struct ListItem {
     /// Whether the item has been ticked off.
     pub checked: bool,
     pub created_at: DateTime<Local>,
+    /// Display position within the category (lower = earlier).
+    pub position: i64,
 }

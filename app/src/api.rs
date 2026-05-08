@@ -419,6 +419,34 @@ pub async fn delete_item_handler(id: i64) -> Result<impl Reply, Rejection> {
     }
 }
 
+/// PATCH /api/v1/lists/categories/:id/checkboxes
+#[derive(Deserialize)]
+pub struct SetCheckboxesBody { pub has_checkboxes: bool }
+
+pub async fn set_checkboxes_handler(id: i64, body: SetCheckboxesBody) -> Result<impl Reply, Rejection> {
+    match lists::set_checkboxes(id, body.has_checkboxes).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to set checkboxes for category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/lists/categories/:id/reorder
+#[derive(Deserialize)]
+pub struct ReorderItemsBody { pub ids: Vec<i64> }
+
+pub async fn reorder_items_handler(id: i64, body: ReorderItemsBody) -> Result<impl Reply, Rejection> {
+    match lists::reorder_items(id, body.ids).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to reorder items for category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
 /// POST /api/v1/lists/categories/:id/clear
 pub async fn clear_checked_handler(id: i64) -> Result<impl Reply, Rejection> {
     match lists::clear_checked(id).await {
@@ -722,6 +750,26 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::delete())
         .and_then(delete_item_handler);
 
+    // PATCH /api/v1/lists/categories/:id/checkboxes
+    let set_checkboxes = lists
+        .and(categories)
+        .and(warp::path::param::<i64>())
+        .and(warp::path("checkboxes"))
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(|id, body| set_checkboxes_handler(id, body));
+
+    // POST /api/v1/lists/categories/:id/reorder
+    let reorder = lists
+        .and(categories)
+        .and(warp::path::param::<i64>())
+        .and(warp::path("reorder"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(|id, body| reorder_items_handler(id, body));
+
     // POST /api/v1/lists/categories/:id/clear
     let clear = lists
         .and(categories)
@@ -788,6 +836,8 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .or(add_item)
         .or(check_item)
         .or(delete_item)
+        .or(set_checkboxes)
+        .or(reorder)
         .or(clear)
         .or(print)
         .or(list_common)

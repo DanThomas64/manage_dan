@@ -38,9 +38,10 @@ pub fn init() -> ListsLibResult {
         );
 
         CREATE TABLE IF NOT EXISTS shopping_categories (
-            id       INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER REFERENCES shopping_list_groups(id) ON DELETE CASCADE,
-            name     TEXT NOT NULL
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id       INTEGER REFERENCES shopping_list_groups(id) ON DELETE CASCADE,
+            name           TEXT NOT NULL,
+            has_checkboxes INTEGER NOT NULL DEFAULT 1
         );
 
         CREATE TABLE IF NOT EXISTS shopping_items (
@@ -50,7 +51,8 @@ pub fn init() -> ListsLibResult {
             name        TEXT NOT NULL,
             quantity    TEXT,
             checked     INTEGER NOT NULL DEFAULT 0,
-            created_at  TEXT NOT NULL
+            created_at  TEXT NOT NULL,
+            position    INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS list_common_items (
@@ -89,6 +91,43 @@ pub fn init() -> ListsLibResult {
              REFERENCES shopping_list_groups(id) ON DELETE CASCADE",
         )
         .map_err(|e| DbLibError::Sqlite(e))?;
+    }
+
+    // ── Migration: add has_checkboxes to shopping_categories ─────────────
+    let has_checkboxes_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('shopping_categories') WHERE name = 'has_checkboxes'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        != 0;
+
+    if !has_checkboxes_exists {
+        conn.execute_batch(
+            "ALTER TABLE shopping_categories ADD COLUMN has_checkboxes INTEGER NOT NULL DEFAULT 1",
+        )
+        .map_err(|e| DbLibError::Sqlite(e))?;
+    }
+
+    // ── Migration: add position to shopping_items ─────────────────────────
+    let position_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('shopping_items') WHERE name = 'position'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        != 0;
+
+    if !position_exists {
+        conn.execute_batch(
+            "ALTER TABLE shopping_items ADD COLUMN position INTEGER NOT NULL DEFAULT 0",
+        )
+        .map_err(|e| DbLibError::Sqlite(e))?;
+        // Seed positions for existing items using their id (preserves creation order).
+        conn.execute_batch("UPDATE shopping_items SET position = id WHERE position = 0")
+            .map_err(|e| DbLibError::Sqlite(e))?;
     }
 
     // ── Migration: assign orphaned categories to "Shopping Lists" ──────────
@@ -215,16 +254,18 @@ pub async fn delete_group(id: i64) -> ListsLibResult {
 pub async fn list_categories(group_id: i64) -> ListsLibResult<Vec<ListCategory>> {
     db::execute_async(move |conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, group_id, name FROM shopping_categories
+            "SELECT id, group_id, name, has_checkboxes FROM shopping_categories
              WHERE group_id = ?1
              ORDER BY name",
         )?;
         let rows: rusqlite::Result<Vec<ListCategory>> = stmt
             .query_map(params![group_id], |row| {
+                let has_checkboxes: i64 = row.get(3)?;
                 Ok(ListCategory {
                     id: row.get(0)?,
                     group_id: row.get(1)?,
                     name: row.get(2)?,
+                    has_checkboxes: has_checkboxes != 0,
                 })
             })?
             .collect();
@@ -247,7 +288,7 @@ pub async fn add_category(group_id: i64, name: &str) -> ListsLibResult<ListCateg
     })
     .await
     .map_err(ListsLibError::Db)?;
-    Ok(ListCategory { id, group_id, name })
+    Ok(ListCategory { id, group_id, name, has_checkboxes: true })
 }
 
 /// Deletes a category and all its items.
@@ -267,14 +308,14 @@ pub async fn delete_category(id: i64) -> ListsLibResult {
 // Items
 // ---------------------------------------------------------------------------
 
-/// Returns all items for the given category, unchecked items first.
+/// Returns all items for the given category, ordered by position.
 pub async fn list_items(category_id: i64) -> ListsLibResult<Vec<ListItem>> {
     db::execute_async(move |conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, category_id, name, quantity, checked, created_at
+            "SELECT id, category_id, name, quantity, checked, created_at, position
              FROM shopping_items
              WHERE category_id = ?1
-             ORDER BY checked ASC, created_at ASC",
+             ORDER BY position ASC",
         )?;
         let rows: rusqlite::Result<Vec<ListItem>> =
             stmt.query_map(params![category_id], row_to_item)?.collect();
@@ -297,13 +338,18 @@ pub async fn add_item(
     let name_ret = name.clone();
     let qty_ret = qty.clone();
 
-    let id = db::execute_async(move |conn| {
-        conn.execute(
-            "INSERT INTO shopping_items (category_id, name, quantity, checked, created_at)
-             VALUES (?1, ?2, ?3, 0, ?4)",
-            params![category_id, name, qty, now],
+    let (id, position) = db::execute_async(move |conn| {
+        let position: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(position), -1) + 1 FROM shopping_items WHERE category_id = ?1",
+            params![category_id],
+            |row| row.get(0),
         )?;
-        Ok(conn.last_insert_rowid())
+        conn.execute(
+            "INSERT INTO shopping_items (category_id, name, quantity, checked, created_at, position)
+             VALUES (?1, ?2, ?3, 0, ?4, ?5)",
+            params![category_id, name, qty, now, position],
+        )?;
+        Ok((conn.last_insert_rowid(), position))
     })
     .await
     .map_err(|e| ListsLibError::Db(e))?;
@@ -315,6 +361,7 @@ pub async fn add_item(
         quantity: qty_ret,
         checked: false,
         created_at: Local::now(),
+        position,
     })
 }
 
@@ -336,6 +383,35 @@ pub async fn check_item(id: i64, checked: bool) -> ListsLibResult {
 pub async fn delete_item(id: i64) -> ListsLibResult {
     db::execute_async(move |conn| {
         conn.execute("DELETE FROM shopping_items WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ListsLibError::Db(e))
+}
+
+/// Sets whether a category uses checkboxes.
+pub async fn set_checkboxes(category_id: i64, has_checkboxes: bool) -> ListsLibResult {
+    let val: i64 = if has_checkboxes { 1 } else { 0 };
+    db::execute_async(move |conn| {
+        conn.execute(
+            "UPDATE shopping_categories SET has_checkboxes = ?1 WHERE id = ?2",
+            params![val, category_id],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ListsLibError::Db(e))
+}
+
+/// Reorders items in a category by assigning new positions matching the given id order.
+pub async fn reorder_items(category_id: i64, ids: Vec<i64>) -> ListsLibResult {
+    db::execute_async(move |conn| {
+        for (pos, id) in ids.iter().enumerate() {
+            conn.execute(
+                "UPDATE shopping_items SET position = ?1 WHERE id = ?2 AND category_id = ?3",
+                params![pos as i64, id, category_id],
+            )?;
+        }
         Ok(())
     })
     .await
@@ -567,5 +643,6 @@ fn row_to_item(row: &rusqlite::Row) -> rusqlite::Result<ListItem> {
         quantity: row.get(3)?,
         checked: checked != 0,
         created_at,
+        position: row.get(6)?,
     })
 }

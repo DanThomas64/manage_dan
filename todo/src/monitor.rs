@@ -74,11 +74,13 @@ async fn poll() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (all_tasks, projects) = tokio::join!(client.list_all_tasks(), client.list_projects());
     let all_tasks = all_tasks?;
 
-    let project_map: std::collections::HashMap<i64, String> = projects
-        .unwrap_or_default()
-        .into_iter()
-        .map(|p| (p.id, p.title))
-        .collect();
+    let project_map: std::collections::HashMap<i64, String> = match projects {
+        Ok(list) => list.into_iter().map(|p| (p.id, p.title)).collect(),
+        Err(e) => {
+            warn!("monitor poll: list_projects failed, project titles will be missing: {}", e);
+            std::collections::HashMap::new()
+        }
+    };
 
     // Collect subtask IDs so we never try to print a subtask as a top-level ticket.
     let subtask_ids: std::collections::HashSet<i64> = all_tasks

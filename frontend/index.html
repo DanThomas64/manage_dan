@@ -733,6 +733,39 @@
       }
     }
 
+    /* ── Drag handle (shown only in reorder mode) ── */
+    .drag-handle {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 1rem;
+      padding: 4px 2px;
+      min-width: 24px;
+      min-height: 30px;
+      cursor: grab;
+      flex-shrink: 0;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      letter-spacing: -2px;
+    }
+    .drag-handle:active { cursor: grabbing; }
+
+    .item-list.reorder-mode .drag-handle { display: flex; }
+    .item-list.reorder-mode .swipe-hint  { display: none; }
+
+    /* ── No-checkboxes mode ── */
+    .item-list.no-checkboxes .item-check       { display: none; }
+    .item-list.no-checkboxes .swipe-hint-right { display: none; }
+
+    /* ── Active toggle button state ── */
+    .btn-toggle-active {
+      background: var(--accent-dim) !important;
+      color: var(--accent) !important;
+      border-color: var(--accent) !important;
+    }
+
     /* ═══════════════════════════════════════════
        NARROW MOBILE  (closed fold / small phone, ≤ 480px)
        Compact but still finger-friendly (48 px min tap targets).
@@ -887,8 +920,11 @@
     <main class="panel">
       <div class="panel-header">
         <div class="panel-title" id="panel-title">Select a list</div>
-        <div class="panel-actions">
-          <!-- Desktop-only panel actions (header has them on mobile too) -->
+        <div class="panel-actions" id="panel-actions" style="display:none;">
+          <button class="btn-ghost btn-sm" id="btn-checkboxes"
+                  onclick="toggleCheckboxes()" title="Toggle checkboxes">&#9745;</button>
+          <button class="btn-ghost btn-sm" id="btn-reorder"
+                  onclick="toggleReorderMode()" title="Reorder items">&#8597;</button>
         </div>
       </div>
 
@@ -935,6 +971,8 @@
   let editingCommon     = false;
   let quickAddCollapsed = false;
   let wasAutoCollapsed  = false;
+  let currentCategoryHasCheckboxes = true;
+  let reorderMode       = false;
 
   // Treat as mobile when the primary input is touch (no fine pointer / no hover).
   // This correctly catches folding phones at any resolution.
@@ -1015,6 +1053,8 @@
     selectedGroupId = id;
     selectedCategoryId = null;
     items = [];
+    currentCategoryHasCheckboxes = true;
+    reorderMode = false;
     renderGroupTabs();
     // Reset the items panel
     document.getElementById('item-list').innerHTML =
@@ -1024,6 +1064,7 @@
     document.getElementById('btn-print').disabled = true;
     document.getElementById('btn-clear').disabled = true;
     document.getElementById('quick-add-section').style.display = 'none';
+    document.getElementById('panel-actions').style.display = 'none';
     commonItems = [];
     editingCommon = false;
     if (isMobile()) {
@@ -1118,14 +1159,17 @@
     // Reset collapse state for the new list so auto-collapse runs fresh
     quickAddCollapsed = false;
     wasAutoCollapsed  = false;
+    reorderMode = false;
     document.getElementById('quick-add-section').classList.remove('collapsed');
     renderCategories();
     const cat = categories.find(c => c.id === id);
+    currentCategoryHasCheckboxes = cat.has_checkboxes !== false;
     document.getElementById('panel-title').innerHTML =
       `${esc(cat.name)} <small id="item-count"></small>`;
     document.getElementById('add-item-form').style.display = 'flex';
     document.getElementById('btn-print').disabled = false;
-    document.getElementById('btn-clear').disabled = false;
+    document.getElementById('panel-actions').style.display = 'flex';
+    updatePanelButtons();
     showPanel(cat.name);
     await loadItems(id);
     await loadCommonItems(id);
@@ -1164,11 +1208,14 @@
         items = [];
         commonItems = [];
         editingCommon = false;
+        currentCategoryHasCheckboxes = true;
+        reorderMode = false;
         document.getElementById('item-list').innerHTML =
           '<div class="empty-state"><span class="icon">&#8592;</span><span>Pick a list to get started</span></div>';
         document.getElementById('panel-title').innerHTML = 'Select a list';
         document.getElementById('add-item-form').style.display = 'none';
         document.getElementById('quick-add-section').style.display = 'none';
+        document.getElementById('panel-actions').style.display = 'none';
         document.getElementById('btn-print').disabled = true;
         document.getElementById('btn-clear').disabled = true;
         goBack();
@@ -1196,12 +1243,19 @@
   }
 
   function renderItems() {
-    const el      = document.getElementById('item-list');
-    const pending = items.filter(i => !i.checked);
-    const done    = items.filter(i =>  i.checked);
+    const el = document.getElementById('item-list');
+    el.classList.toggle('reorder-mode', reorderMode);
+    el.classList.toggle('no-checkboxes', !currentCategoryHasCheckboxes);
 
     const countEl = document.getElementById('item-count');
-    if (countEl) countEl.textContent = `${pending.length} remaining`;
+    if (countEl) {
+      const pendingCount = currentCategoryHasCheckboxes
+        ? items.filter(i => !i.checked).length
+        : items.length;
+      countEl.textContent = currentCategoryHasCheckboxes
+        ? `${pendingCount} remaining`
+        : `${items.length} item${items.length === 1 ? '' : 's'}`;
+    }
 
     if (items.length === 0) {
       el.innerHTML = '<div class="empty-state"><span class="icon">&#9989;</span><span>Nothing here — add something!</span></div>';
@@ -1213,6 +1267,7 @@
         <div class="swipe-hint swipe-hint-right" aria-hidden="true">&#10003;</div>
         <div class="swipe-hint swipe-hint-left"  aria-hidden="true">&#128465;</div>
         <div class="item-row" data-id="${i.id}" data-checked="${i.checked}">
+          <span class="drag-handle" title="Drag to reorder">&#9776;</span>
           <input type="checkbox" class="item-check" ${i.checked ? 'checked' : ''}
                  onchange="checkItem(${i.id}, this.checked)" />
           <span class="item-label${i.checked ? ' checked' : ''}">${esc(i.name)}</span>
@@ -1222,18 +1277,34 @@
         </div>
       </div>`;
 
-    el.innerHTML =
-      pending.map(row).join('') +
-      (done.length
-        ? `<div class="items-divider">Already obtained</div>` + done.map(row).join('')
-        : '');
+    if (reorderMode) {
+      // Flat list with drag handles
+      el.innerHTML = items.map(row).join('');
+    } else if (currentCategoryHasCheckboxes) {
+      const pending = items.filter(i => !i.checked);
+      const done    = items.filter(i =>  i.checked);
+      el.innerHTML =
+        pending.map(row).join('') +
+        (done.length
+          ? `<div class="items-divider">Already obtained</div>` + done.map(row).join('')
+          : '');
+    } else {
+      // No checkboxes: flat list
+      el.innerHTML = items.map(row).join('');
+    }
 
-    // Attach swipe handlers to every row
-    el.querySelectorAll('.item-row-container').forEach(container => {
+    // Attach interaction handlers
+    el.querySelectorAll('.item-row-container').forEach((container, listIdx) => {
       const rowEl    = container.querySelector('.item-row');
       const itemId   = parseInt(rowEl.dataset.id, 10);
       const isChecked = rowEl.dataset.checked === 'true';
-      initSwipe(container, rowEl, itemId, isChecked);
+
+      if (reorderMode) {
+        const handle = rowEl.querySelector('.drag-handle');
+        if (handle) initDragHandle(handle, listIdx);
+      } else {
+        initSwipe(container, rowEl, itemId, isChecked);
+      }
     });
   }
 
@@ -1286,7 +1357,7 @@
   }
 
   async function clearChecked() {
-    if (!selectedCategoryId) return;
+    if (!selectedCategoryId || !currentCategoryHasCheckboxes) return;
     const count = items.filter(i => i.checked).length;
     if (count === 0) { toast('No checked items to clear'); return; }
     try {
@@ -1447,6 +1518,133 @@
     }
   }
 
+  // ── Panel button state ─────────────────────────────────────────────────────
+
+  function updatePanelButtons() {
+    const btnCheckboxes = document.getElementById('btn-checkboxes');
+    const btnReorder    = document.getElementById('btn-reorder');
+    const btnClear      = document.getElementById('btn-clear');
+
+    if (btnCheckboxes) {
+      btnCheckboxes.textContent = currentCategoryHasCheckboxes ? '☑' : '☐';
+      btnCheckboxes.classList.toggle('btn-toggle-active', !currentCategoryHasCheckboxes);
+      btnCheckboxes.title = currentCategoryHasCheckboxes ? 'Disable checkboxes' : 'Enable checkboxes';
+    }
+    if (btnReorder) {
+      btnReorder.classList.toggle('btn-toggle-active', reorderMode);
+      btnReorder.title = reorderMode ? 'Exit reorder mode' : 'Reorder items';
+    }
+    if (btnClear) {
+      btnClear.disabled = !selectedCategoryId || !currentCategoryHasCheckboxes;
+    }
+  }
+
+  async function toggleCheckboxes() {
+    if (!selectedCategoryId) return;
+    const newVal = !currentCategoryHasCheckboxes;
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/checkboxes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ has_checkboxes: newVal }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      currentCategoryHasCheckboxes = newVal;
+      const cat = categories.find(c => c.id === selectedCategoryId);
+      if (cat) cat.has_checkboxes = newVal;
+      updatePanelButtons();
+      renderItems();
+    } catch (e) {
+      toast('Failed to update: ' + e.message, true);
+    }
+  }
+
+  function toggleReorderMode() {
+    reorderMode = !reorderMode;
+    updatePanelButtons();
+    renderItems();
+  }
+
+  // ── Drag-to-reorder ────────────────────────────────────────────────────────
+
+  function initDragHandle(handleEl, fromIndex) {
+    handleEl.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      handleEl.setPointerCapture(e.pointerId);
+
+      const container = handleEl.closest('.item-row-container');
+      const rect = container.getBoundingClientRect();
+      const offsetY = e.clientY - rect.top;
+
+      const ghost = container.cloneNode(true);
+      Object.assign(ghost.style, {
+        position: 'fixed',
+        left: rect.left + 'px',
+        top: rect.top + 'px',
+        width: rect.width + 'px',
+        margin: '0',
+        zIndex: '9999',
+        opacity: '0.85',
+        pointerEvents: 'none',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
+        borderRadius: 'var(--radius)',
+      });
+      document.body.appendChild(ghost);
+      container.style.opacity = '0.25';
+
+      let toIndex = fromIndex;
+
+      function onMove(e) {
+        ghost.style.top = (e.clientY - offsetY) + 'px';
+
+        const list = document.getElementById('item-list');
+        const rows = list.querySelectorAll('.item-row-container');
+        let newTo = 0;
+        rows.forEach((row, i) => {
+          const r = row.getBoundingClientRect();
+          if (e.clientY > r.top + r.height / 2) newTo = i + 1;
+        });
+        toIndex = Math.min(newTo, items.length - 1);
+      }
+
+      function onEnd() {
+        handleEl.removeEventListener('pointermove', onMove);
+        handleEl.removeEventListener('pointerup', onEnd);
+        handleEl.removeEventListener('pointercancel', onEnd);
+        ghost.remove();
+        container.style.opacity = '';
+
+        const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
+        if (insertAt !== fromIndex) {
+          const newItems = [...items];
+          const [moved] = newItems.splice(fromIndex, 1);
+          newItems.splice(insertAt, 0, moved);
+          items = newItems;
+          renderItems();
+          reorderItemsApi(newItems.map(i => i.id));
+        }
+      }
+
+      handleEl.addEventListener('pointermove', onMove);
+      handleEl.addEventListener('pointerup', onEnd);
+      handleEl.addEventListener('pointercancel', onEnd);
+    });
+  }
+
+  async function reorderItemsApi(ids) {
+    if (!selectedCategoryId) return;
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (e) {
+      toast('Failed to save order: ' + e.message, true);
+    }
+  }
+
   // ── Swipe gestures ─────────────────────────────────────────────────────────
   //
   //  Swipe LEFT  on an item → delete it  (red reveal)
@@ -1507,7 +1705,7 @@
         }));
         setTimeout(() => deleteItem(itemId), 320);
 
-      } else if (dx > 60) {
+      } else if (dx > 60 && currentCategoryHasCheckboxes) {
         // ── Swipe right: toggle checked ──────────────────────────────────
         rowEl.style.transform = '';
         if (navigator.vibrate) navigator.vibrate(8);

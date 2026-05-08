@@ -60,7 +60,7 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VikunjaProject {
     pub id: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_default")]
     pub title: String,
 }
 
