@@ -147,6 +147,45 @@ pub struct ListItem {
     pub created_at: DateTime<Local>,
 }
 
+// --- Notes Data Structures ---
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum NoteStatus {
+    Raw,
+    Note,
+    Article,
+}
+
+impl NoteStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NoteStatus::Raw => "raw",
+            NoteStatus::Note => "note",
+            NoteStatus::Article => "article",
+        }
+    }
+}
+
+impl std::fmt::Display for NoteStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Note {
+    pub id: Option<i64>,
+    pub uuid: String,
+    pub title: String,
+    pub content: String,
+    pub status: NoteStatus,
+    pub tags: Vec<String>,
+    pub folder: String,
+    pub created_at: DateTime<Local>,
+    pub updated_at: DateTime<Local>,
+}
+
 // ---------------------------------------------------
 
 /// Client for making HTTP requests to the application API.
@@ -330,5 +369,52 @@ impl ApiClient {
     pub async fn add_item_from_common(&self, common_id: i64) -> Result<ListItem> {
         let url = format!("{}/api/v1/lists/common/{}/add", self.base_url, common_id);
         Ok(self.client.post(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    // --- Notes Methods ---
+
+    pub async fn fetch_notes(&self, status: Option<&str>, folder: Option<&str>) -> Result<Vec<Note>> {
+        let mut url = format!("{}/api/v1/notes?", self.base_url);
+        if let Some(s) = status { url.push_str(&format!("status={}&", s)); }
+        if let Some(f) = folder { url.push_str(&format!("folder={}&", urlencoding::encode(f))); }
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn fetch_note(&self, uuid: &str) -> Result<Note> {
+        let url = format!("{}/api/v1/notes/{}", self.base_url, uuid);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn search_notes(&self, query: &str) -> Result<Vec<Note>> {
+        let url = format!("{}/api/v1/notes/search?q={}", self.base_url, urlencoding::encode(query));
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn update_note(&self, uuid: &str, content: &str, title: Option<&str>) -> Result<Note> {
+        let url = format!("{}/api/v1/notes/{}", self.base_url, uuid);
+        let body = serde_json::json!({ "content": content, "title": title });
+        Ok(self.client.put(&url).json(&body).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn advance_note_status(&self, uuid: &str) -> Result<Note> {
+        let url = format!("{}/api/v1/notes/{}/status", self.base_url, uuid);
+        Ok(self.client.patch(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn print_note(&self, uuid: &str) -> Result<()> {
+        let url = format!("{}/api/v1/notes/{}/print", self.base_url, uuid);
+        self.client.post(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn delete_note(&self, uuid: &str) -> Result<()> {
+        let url = format!("{}/api/v1/notes/{}", self.base_url, uuid);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn fetch_note_folders(&self) -> Result<Vec<String>> {
+        let url = format!("{}/api/v1/notes/folders", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
     }
 }

@@ -42,6 +42,13 @@ pub struct LoggingConfig {
     pub file: String,
 }
 
+/// Notes subsystem configuration.
+#[derive(Debug, Deserialize, Clone)]
+pub struct NotesConfig {
+    /// Directory where .md note files are stored.
+    pub dir: String,
+}
+
 /// Global application configuration structure.
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
@@ -60,6 +67,8 @@ pub struct AppConfig {
     pub completed_summary_enabled: bool,
     /// File logging settings.
     pub logging: LoggingConfig,
+    /// Notes subsystem settings.
+    pub notes: NotesConfig,
 }
 
 impl AppConfig {
@@ -92,6 +101,7 @@ impl AppConfig {
             .set_default("completed_summary_hour", 20u64)?
             .set_default("completed_summary_enabled", true)?
             .set_default("logging.file", "data/logs/app.log")?
+            .set_default("notes.dir", "notes")?
 
             // 2. Load default config file
             .add_source(File::with_name(&format!("{}/default", cfg_dir)).required(false))

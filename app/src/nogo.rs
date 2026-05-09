@@ -140,7 +140,7 @@ impl SystemsStatus {
         };
         
         // initialize notes
-        match notes::init()
+        match notes::init(&AppConfig::get().notes.dir)
             .map_err(|e| AppError::Notes(e).print())
             .is_ok()
         {

@@ -9,5 +9,9 @@ chrono.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-project = { path = "../project" }
-todo = { path = "../todo" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+db = { path = "../db" }
+printer = { path = "../printer" }

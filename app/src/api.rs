@@ -532,6 +532,243 @@ pub async fn add_item_from_common_handler(id: i64) -> Result<impl Reply, Rejecti
     }
 }
 
+// --- Notes Endpoints ---
+
+#[derive(Deserialize)]
+pub struct NoteQuery {
+    pub status: Option<String>,
+    pub folder: Option<String>,
+    pub tag: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct NoteSearchQuery { pub q: Option<String> }
+
+/// GET /api/v1/notes - list notes with optional filters
+pub async fn list_notes_handler(q: NoteQuery) -> Result<impl Reply, Rejection> {
+    let status = q.status.as_deref().map(notes::NoteStatus::from_str);
+    match notes::list(status, q.folder, q.tag).await {
+        Ok(notes) => Ok(warp::reply::json(&notes)),
+        Err(e) => {
+            error!("Failed to list notes: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/notes - create a note
+pub async fn create_note_handler(req: notes::CreateNoteRequest) -> Result<impl Reply, Rejection> {
+    match notes::create(req).await {
+        Ok(note) => Ok(warp::reply::with_status(warp::reply::json(&note), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to create note: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/notes/search?q= - FTS5 search
+pub async fn search_notes_handler(q: NoteSearchQuery) -> Result<impl Reply, Rejection> {
+    let query = q.q.unwrap_or_default();
+    match notes::search(&query).await {
+        Ok(notes) => Ok(warp::reply::json(&notes)),
+        Err(e) => {
+            error!("Failed to search notes: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/notes/folders
+pub async fn list_note_folders_handler() -> Result<impl Reply, Rejection> {
+    match notes::folders().await {
+        Ok(folders) => Ok(warp::reply::json(&folders)),
+        Err(e) => {
+            error!("Failed to list note folders: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/notes/tags
+pub async fn list_note_tags_handler() -> Result<impl Reply, Rejection> {
+    match notes::tags().await {
+        Ok(tags) => Ok(warp::reply::json(&tags)),
+        Err(e) => {
+            error!("Failed to list note tags: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/notes/:uuid - single note JSON
+pub async fn get_note_handler(uuid: String) -> Result<impl Reply, Rejection> {
+    match notes::get(&uuid).await {
+        Ok(note) => Ok(warp::reply::json(&note)),
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => {
+            Err(warp::reject::not_found())
+        }
+        Err(e) => {
+            error!("Failed to get note {}: {}", uuid, e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// PUT /api/v1/notes/:uuid - update note
+pub async fn update_note_handler(uuid: String, req: notes::UpdateNoteRequest) -> Result<impl Reply, Rejection> {
+    match notes::update(&uuid, req).await {
+        Ok(note) => Ok(warp::reply::json(&note)),
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => {
+            Err(warp::reject::not_found())
+        }
+        Err(e) => {
+            error!("Failed to update note {}: {}", uuid, e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/notes/:uuid - delete note
+pub async fn delete_note_handler(uuid: String) -> Result<impl Reply, Rejection> {
+    match notes::delete(&uuid).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => {
+            Err(warp::reject::not_found())
+        }
+        Err(e) => {
+            error!("Failed to delete note {}: {}", uuid, e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// PATCH /api/v1/notes/:uuid/status - advance status Raw→Note→Article
+pub async fn advance_note_status_handler(uuid: String) -> Result<impl Reply, Rejection> {
+    match notes::advance_status(&uuid).await {
+        Ok(note) => Ok(warp::reply::json(&note)),
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => {
+            Err(warp::reject::not_found())
+        }
+        Err(e) => {
+            error!("Failed to advance note status {}: {}", uuid, e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+pub async fn print_note_handler(uuid: String) -> Result<impl Reply, Rejection> {
+    match notes::print(&uuid).await {
+        Ok(()) => Ok(warp::reply::json(&true)),
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to print note {}: {}", uuid, e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// GET /notes/:uuid - rendered markdown viewer page
+pub async fn get_note_page_handler(uuid: String) -> Result<impl Reply, Rejection> {
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Note</title>
+<style>
+:root{{--bg:#1a1a2e;--surface:#16213e;--surface2:#0f3460;--accent:#e94560;--text:#eaeaea;--text-dim:#9a9ab0;--success:#4caf50;--radius:12px;}}
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:800px;margin:0 auto;}}
+.meta-bar{{background:var(--surface);border-radius:var(--radius);padding:14px 18px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;}}
+.title{{font-size:24px;font-weight:700;margin-bottom:4px;}}
+.badge{{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;}}
+.badge.raw{{background:#2d1f3d;color:#ce93d8;}}
+.badge.note{{background:#1a3a5c;color:#64b5f6;}}
+.badge.article{{background:#1b3a1b;color:#a5d6a7;}}
+.badge.tag{{background:var(--surface2);color:var(--text);}}
+.badge.folder{{background:#2a2a1a;color:#ffd54f;}}
+.dates{{font-size:11px;color:var(--text-dim);margin-left:auto;}}
+.content-card{{background:var(--surface);border-radius:var(--radius);padding:20px 24px;}}
+.markdown-body h1,.markdown-body h2,.markdown-body h3{{color:var(--text);margin:1em 0 .5em;line-height:1.3;}}
+.markdown-body h1{{font-size:1.8em;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:.3em;}}
+.markdown-body h2{{font-size:1.4em;}}
+.markdown-body h3{{font-size:1.2em;}}
+.markdown-body p{{margin:.75em 0;line-height:1.7;}}
+.markdown-body ul,.markdown-body ol{{padding-left:1.5em;margin:.75em 0;}}
+.markdown-body li{{margin:.3em 0;line-height:1.6;}}
+.markdown-body code{{background:rgba(255,255,255,.1);padding:2px 6px;border-radius:4px;font-family:monospace;font-size:.9em;}}
+.markdown-body pre{{background:#0d1117;border-radius:8px;padding:16px;overflow-x:auto;margin:1em 0;}}
+.markdown-body pre code{{background:none;padding:0;}}
+.markdown-body blockquote{{border-left:3px solid var(--accent);padding-left:1em;color:var(--text-dim);margin:1em 0;}}
+.markdown-body a{{color:#64b5f6;text-decoration:none;}}
+.markdown-body a:hover{{text-decoration:underline;}}
+.markdown-body hr{{border:none;border-top:1px solid rgba(255,255,255,.1);margin:1.5em 0;}}
+.markdown-body table{{width:100%;border-collapse:collapse;margin:1em 0;}}
+.markdown-body th,.markdown-body td{{padding:8px 12px;border:1px solid rgba(255,255,255,.1);text-align:left;}}
+.markdown-body th{{background:var(--surface2);}}
+.actions{{display:flex;gap:8px;margin-top:12px;}}
+.btn{{padding:10px 18px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .2s;}}
+.btn-advance{{background:var(--accent);color:#fff;}}
+.btn-edit{{background:var(--surface2);color:var(--text);}}
+.btn:hover{{opacity:.85;}}
+#loading{{text-align:center;padding:60px;color:var(--text-dim);}}
+#app{{display:none;}}
+</style>
+</head>
+<body>
+<div id="loading">Loading note&hellip;</div>
+<div id="app">
+  <div class="meta-bar">
+    <div>
+      <div class="title" id="title"></div>
+      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;" id="badges"></div>
+    </div>
+    <div class="dates" id="dates"></div>
+  </div>
+  <div class="content-card markdown-body" id="content"></div>
+  <div class="actions">
+    <button class="btn btn-advance" id="btn-advance" onclick="advance()">Advance Status</button>
+    <button class="btn btn-edit" onclick="history.back()">Back</button>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+const UUID="{uuid}";
+const STATUS_LABELS={{raw:"Raw",note:"Note",article:"Article"}};
+function fmtDate(d){{return new Date(d).toLocaleDateString('en-GB',{{day:'numeric',month:'short',year:'numeric'}});}}
+async function load(){{
+  try{{
+    const r=await fetch('/api/v1/notes/'+UUID);
+    if(!r.ok)throw 0;
+    const n=await r.json();
+    document.title='Note: '+(n.title||'Untitled');
+    document.getElementById('title').textContent=n.title||'Untitled';
+    const b=document.getElementById('badges');
+    b.innerHTML=`<span class="badge ${{n.status}}">${{STATUS_LABELS[n.status]||n.status}}</span>`;
+    if(n.folder)b.innerHTML+=`<span class="badge folder">&#128193; ${{n.folder}}</span>`;
+    (n.tags||[]).forEach(t=>b.innerHTML+=`<span class="badge tag">#${{t}}</span>`);
+    document.getElementById('dates').innerHTML=`Updated ${{fmtDate(n.updated_at)}}<br>Created ${{fmtDate(n.created_at)}}`;
+    document.getElementById('content').innerHTML=marked.parse(n.content||'');
+    const adv=document.getElementById('btn-advance');
+    if(n.status==='article'){{adv.textContent='Published';adv.disabled=true;adv.style.opacity='.5';}}
+    document.getElementById('loading').style.display='none';
+    document.getElementById('app').style.display='block';
+  }}catch{{document.getElementById('loading').textContent='Note not found';}}
+}}
+async function advance(){{
+  try{{
+    await fetch('/api/v1/notes/'+UUID+'/status',{{method:'PATCH'}});
+    load();
+  }}catch{{alert('Failed to advance status');}}
+}}
+load();
+</script>
+</body>
+</html>"#, uuid = uuid);
+    Ok(warp::reply::html(html))
+}
+
 // --- Log Endpoints ---
 
 /// Query parameters for fetching logs.
@@ -562,6 +799,7 @@ enum ApiError {
     MismatchedId,
     LogOperationFailed,
     ListsOperationFailed,
+    NotesOperationFailed,
 }
 
 impl warp::reject::Reject for ApiError {}
@@ -576,6 +814,8 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
         Ok(warp::reply::with_status("Log operation failed", StatusCode::INTERNAL_SERVER_ERROR))
     } else if let Some(ApiError::ListsOperationFailed) = err.find() {
         Ok(warp::reply::with_status("Lists operation failed", StatusCode::INTERNAL_SERVER_ERROR))
+    } else if let Some(ApiError::NotesOperationFailed) = err.find() {
+        Ok(warp::reply::with_status("Notes operation failed", StatusCode::INTERNAL_SERVER_ERROR))
     } else {
         Err(err)
     }
@@ -871,6 +1111,87 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .or(add_from_common)
 }
 
+/// Defines routes for the notes subsystem.
+fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    let notes_seg = warp::path("notes");
+
+    // GET /api/v1/notes?status=&folder=&tag=
+    let list = notes_seg
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<NoteQuery>())
+        .and_then(list_notes_handler);
+
+    // POST /api/v1/notes
+    let create = notes_seg
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(create_note_handler);
+
+    // GET /api/v1/notes/search?q=
+    let search = notes_seg
+        .and(warp::path("search"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<NoteSearchQuery>())
+        .and_then(search_notes_handler);
+
+    // GET /api/v1/notes/folders
+    let folders = notes_seg
+        .and(warp::path("folders"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_note_folders_handler);
+
+    // GET /api/v1/notes/tags
+    let tags = notes_seg
+        .and(warp::path("tags"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_note_tags_handler);
+
+    // GET /api/v1/notes/:uuid
+    let get_one = notes_seg
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(get_note_handler);
+
+    // PUT /api/v1/notes/:uuid
+    let update = notes_seg
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and_then(|uuid, req| update_note_handler(uuid, req));
+
+    // DELETE /api/v1/notes/:uuid
+    let delete = notes_seg
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_note_handler);
+
+    // PATCH /api/v1/notes/:uuid/status
+    let advance = notes_seg
+        .and(warp::path::param::<String>())
+        .and(warp::path("status"))
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and_then(advance_note_status_handler);
+
+    // POST /api/v1/notes/:uuid/print
+    let print = notes_seg
+        .and(warp::path::param::<String>())
+        .and(warp::path("print"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and_then(print_note_handler);
+
+    search.or(folders).or(tags).or(list).or(create).or(advance).or(print).or(get_one).or(update).or(delete)
+}
+
 /// Defines routes related to logging.
 fn log_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     warp::path("logs")
@@ -894,12 +1215,20 @@ pub fn routes(
         .and(warp::get())
         .and_then(get_todo_page_handler);
 
-    task_page.or(
+    // Note viewer page — outside /api/v1/ for clean URLs.
+    let note_page = warp::path("notes")
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(get_note_page_handler);
+
+    task_page.or(note_page).or(
         api_v1.and(
             status_routes(systems_status, go_nogo_status)
             .or(todo_routes())
             .or(log_routes())
             .or(list_routes())
+            .or(notes_routes())
         )
     )
     .recover(handle_rejection)

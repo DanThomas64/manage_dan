@@ -895,6 +895,164 @@
       .sidebar-header       { font-size: 0.65rem; padding: 10px 12px 6px; }
       .group-section-header { font-size: 0.65rem; padding: 10px 12px 6px; }
     }
+
+    /* ── Notes overlay ── */
+    #notes-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 100;
+      flex-direction: column;
+    }
+    #notes-overlay.active { display: flex; }
+
+    .notes-nav {
+      display: flex;
+      gap: 4px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .notes-tab {
+      padding: 7px 16px;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .notes-tab.active {
+      background: var(--accent-dim);
+      color: #c5d9ff;
+      border-color: transparent;
+    }
+    .notes-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+
+    .notes-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+    .notes-panel.active { display: flex; }
+
+    /* Quick Add panel */
+    .quick-note-form {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .quick-note-form textarea {
+      flex: 1;
+      min-height: 180px;
+      resize: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 12px;
+      font-size: 16px;
+      font-family: inherit;
+      line-height: 1.6;
+    }
+    .quick-note-form textarea:focus { outline: none; border-color: var(--accent); }
+    .quick-note-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .field-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+
+    /* Browse panel */
+    .notes-filters {
+      padding: 10px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .filter-pill {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      background: var(--surface2);
+      color: var(--text-muted);
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .filter-pill.active { background: var(--accent-dim); color: #c5d9ff; }
+    .filter-pill:hover:not(.active) { background: var(--border); color: var(--text); }
+
+    .notes-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .note-card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: border-color 0.15s;
+    }
+    .note-card:hover { border-color: var(--accent-dim); }
+    .note-card-title { font-weight: 600; font-size: 0.95rem; }
+    .note-card-preview { color: var(--text-muted); font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .note-card-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .note-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+    .note-badge.raw { background: #2d1f3d; color: #ce93d8; }
+    .note-badge.note { background: #1a3a5c; color: #64b5f6; }
+    .note-badge.article { background: #1b3a1b; color: #a5d6a7; }
+    .note-badge.tag { background: var(--surface2); color: var(--text-muted); }
+    .note-badge.folder { background: #2a2a1a; color: #ffd54f; }
+    .note-date { font-size: 0.72rem; color: var(--text-muted); margin-left: auto; }
+
+    /* Note viewer panel */
+    .note-viewer { flex: 1; overflow-y: auto; padding: 16px; }
+    .note-viewer-header { margin-bottom: 12px; }
+    .note-viewer-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 8px; }
+    .note-viewer-actions { display: flex; gap: 8px; margin-top: 12px; flex-shrink: 0; padding: 12px 16px; border-top: 1px solid var(--border); }
+
+    /* Markdown rendered content */
+    .md-body h1,.md-body h2,.md-body h3 { color: var(--text); margin: 1em 0 .5em; line-height: 1.3; }
+    .md-body h1 { font-size: 1.6em; border-bottom: 1px solid var(--border); padding-bottom:.3em; }
+    .md-body h2 { font-size: 1.3em; }
+    .md-body h3 { font-size: 1.1em; }
+    .md-body p { margin: .7em 0; line-height: 1.7; }
+    .md-body ul,.md-body ol { padding-left: 1.5em; margin: .7em 0; }
+    .md-body li { margin: .3em 0; line-height: 1.6; }
+    .md-body code { background: rgba(255,255,255,.1); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: .9em; }
+    .md-body pre { background: #0d1117; border-radius: 8px; padding: 14px; overflow-x: auto; margin: 1em 0; }
+    .md-body pre code { background: none; padding: 0; }
+    .md-body blockquote { border-left: 3px solid var(--accent); padding-left: 1em; color: var(--text-muted); margin: 1em 0; }
+    .md-body a { color: #64b5f6; }
+    .md-body hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+    .md-body table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+    .md-body th,.md-body td { padding: 8px 10px; border: 1px solid var(--border); }
+    .md-body th { background: var(--surface2); }
+
+    /* Nav toggle in header */
+    .nav-toggle { display: flex; gap: 4px; }
+    .nav-btn {
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .nav-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .nav-btn:hover:not(.active) { background: var(--surface2); color: var(--text); }
   </style>
 </head>
 <body>
@@ -905,6 +1063,10 @@
     <div class="header-left">
       <button id="btn-back" class="btn-ghost btn-sm" onclick="goBack()">&#8592; Lists</button>
       <h1 id="header-title"><span>&#9676;</span> Lists</h1>
+    </div>
+    <div class="nav-toggle" style="margin:0 8px;">
+      <button class="nav-btn active" id="nav-lists" onclick="switchView('lists')">Lists</button>
+      <button class="nav-btn" id="nav-notes" onclick="switchView('notes')">Notes</button>
     </div>
     <div class="header-actions">
       <button class="btn-ghost btn-sm" id="btn-clear" disabled onclick="clearChecked()">Clear checked</button>
@@ -995,6 +1157,125 @@
 </div>
 
 <div id="toast"></div>
+
+<!-- Notes overlay -->
+<div id="notes-overlay">
+
+  <!-- Notes sub-nav -->
+  <div class="notes-nav">
+    <button class="notes-tab active" id="ntab-add" onclick="notesShowTab('add')">&#43; Quick Add</button>
+    <button class="notes-tab" id="ntab-browse" onclick="notesShowTab('browse')">Browse</button>
+    <button class="notes-tab" id="ntab-search" onclick="notesShowTab('search')">Search</button>
+  </div>
+
+  <!-- Quick Add panel -->
+  <div class="notes-panel active" id="npanel-add">
+    <div class="quick-note-form">
+      <div>
+        <div class="field-label">Content</div>
+        <textarea id="note-content" placeholder="Write your note here… (markdown supported)" autofocus></textarea>
+      </div>
+      <div class="quick-note-meta">
+        <div>
+          <div class="field-label">Title <span style="color:var(--text-muted)">(optional)</span></div>
+          <input type="text" id="note-title" placeholder="Leave blank to use first line" autocomplete="off" />
+        </div>
+        <div>
+          <div class="field-label">Tags <span style="color:var(--text-muted)">(comma-separated)</span></div>
+          <input type="text" id="note-tags" placeholder="e.g. idea, work" autocomplete="off" />
+        </div>
+        <div>
+          <div class="field-label">Folder <span style="color:var(--text-muted)">(optional)</span></div>
+          <input type="text" id="note-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
+          <datalist id="folder-suggestions"></datalist>
+        </div>
+        <div style="display:flex;align-items:flex-end;">
+          <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitQuickNote()">Save Note</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Browse panel -->
+  <div class="notes-panel" id="npanel-browse">
+    <div class="notes-filters">
+      <button class="filter-pill active" data-status="" onclick="notesSetFilter(this,'')">All</button>
+      <button class="filter-pill" data-status="raw" onclick="notesSetFilter(this,'raw')">Raw</button>
+      <button class="filter-pill" data-status="note" onclick="notesSetFilter(this,'note')">Note</button>
+      <button class="filter-pill" data-status="article" onclick="notesSetFilter(this,'article')">Article</button>
+      <select id="folder-filter" onchange="notesLoadBrowse()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:0.82rem;">
+        <option value="">All folders</option>
+      </select>
+    </div>
+    <div class="notes-list" id="notes-list">
+      <div class="empty-state"><span class="icon">&#128221;</span><span>No notes yet</span></div>
+    </div>
+  </div>
+
+  <!-- Search panel -->
+  <div class="notes-panel" id="npanel-search">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="note-search-input" placeholder="Search notes…" autocomplete="off"
+               oninput="notesSearch(this.value)" style="flex:1;" />
+      </div>
+    </div>
+    <div class="notes-list" id="search-list">
+      <div class="empty-state"><span class="icon">&#128269;</span><span>Type to search</span></div>
+    </div>
+  </div>
+
+  <!-- Note viewer panel (shown when a note is opened) -->
+  <div class="notes-panel" id="npanel-viewer" style="overflow:hidden;">
+    <div class="note-viewer" id="note-viewer-content">
+      <!-- filled dynamically -->
+    </div>
+    <div class="note-viewer-actions">
+      <button class="btn-primary btn-sm" id="btn-advance-status" onclick="notesAdvanceStatus()">Advance Status</button>
+      <button class="btn-ghost btn-sm" onclick="notesPrint()">&#128438; Print</button>
+      <button class="btn-ghost btn-sm" onclick="notesCloseViewer()">&#8592; Back</button>
+      <button class="btn-ghost btn-sm" onclick="notesOpenEditMode()">Edit</button>
+    </div>
+  </div>
+
+  <!-- Note edit panel -->
+  <div class="notes-panel" id="npanel-edit">
+    <div class="quick-note-form">
+      <input type="hidden" id="edit-uuid" />
+      <div>
+        <div class="field-label">Title</div>
+        <input type="text" id="edit-title" placeholder="Note title" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Content</div>
+        <textarea id="edit-content" style="min-height:250px;resize:none;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:12px;font-size:16px;font-family:inherit;line-height:1.6;width:100%;"></textarea>
+      </div>
+      <div class="quick-note-meta">
+        <div>
+          <div class="field-label">Tags</div>
+          <input type="text" id="edit-tags" placeholder="comma-separated" autocomplete="off" />
+        </div>
+        <div>
+          <div class="field-label">Folder</div>
+          <input type="text" id="edit-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
+        </div>
+        <div>
+          <div class="field-label">Status</div>
+          <select id="edit-status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:0.85rem;width:100%;">
+            <option value="raw">Raw</option>
+            <option value="note">Note</option>
+            <option value="article">Article</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;">
+          <button class="btn-primary btn-sm" style="flex:1;" onclick="notesSaveEdit()">Save</button>
+          <button class="btn-ghost btn-sm" onclick="notesCancelEdit()">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
 
 <script>
   const API = '/api/v1/lists';
@@ -1818,6 +2099,271 @@
 
   // ── Start ──────────────────────────────────────────────────────────────────
   init();
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NOTES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const NOTES_API = '/api/v1/notes';
+  let notesCurrentTab = 'add';
+  let notesFilterStatus = '';
+  let notesCurrentNote = null;
+  let notesViewerFromTab = 'browse';
+  let notesSearchTimer = null;
+  let markedLoaded = false;
+
+  function switchView(view) {
+    const overlay = document.getElementById('notes-overlay');
+    const navLists = document.getElementById('nav-lists');
+    const navNotes = document.getElementById('nav-notes');
+    if (view === 'notes') {
+      overlay.classList.add('active');
+      navNotes.classList.add('active');
+      navLists.classList.remove('active');
+      notesOnOpen();
+    } else {
+      overlay.classList.remove('active');
+      navLists.classList.add('active');
+      navNotes.classList.remove('active');
+    }
+  }
+
+  function notesOnOpen() {
+    notesLoadFolders();
+    if (notesCurrentTab === 'browse') notesLoadBrowse();
+  }
+
+  function notesShowTab(tab) {
+    notesCurrentTab = tab;
+    document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('ntab-' + tab).classList.add('active');
+    document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('npanel-' + tab).classList.add('active');
+    if (tab === 'browse') notesLoadBrowse();
+    if (tab === 'add') setTimeout(() => document.getElementById('note-content').focus(), 80);
+  }
+
+  async function notesLoadFolders() {
+    try {
+      const r = await fetch(NOTES_API + '/folders');
+      const folders = await r.json();
+      const dl = document.getElementById('folder-suggestions');
+      dl.innerHTML = folders.map(f => `<option value="${esc(f)}">`).join('');
+      const sel = document.getElementById('folder-filter');
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All folders</option>' +
+        folders.map(f => `<option value="${esc(f)}" ${f === cur ? 'selected' : ''}>${esc(f)}</option>`).join('');
+    } catch (_) {}
+  }
+
+  async function notesLoadBrowse() {
+    const folder = document.getElementById('folder-filter').value;
+    let url = NOTES_API + '?';
+    if (notesFilterStatus) url += 'status=' + encodeURIComponent(notesFilterStatus) + '&';
+    if (folder) url += 'folder=' + encodeURIComponent(folder);
+    try {
+      const r = await fetch(url);
+      const notes = await r.json();
+      renderNoteList(notes, 'notes-list', 'browse');
+    } catch (_) {
+      document.getElementById('notes-list').innerHTML = '<div class="empty-state"><span>Failed to load notes</span></div>';
+    }
+  }
+
+  function notesSetFilter(btn, status) {
+    notesFilterStatus = status;
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    notesLoadBrowse();
+  }
+
+  let searchDebounce;
+  function notesSearch(q) {
+    clearTimeout(searchDebounce);
+    if (!q.trim()) {
+      document.getElementById('search-list').innerHTML =
+        '<div class="empty-state"><span class="icon">&#128269;</span><span>Type to search</span></div>';
+      return;
+    }
+    searchDebounce = setTimeout(async () => {
+      try {
+        const r = await fetch(NOTES_API + '/search?q=' + encodeURIComponent(q));
+        const notes = await r.json();
+        renderNoteList(notes, 'search-list', 'search');
+      } catch (_) {}
+    }, 300);
+  }
+
+  function renderNoteList(notes, containerId, fromTab) {
+    const el = document.getElementById(containerId);
+    if (!notes || notes.length === 0) {
+      el.innerHTML = '<div class="empty-state"><span class="icon">&#128221;</span><span>No notes found</span></div>';
+      return;
+    }
+    el.innerHTML = notes.map(n => {
+      const preview = (n.content || '').replace(/[#*`_>\[\]]/g, '').trim().slice(0, 100);
+      const tagsHtml = (n.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
+      const folderHtml = n.folder ? `<span class="note-badge folder">&#128193; ${esc(n.folder)}</span>` : '';
+      const dateStr = new Date(n.updated_at).toLocaleDateString('en-GB', {day:'numeric',month:'short'});
+      return `<div class="note-card" onclick="notesOpenNote('${esc(n.uuid)}','${fromTab}')">
+        <div class="note-card-title">${esc(n.title || 'Untitled')}</div>
+        ${preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
+        <div class="note-card-meta">
+          <span class="note-badge ${esc(n.status)}">${esc(n.status)}</span>
+          ${folderHtml}${tagsHtml}
+          <span class="note-date">${dateStr}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  async function notesOpenNote(uuid, fromTab) {
+    notesViewerFromTab = fromTab || 'browse';
+    try {
+      const r = await fetch(NOTES_API + '/' + uuid);
+      if (!r.ok) throw 0;
+      notesCurrentNote = await r.json();
+      notesRenderViewer(notesCurrentNote);
+      document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('npanel-viewer').classList.add('active');
+      notesCurrentTab = 'viewer';
+    } catch (_) {
+      toast('Failed to load note', true);
+    }
+  }
+
+  function notesRenderViewer(note) {
+    const adv = document.getElementById('btn-advance-status');
+    adv.textContent = note.status === 'raw' ? 'Raw → Note' :
+                      note.status === 'note' ? 'Note → Article' : 'Published ✓';
+    adv.disabled = note.status === 'article';
+
+    const tagsHtml = (note.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
+    const folderHtml = note.folder ? `<span class="note-badge folder">&#128193; ${esc(note.folder)}</span>` : '';
+    const updDate = new Date(note.updated_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+
+    const viewer = document.getElementById('note-viewer-content');
+    viewer.innerHTML = `
+      <div class="note-viewer-header">
+        <div class="note-viewer-title">${esc(note.title || 'Untitled')}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+          <span class="note-badge ${esc(note.status)}">${esc(note.status)}</span>
+          ${folderHtml}${tagsHtml}
+          <span class="note-date">Updated ${updDate}</span>
+        </div>
+      </div>
+      <div class="md-body" id="md-render"></div>`;
+
+    const mdEl = document.getElementById('md-render');
+    if (window.marked) {
+      mdEl.innerHTML = window.marked.parse(note.content || '');
+    } else {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+      s.onload = () => { mdEl.innerHTML = window.marked.parse(note.content || ''); };
+      document.head.appendChild(s);
+    }
+  }
+
+  function notesCloseViewer() {
+    notesShowTab(notesViewerFromTab === 'search' ? 'search' : 'browse');
+  }
+
+  function notesOpenEditMode() {
+    if (!notesCurrentNote) return;
+    const n = notesCurrentNote;
+    document.getElementById('edit-uuid').value = n.uuid;
+    document.getElementById('edit-title').value = n.title || '';
+    document.getElementById('edit-content').value = n.content || '';
+    document.getElementById('edit-tags').value = (n.tags || []).join(', ');
+    document.getElementById('edit-folder').value = n.folder || '';
+    document.getElementById('edit-status').value = n.status || 'raw';
+    document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('npanel-edit').classList.add('active');
+    notesCurrentTab = 'edit';
+  }
+
+  function notesCancelEdit() {
+    notesRenderViewer(notesCurrentNote);
+    document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('npanel-viewer').classList.add('active');
+    notesCurrentTab = 'viewer';
+  }
+
+  async function notesSaveEdit() {
+    const uuid = document.getElementById('edit-uuid').value;
+    const body = {
+      title: document.getElementById('edit-title').value.trim() || null,
+      content: document.getElementById('edit-content').value,
+      tags: document.getElementById('edit-tags').value.split(',').map(s => s.trim()).filter(Boolean),
+      folder: document.getElementById('edit-folder').value.trim() || null,
+      status: document.getElementById('edit-status').value,
+    };
+    try {
+      const r = await fetch(NOTES_API + '/' + uuid, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw 0;
+      notesCurrentNote = await r.json();
+      notesCancelEdit();
+      toast('Note saved');
+      notesLoadFolders();
+    } catch (_) {
+      toast('Failed to save note', true);
+    }
+  }
+
+  async function notesAdvanceStatus() {
+    if (!notesCurrentNote) return;
+    try {
+      const r = await fetch(NOTES_API + '/' + notesCurrentNote.uuid + '/status', {method: 'PATCH'});
+      if (!r.ok) throw 0;
+      notesCurrentNote = await r.json();
+      notesRenderViewer(notesCurrentNote);
+      toast('Status advanced to ' + notesCurrentNote.status);
+    } catch (_) {
+      toast('Failed to advance status', true);
+    }
+  }
+
+  async function notesPrint() {
+    if (!notesCurrentNote) return;
+    try {
+      const r = await fetch(NOTES_API + '/' + notesCurrentNote.uuid + '/print', {method: 'POST'});
+      if (!r.ok) throw 0;
+      toast('Note sent to printer');
+    } catch (_) {
+      toast('Print failed', true);
+    }
+  }
+
+  async function submitQuickNote() {
+    const content = document.getElementById('note-content').value.trim();
+    if (!content) { toast('Note content is required', true); return; }
+    const title = document.getElementById('note-title').value.trim() || null;
+    const tagsRaw = document.getElementById('note-tags').value;
+    const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    const folder = document.getElementById('note-folder').value.trim() || null;
+    try {
+      const r = await fetch(NOTES_API, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content, title, tags, folder}),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('note-content').value = '';
+      document.getElementById('note-title').value = '';
+      document.getElementById('note-tags').value = '';
+      toast('Note saved');
+      notesLoadFolders();
+    } catch (_) {
+      toast('Failed to save note', true);
+    }
+  }
 </script>
 </body>
 </html>

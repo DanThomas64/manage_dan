@@ -83,6 +83,49 @@ pub fn init() -> DbLibResult {
         [],
     )?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS notes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            uuid       TEXT NOT NULL UNIQUE,
+            title      TEXT NOT NULL DEFAULT '',
+            content    TEXT NOT NULL DEFAULT '',
+            status     TEXT NOT NULL DEFAULT 'raw',
+            tags       TEXT NOT NULL DEFAULT '[]',
+            folder     TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS notes_uuid_idx ON notes(uuid)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS notes_status_idx ON notes(status)",
+        [],
+    )?;
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+            title, content, tags, folder,
+            content='notes', content_rowid='id'
+        );
+        CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+            INSERT INTO notes_fts(rowid, title, content, tags, folder)
+            VALUES (new.id, new.title, new.content, new.tags, new.folder);
+        END;
+        CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+            INSERT INTO notes_fts(notes_fts, rowid, title, content, tags, folder)
+            VALUES ('delete', old.id, old.title, old.content, old.tags, old.folder);
+        END;
+        CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+            INSERT INTO notes_fts(notes_fts, rowid, title, content, tags, folder)
+            VALUES ('delete', old.id, old.title, old.content, old.tags, old.folder);
+            INSERT INTO notes_fts(rowid, title, content, tags, folder)
+            VALUES (new.id, new.title, new.content, new.tags, new.folder);
+        END;"
+    )?;
+
     Ok(())
 }
 

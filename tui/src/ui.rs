@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem};
+use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem, Note, NoteStatus};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyModifiers},
@@ -63,6 +63,53 @@ pub enum ListsInputMode {
     QuickAdd,
 }
 
+/// Which sub-mode the Notes screen is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotesMode {
+    List,
+    View,
+    Search,
+    ConfirmDelete,
+}
+
+/// Status filter on the Notes list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotesFilterStatus {
+    All,
+    Raw,
+    NoteStatus,
+    Article,
+}
+
+impl NotesFilterStatus {
+    fn as_api_str(&self) -> Option<&'static str> {
+        match self {
+            NotesFilterStatus::All => None,
+            NotesFilterStatus::Raw => Some("raw"),
+            NotesFilterStatus::NoteStatus => Some("note"),
+            NotesFilterStatus::Article => Some("article"),
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            NotesFilterStatus::All => "All",
+            NotesFilterStatus::Raw => "Raw",
+            NotesFilterStatus::NoteStatus => "Note",
+            NotesFilterStatus::Article => "Article",
+        }
+    }
+
+    fn next(&self) -> Self {
+        match self {
+            NotesFilterStatus::All => NotesFilterStatus::Raw,
+            NotesFilterStatus::Raw => NotesFilterStatus::NoteStatus,
+            NotesFilterStatus::NoteStatus => NotesFilterStatus::Article,
+            NotesFilterStatus::Article => NotesFilterStatus::All,
+        }
+    }
+}
+
 /// Represents which field is currently focused in the floating input form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TodoInputFocus {
@@ -103,6 +150,16 @@ pub struct App {
     pub calendar_date: NaiveDate,
     pub time_buffer: String,
     pub priority_buffer: String,
+
+    // Notes state
+    pub notes: Vec<Note>,
+    pub notes_list_state: ListState,
+    pub notes_view_note: Option<Note>,
+    pub notes_mode: NotesMode,
+    pub notes_filter: NotesFilterStatus,
+    pub notes_search_buf: String,
+    pub notes_scroll: u16,
+    pub notes_folders: Vec<String>,
 
     // Lists State
     pub list_groups: Vec<ListGroup>,
@@ -166,6 +223,15 @@ impl App {
             calendar_date: now,
             time_buffer: String::from("00:00"),
             priority_buffer: String::new(),
+
+            notes: Vec::new(),
+            notes_list_state: ListState::default(),
+            notes_view_note: None,
+            notes_mode: NotesMode::List,
+            notes_filter: NotesFilterStatus::All,
+            notes_search_buf: String::new(),
+            notes_scroll: 0,
+            notes_folders: Vec::new(),
 
             list_groups: Vec::new(),
             list_categories: Vec::new(),
@@ -534,6 +600,186 @@ impl App {
         }
     }
 
+    // --- Notes helpers ---
+
+    pub async fn fetch_notes_filtered(&mut self) {
+        let status = self.notes_filter.as_api_str();
+        match self.api_client.fetch_notes(status, None).await {
+            Ok(notes) => {
+                self.notes = notes;
+                let sel = self.notes_list_state.selected().unwrap_or(0)
+                    .min(self.notes.len().saturating_sub(1));
+                if self.notes.is_empty() {
+                    self.notes_list_state.select(None);
+                } else {
+                    self.notes_list_state.select(Some(sel));
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Notes error: {}", e)),
+        }
+        match self.api_client.fetch_note_folders().await {
+            Ok(folders) => self.notes_folders = folders,
+            Err(_) => {}
+        }
+    }
+
+    fn notes_move(&mut self, delta: i32) {
+        let len = self.notes.len();
+        if len == 0 { return; }
+        let cur = self.notes_list_state.selected().unwrap_or(0) as i32;
+        let next = (cur + delta).rem_euclid(len as i32) as usize;
+        self.notes_list_state.select(Some(next));
+    }
+
+    pub async fn notes_open_selected(&mut self) {
+        if let Some(idx) = self.notes_list_state.selected() {
+            if let Some(note) = self.notes.get(idx) {
+                let uuid = note.uuid.clone();
+                match self.api_client.fetch_note(&uuid).await {
+                    Ok(full_note) => {
+                        self.notes_view_note = Some(full_note);
+                        self.notes_scroll = 0;
+                        self.notes_mode = NotesMode::View;
+                    }
+                    Err(e) => self.last_error = Some(format!("Failed to load note: {}", e)),
+                }
+            }
+        }
+    }
+
+    pub fn notes_cycle_filter(&mut self) {
+        self.notes_filter = self.notes_filter.next();
+    }
+
+    pub async fn notes_run_search(&mut self) {
+        let q = self.notes_search_buf.trim().to_string();
+        if q.is_empty() {
+            self.fetch_notes_filtered().await;
+            return;
+        }
+        match self.api_client.search_notes(&q).await {
+            Ok(notes) => {
+                self.notes = notes;
+                if self.notes.is_empty() {
+                    self.notes_list_state.select(None);
+                } else {
+                    self.notes_list_state.select(Some(0));
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Search error: {}", e)),
+        }
+    }
+
+    pub async fn notes_advance_selected(&mut self) {
+        if let Some(idx) = self.notes_list_state.selected() {
+            if let Some(note) = self.notes.get(idx) {
+                let uuid = note.uuid.clone();
+                match self.api_client.advance_note_status(&uuid).await {
+                    Ok(updated) => {
+                        self.notes[idx] = updated;
+                        self.last_error = None;
+                    }
+                    Err(e) => self.last_error = Some(format!("Advance failed: {}", e)),
+                }
+            }
+        }
+    }
+
+    pub async fn notes_advance_current(&mut self) {
+        if let Some(note) = self.notes_view_note.clone() {
+            match self.api_client.advance_note_status(&note.uuid).await {
+                Ok(updated) => {
+                    if let Some(idx) = self.notes.iter().position(|n| n.uuid == note.uuid) {
+                        self.notes[idx] = updated.clone();
+                    }
+                    self.notes_view_note = Some(updated);
+                    self.last_error = None;
+                }
+                Err(e) => self.last_error = Some(format!("Advance failed: {}", e)),
+            }
+        }
+    }
+
+    pub async fn notes_delete_selected(&mut self) {
+        let uuid = match &self.notes_view_note {
+            Some(n) => n.uuid.clone(),
+            None => match self.notes_list_state.selected()
+                .and_then(|i| self.notes.get(i))
+            {
+                Some(n) => n.uuid.clone(),
+                None => return,
+            },
+        };
+        match self.api_client.delete_note(&uuid).await {
+            Ok(()) => {
+                self.notes_view_note = None;
+                self.notes_mode = NotesMode::List;
+                self.fetch_notes_filtered().await;
+            }
+            Err(e) => self.last_error = Some(format!("Delete failed: {}", e)),
+        }
+    }
+
+    /// Suspend the TUI, open the note in an external editor, sync content back via API.
+    pub async fn notes_open_editor(&mut self) {
+        let note = match self.notes_view_note.clone() {
+            Some(n) => n,
+            None => return,
+        };
+
+        let tmp_path = std::env::temp_dir().join(format!("{}.md", note.uuid));
+        if let Err(e) = std::fs::write(&tmp_path, &note.content) {
+            self.last_error = Some(format!("Failed to write temp file: {}", e));
+            return;
+        }
+
+        let editor = std::env::var("NOTES_EDITOR")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "vi".to_string());
+
+        // Restore terminal so the editor can take over.
+        let _ = disable_raw_mode();
+        let _ = stdout().execute(LeaveAlternateScreen);
+
+        let status = std::process::Command::new(&editor)
+            .arg(&tmp_path)
+            .status();
+
+        // Re-acquire the terminal.
+        let _ = enable_raw_mode();
+        let _ = stdout().execute(EnterAlternateScreen);
+
+        if let Err(e) = status {
+            self.last_error = Some(format!("Editor '{}' failed: {}", editor, e));
+            let _ = std::fs::remove_file(&tmp_path);
+            return;
+        }
+
+        let new_content = match std::fs::read_to_string(&tmp_path) {
+            Ok(c) => c,
+            Err(e) => {
+                self.last_error = Some(format!("Failed to read edited file: {}", e));
+                let _ = std::fs::remove_file(&tmp_path);
+                return;
+            }
+        };
+        let _ = std::fs::remove_file(&tmp_path);
+
+        match self.api_client.update_note(&note.uuid, &new_content, None).await {
+            Ok(updated) => {
+                if let Some(idx) = self.notes.iter().position(|n| n.uuid == note.uuid) {
+                    self.notes[idx] = updated.clone();
+                }
+                self.notes_view_note = Some(updated);
+                self.notes_scroll = 0;
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Failed to sync note: {}", e)),
+        }
+    }
+
     /// Handles input events specific to the current screen.
     pub async fn handle_input(&mut self, event: CEvent) {
         let previous_screen = self.current_screen;
@@ -592,9 +838,98 @@ impl App {
             }
             Screen::Notes => {
                 if let CEvent::Key(key) = event {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => self.current_screen = Screen::Dashboard,
-                        _ => {}
+                    match self.notes_mode {
+                        NotesMode::List => match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                self.current_screen = Screen::Dashboard;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => self.notes_move(-1),
+                            KeyCode::Down | KeyCode::Char('j') => self.notes_move(1),
+                            KeyCode::Enter => {
+                                self.notes_open_selected().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Tab => {
+                                self.notes_cycle_filter();
+                                self.fetch_notes_filtered().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('/') => {
+                                self.notes_mode = NotesMode::Search;
+                                self.notes_search_buf.clear();
+                            }
+                            KeyCode::Char('r') => {
+                                self.fetch_notes_filtered().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('a') => {
+                                self.notes_advance_selected().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('d') => {
+                                self.notes_mode = NotesMode::ConfirmDelete;
+                            }
+                            _ => {}
+                        },
+                        NotesMode::View => match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                self.notes_mode = NotesMode::List;
+                                self.notes_view_note = None;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                self.notes_scroll = self.notes_scroll.saturating_sub(3);
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                self.notes_scroll = self.notes_scroll.saturating_add(3);
+                            }
+                            KeyCode::Char('e') => {
+                                self.notes_open_editor().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('a') => {
+                                self.notes_advance_current().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('d') => {
+                                self.notes_mode = NotesMode::ConfirmDelete;
+                            }
+                            KeyCode::Char('p') => {
+                                if let Some(ref note) = self.notes_view_note.clone() {
+                                    let _ = self.api_client.print_note(&note.uuid).await;
+                                    action_taken = true;
+                                }
+                            }
+                            _ => {}
+                        },
+                        NotesMode::Search => match key.code {
+                            KeyCode::Esc => {
+                                self.notes_mode = NotesMode::List;
+                                self.notes_search_buf.clear();
+                                self.fetch_notes_filtered().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Enter => {
+                                self.notes_run_search().await;
+                                self.notes_mode = NotesMode::List;
+                                action_taken = true;
+                            }
+                            KeyCode::Backspace => { self.notes_search_buf.pop(); }
+                            KeyCode::Char(c) => self.notes_search_buf.push(c),
+                            _ => {}
+                        },
+                        NotesMode::ConfirmDelete => match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                self.notes_delete_selected().await;
+                                action_taken = true;
+                            }
+                            _ => {
+                                self.notes_mode = if self.notes_view_note.is_some() {
+                                    NotesMode::View
+                                } else {
+                                    NotesMode::List
+                                };
+                            }
+                        },
                     }
                 }
             }
@@ -772,6 +1107,9 @@ impl App {
                 }
                 Screen::Lists => {
                     self.fetch_list_groups().await;
+                }
+                Screen::Notes => {
+                    self.fetch_notes_filtered().await;
                 }
                 _ => {}
             }
@@ -1255,7 +1593,7 @@ impl Tui {
             match app.current_screen {
                 Screen::Dashboard => draw_dashboard(frame, app, area),
                 Screen::Todo => draw_todo_screen(frame, app, area),
-                Screen::Notes => draw_notes_placeholder(frame, area),
+                Screen::Notes => draw_notes_screen(frame, app, area),
                 Screen::Project => draw_project_placeholder(frame, area),
                 Screen::Lists => draw_lists_screen(frame, app, area),
                 _ => {}
@@ -2222,10 +2560,181 @@ fn draw_quick_add_overlay(frame: &mut ratatui::Frame, app: &mut App, anchor: Rec
     frame.render_stateful_widget(list, popup_area, &mut app.common_item_state);
 }
 
-fn draw_notes_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-    let text = Paragraph::new("Notes — coming soon\n\nPress Q or Esc to go back")
-        .block(Block::default().borders(Borders::ALL).title("Notes"));
-    frame.render_widget(text, area);
+fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+    let (filter_area, content_area, footer_area) = (chunks[0], chunks[1], chunks[2]);
+
+    // Filter / search bar
+    let all_filters = [
+        NotesFilterStatus::All,
+        NotesFilterStatus::Raw,
+        NotesFilterStatus::NoteStatus,
+        NotesFilterStatus::Article,
+    ];
+    let filter_label = format!(
+        "  Filter: {}  {}",
+        all_filters.iter()
+            .map(|f| {
+                let active = f == &app.notes_filter;
+                if active { format!("[{}]", f.label()) } else { f.label().to_string() }
+            })
+            .collect::<Vec<_>>()
+            .join("  "),
+        if app.notes_mode == NotesMode::Search {
+            format!("  Search: {}_", app.notes_search_buf)
+        } else {
+            format!("  {} notes", app.notes.len())
+        }
+    );
+    frame.render_widget(
+        Paragraph::new(filter_label).style(Style::default().fg(Color::DarkGray)),
+        filter_area,
+    );
+
+    // Content split: list (left) | viewer (right)
+    let content_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .split(content_area);
+    let (list_area, viewer_area) = (content_chunks[0], content_chunks[1]);
+
+    // Note list
+    let list_items: Vec<ListItem> = app.notes.iter().map(|note| {
+        let status_tag = match note.status {
+            NoteStatus::Raw => "[raw] ",
+            NoteStatus::Note => "[note]",
+            NoteStatus::Article => "[art] ",
+        };
+        let title = if note.title.is_empty() { "(untitled)" } else { &note.title };
+        let folder_prefix = if !note.folder.is_empty() {
+            format!("{}/", note.folder)
+        } else {
+            String::new()
+        };
+        let date = note.updated_at.format("%d %b").to_string();
+        ListItem::new(Line::from(vec![
+            ratatui::text::Span::styled(
+                format!("{} ", status_tag),
+                Style::default().fg(match note.status {
+                    NoteStatus::Raw => Color::Magenta,
+                    NoteStatus::Note => Color::Cyan,
+                    NoteStatus::Article => Color::Green,
+                }),
+            ),
+            ratatui::text::Span::raw(format!("{}{}", folder_prefix, title)),
+            ratatui::text::Span::styled(
+                format!("  {}", date),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ]))
+    }).collect();
+
+    let list_title = format!(" Notes ({}) ", app.notes.len());
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .title(list_title)
+        .border_style(Style::default().fg(
+            if app.notes_mode == NotesMode::List { Color::Cyan } else { Color::DarkGray }
+        ));
+    let list_widget = List::new(list_items)
+        .block(list_block)
+        .highlight_style(Style::default().bg(Color::Rgb(40, 44, 66)).fg(Color::White));
+    frame.render_stateful_widget(list_widget, list_area, &mut app.notes_list_state);
+
+    // Note viewer
+    let (viewer_title, viewer_content) = match &app.notes_view_note {
+        Some(note) => {
+            let tags = if note.tags.is_empty() {
+                String::new()
+            } else {
+                format!("  tags: {}", note.tags.join(", "))
+            };
+            let folder = if !note.folder.is_empty() {
+                format!("  folder: {}", note.folder)
+            } else {
+                String::new()
+            };
+            let header = format!(
+                "status: [{}]{}{}  updated: {}\n{}\n",
+                note.status.as_str(),
+                folder,
+                tags,
+                note.updated_at.format("%d %b %Y %H:%M"),
+                "─".repeat(viewer_area.width.saturating_sub(2) as usize),
+            );
+            let title = format!(" {} [{}] ",
+                if note.title.is_empty() { "Untitled" } else { &note.title },
+                note.status.as_str()
+            );
+            (title, format!("{}{}", header, note.content))
+        }
+        None => {
+            let help = match app.notes_mode {
+                NotesMode::ConfirmDelete => "Delete this note? Press y to confirm, any other key to cancel.".to_string(),
+                _ => "  Select a note to view its content.\n\n\
+                  Navigation:\n\
+                  \u{2022} j / k or arrows — move selection\n\
+                  \u{2022} Enter         — open note\n\
+                  \u{2022} Tab           — cycle filter (All→Raw→Note→Article)\n\
+                  \u{2022} /             — search\n\
+                  \u{2022} a             — advance status\n\
+                  \u{2022} d             — delete\n\
+                  \u{2022} r             — refresh\n\
+                  \u{2022} q             — back to dashboard\n\n\
+                  In view mode:\n\
+                  \u{2022} j / k         — scroll\n\
+                  \u{2022} e             — edit in $NOTES_EDITOR / $EDITOR / vi\n\
+                  \u{2022} a             — advance status\n\
+                  \u{2022} q             — back to list".to_string(),
+            };
+            (" Notes ".to_string(), help)
+        }
+    };
+
+    let viewer_block = Block::default()
+        .borders(Borders::ALL)
+        .title(viewer_title)
+        .border_style(Style::default().fg(
+            if app.notes_mode == NotesMode::View { Color::Cyan } else { Color::DarkGray }
+        ));
+    let viewer = Paragraph::new(viewer_content)
+        .block(viewer_block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.notes_scroll, 0));
+    frame.render_widget(viewer, viewer_area);
+
+    // Footer
+    let footer_text = match app.notes_mode {
+        NotesMode::List   => "j/k: move  Enter: open  Tab: filter  /: search  a: advance  d: delete  r: refresh  q: back",
+        NotesMode::View   => "j/k: scroll  e: edit  a: advance status  p: print  d: delete  q: back to list",
+        NotesMode::Search => "Type to search  Enter: run  Esc: cancel",
+        NotesMode::ConfirmDelete => "y: confirm delete  any other key: cancel",
+    };
+    frame.render_widget(
+        Paragraph::new(footer_text).style(Style::default().fg(Color::DarkGray)),
+        footer_area,
+    );
+
+    // Delete confirmation overlay
+    if app.notes_mode == NotesMode::ConfirmDelete {
+        let popup = Rect {
+            x: area.width.saturating_sub(50) / 2,
+            y: area.height.saturating_sub(5) / 2,
+            width: 50.min(area.width),
+            height: 5.min(area.height),
+        };
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new("Delete this note? (y = confirm, any other key = cancel)")
+                .block(Block::default().borders(Borders::ALL).title(" Delete Note ")
+                    .border_style(Style::default().fg(Color::Red)))
+                .wrap(Wrap { trim: true }),
+            popup,
+        );
+    }
 }
 
 fn draw_project_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
