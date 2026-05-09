@@ -2250,12 +2250,16 @@
       <div class="md-body" id="md-render"></div>`;
 
     const mdEl = document.getElementById('md-render');
+    const renderMd = (content) => {
+      window.marked.use({ breaks: true });
+      mdEl.innerHTML = window.marked.parse(content || '');
+    };
     if (window.marked) {
-      mdEl.innerHTML = window.marked.parse(note.content || '');
+      renderMd(note.content);
     } else {
       const s = document.createElement('script');
       s.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
-      s.onload = () => { mdEl.innerHTML = window.marked.parse(note.content || ''); };
+      s.onload = () => renderMd(note.content);
       document.head.appendChild(s);
     }
   }
