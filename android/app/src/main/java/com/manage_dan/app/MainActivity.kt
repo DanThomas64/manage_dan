@@ -212,19 +212,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Extracts a `manage-dan://todo/:id` deep-link URL from the intent and
-     * maps it to the corresponding task detail URL on the configured server.
+     * Extracts a recognised manage-dan:// deep-link URL from the intent and
+     * maps it to the corresponding page on the configured server.
      * Returns null if the intent is not a recognised deep link.
      */
     private fun deepLinkUrl(intent: Intent): String? {
         val uri: Uri = intent.data ?: return null
-        if (uri.scheme != "manage-dan" || uri.host != "todo") return null
-
-        val taskId = uri.pathSegments.firstOrNull() ?: return null
-        taskId.toLongOrNull() ?: return null  // validate it's a number
+        if (uri.scheme != "manage-dan") return null
 
         val serverUrl = prefs.getString("server_url", null) ?: return null
-        return "$serverUrl/todo/$taskId"
+
+        return when (uri.host) {
+            "todo" -> {
+                val taskId = uri.pathSegments.firstOrNull() ?: return null
+                taskId.toLongOrNull() ?: return null  // validate it's a number
+                "$serverUrl/todo/$taskId"
+            }
+            "notes" -> {
+                val uuid = uri.pathSegments.firstOrNull() ?: return null
+                if (uuid.isBlank()) return null
+                "$serverUrl/notes/$uuid"
+            }
+            else -> null
+        }
     }
 
     private fun promptForUrl(firstRun: Boolean = false) {

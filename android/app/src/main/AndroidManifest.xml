@@ -27,6 +27,13 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="manage-dan" android:host="todo" />
             </intent-filter>
+            <!-- Deep-link handler for QR-code note links (manage-dan://notes/:uuid) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="manage-dan" android:host="notes" />
+            </intent-filter>
         </activity>
 
     </application>
