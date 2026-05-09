@@ -5,11 +5,7 @@
 
 use db;
 use log;
-<<<<<<< rework_v1
 use nogo::{SystemsGoNogo, Status};
-=======
-use nogo::SystemsGoNogo;
->>>>>>> master
 use notes;
 use project;
 use printer;
@@ -21,10 +17,7 @@ pub mod error;
 pub mod macros;
 pub mod nogo;
 pub mod prelude;
-<<<<<<< rework_v1
-pub mod api; // New API module
-=======
->>>>>>> master
+pub mod api;
 mod test;
 
 use crate::prelude::*;
@@ -32,7 +25,6 @@ use crate::prelude::*;
 /// Main Function of the app
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-<<<<<<< rework_v1
     // 1. Load configuration
     let config = AppConfig::load()?;
     AppConfig::init(config)?;
@@ -40,14 +32,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Initialize all systems, including logging and database setup in the correct order.
     let mut systems = SystemsStatus::new();
     let systems = systems.init();
-    
+
     info!("Application starting up...");
     let cfg_dir = std::env::var("APP_CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
     info!("Local config: {}/local.toml", cfg_dir);
 
     // Setup monitoring and get final status
     let mut go_nogo = SystemsGoNogo::new();
-    
+
     // Calculate initial status synchronously
     go_nogo.calculate_initial_status(systems);
 
@@ -158,27 +150,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 6. Start the HTTP API server
     info!("Application initialized. Starting API server.");
-    
-    // Note: We pass copies of the initial status structs. 
-    // A future improvement would be to use a shared state (Arc<Mutex<...>>) 
+
+    // Note: We pass copies of the initial status structs.
+    // A future improvement would be to use a shared state (Arc<Mutex<...>>)
     // so the API can report real-time status updates from the monitoring loop.
     api::start_server(systems, go_nogo).await;
 
     info!("API server shut down. Application exiting.");
-    
-=======
-    // initialize logging
-    let _ = tracing_subscriber::fmt()
-        .with_max_level(Level::DEBUG)
-        .with_line_number(true)
-        .with_ansi(false)
-        .with_timer(ChronoLocal::rfc_3339())
-        .init();
 
-    // initialize all systems
-    let systems = SystemsStatus::new().init();
-    // Setup monitoring
-    let _ = SystemsGoNogo::new().init(systems).await;
->>>>>>> master
     Ok(())
 }

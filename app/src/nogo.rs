@@ -8,11 +8,7 @@ use tokio::time::{sleep, Duration};
 use serde::{Serialize, Deserialize}; // Added serde imports
 
 /// The status enum is used to store the possible status of a system
-<<<<<<< rework_v1
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)] // Added Serialize/Deserialize
-=======
-#[derive(Debug, Clone, Copy, PartialEq)]
->>>>>>> master
 pub enum Status {
     Init,
     Go,
@@ -30,27 +26,20 @@ pub struct SystemsStatus {
     pub project: Status,
     pub printer: Status,
     pub todo: Status,
-<<<<<<< rework_v1
     pub lists: Status,
 }
 
 /// Holds the overall Go/NoGo status of the application.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)] // Added Serialize/Deserialize
-=======
-}
-
-#[derive(Debug, Clone, Copy)]
->>>>>>> master
 pub struct SystemsGoNogo {
     pub gono: Status,
 }
 impl SystemsGoNogo {
-<<<<<<< rework_v1
     /// Creates a new `SystemsGoNogo` instance initialized to `Status::Init`.
     pub fn new() -> SystemsGoNogo {
         SystemsGoNogo { gono: Status::Init }
     }
-    
+
     /// Calculates the initial overall status based on system initialization results.
     pub fn calculate_initial_status(&mut self, systems: SystemsStatus) {
         *self = self.gonogo(systems);
@@ -59,14 +48,11 @@ impl SystemsGoNogo {
 
     /// Starts the monitoring loop in a background task.
     pub fn start_monitoring(self, systems: SystemsStatus) {
-        // Spawn the monitoring loop and do NOT await it.
         tokio::spawn(async move {
             let _ = self.monitor(systems).await;
         });
     }
 
-    /// Check the status of each system in the Status Struct and then update
-    /// the overall status accordingly.
     // TODO: Create Error handling for this
     /// Determines the overall status based on the status of all individual systems.
     pub fn gonogo(&mut self, all_sys: SystemsStatus) -> SystemsGoNogo {
@@ -74,25 +60,7 @@ impl SystemsGoNogo {
             let n_status: Status = match status {
                 Status::Init => match x {
                     Status::Go => Status::Go,
-                    Status::Nogo | Status::Degraded => Status::Degraded, // Degraded is treated as degraded from Init
-=======
-    pub fn new() -> SystemsGoNogo {
-        SystemsGoNogo { gono: Status::Init }
-    }
-    // TODO: Create Error handling for this
-    pub async fn init(&mut self, systems: SystemsStatus) {
-        let _ = self.monitor(systems).await;
-    }
-    /// Check the status of each system in the Status Struct and then update
-    /// the overall status accordingly.
-    // TODO: Create Error handling for this
-    pub fn gonogo(&mut self, all_sys: SystemsStatus) -> SystemsGoNogo {
-        all_sys.iter().fold(self.gono, |status: Status, x: Status| {
-            let n_status: Status = match status {
-                Status::Init => match x {
-                    Status::Go => Status::Go,
-                    Status::Nogo => Status::Nogo,
->>>>>>> master
+                    Status::Nogo | Status::Degraded => Status::Degraded,
                     _ => Status::Unknown,
                 },
                 Status::Go => match x {
@@ -104,10 +72,7 @@ impl SystemsGoNogo {
                     _ => Status::Nogo,
                 },
                 Status::Degraded => match x {
-<<<<<<< rework_v1
                     Status::Nogo => Status::Nogo,
-=======
->>>>>>> master
                     _ => Status::Degraded,
                 },
                 _ => Status::Unknown,
@@ -117,43 +82,21 @@ impl SystemsGoNogo {
         });
         *self
     }
-<<<<<<< rework_v1
-    
+
     /// The actual monitoring process loop.
-=======
-    /// A monitoring process to make check the GoNogo Struct
->>>>>>> master
     pub async fn monitor(
         mut self,
         systems: SystemsStatus,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // TODO: Create Error handling for this
-<<<<<<< rework_v1
         loop {
             sleep(Duration::from_millis(500)).await;
-            
-            // Capture status before update
             let old_status = self.gono;
-            
-            // Update status
             let _ = self.gonogo(systems);
-            
             if self.gono != old_status {
-                // Log only if status has changed
                 info!("Overall Status changed: {:?}", self.gono);
             }
         }
-=======
-        let _ = tokio::spawn(async move {
-            loop {
-                let _ = sleep(Duration::from_millis(500)).await;
-                let _ = self.gonogo(systems);
-                info!("Overall Status: {:?}", self.gono);
-            }
-        })
-        .await;
-        Ok(())
->>>>>>> master
     }
 }
 
@@ -167,38 +110,25 @@ impl SystemsStatus {
             project: Status::Init,
             printer: Status::Init,
             todo: Status::Init,
-<<<<<<< rework_v1
             lists: Status::Init,
         }
     }
     // TODO: Create Error handling for this
     /// Initializes all subsystems and updates their status fields.
     pub fn init(&mut self) -> SystemsStatus {
-        
+
         // 1. Initialize DB first, so the log table exists when logging starts.
-=======
-        }
-    }
-    // TODO: Create Error handling for this
-    pub fn init(&mut self) -> SystemsStatus {
->>>>>>> master
         match db::init().map_err(|e| AppError::Db(e).print()).is_ok() {
             true => self.update("db", Status::Go),
             false => self.update("db", Status::Nogo),
         };
-<<<<<<< rework_v1
 
-        // 2. Initialize log system, which relies on DB being ready for DB logging.
-        // This must happen AFTER DB initialization to ensure the 'log' table exists.
+        // 2. Initialize log system — must happen after DB so 'log' table exists.
         match log::init(&AppConfig::get().logging.file).map_err(|e| AppError::Log(e).print()).is_ok() {
-=======
-        // initialize log
-        match log::init().map_err(|e| AppError::Log(e).print()).is_ok() {
->>>>>>> master
             true => self.update("log", Status::Go),
             false => self.update("log", Status::Nogo),
         };
-        
+
         // initialize notes
         match notes::init(&AppConfig::get().notes.dir)
             .map_err(|e| AppError::Notes(e).print())
@@ -215,18 +145,17 @@ impl SystemsStatus {
             true => self.update("project", Status::Go),
             false => self.update("project", Status::Nogo),
         };
-        
-        // 5. Initialize printer, passing configuration values
+
+        // initialize printer
         let config = AppConfig::get();
         match printer::init(config.printer.vendor_id, config.printer.product_id, &config.printer.mode, config.printer.characters_per_line)
             .map_err(|e| AppError::Printer(e).print())
             .is_ok()
         {
-<<<<<<< rework_v1
             true => self.update("printer", Status::Go),
             false => self.update("printer", Status::Nogo),
         };
-        
+
         // initialize todo (Vikunja backend)
         let vikunja_cfg = &AppConfig::get().vikunja;
         match todo::init(
@@ -250,19 +179,9 @@ impl SystemsStatus {
             false => self.update("lists", Status::Nogo),
         };
 
-=======
-            true => self.update("tasks", Status::Go),
-            false => self.update("tasks", Status::Nogo),
-        };
-        // initialize todo
-        match todo::init().map_err(|e| AppError::Todo(e).print()).is_ok() {
-            true => self.update("todo", Status::Go),
-            false => self.update("todo", Status::Nogo),
-        };
->>>>>>> master
         *self
     }
-    
+
     /// Returns an iterator over the system statuses.
     pub fn iter(&self) -> SystemsIter {
         SystemsIter {
@@ -271,10 +190,7 @@ impl SystemsStatus {
         }
     }
     // TODO: Create Error handling for this
-<<<<<<< rework_v1
     /// Updates the status of a specific subsystem by name.
-=======
->>>>>>> master
     pub fn update(&mut self, val: &str, status: Status) -> Self {
         match val {
             "db" => self.db = status,
@@ -283,10 +199,7 @@ impl SystemsStatus {
             "project" => self.project = status,
             "printer" => self.printer = status,
             "todo" => self.todo = status,
-<<<<<<< rework_v1
             "lists" => self.lists = status,
-=======
->>>>>>> master
             _ => _ = Status::Unknown,
         }
         *self
@@ -304,7 +217,6 @@ impl Iterator for SystemsIter {
 
     fn next(&mut self) -> Option<Self::Item> {
         let result = match self.index {
-<<<<<<< rework_v1
             0 => Some(("db", self.systems.db)),
             1 => Some(("log", self.systems.log)),
             2 => Some(("notes", self.systems.notes)),
@@ -312,14 +224,6 @@ impl Iterator for SystemsIter {
             4 => Some(("printer", self.systems.printer)),
             5 => Some(("todo", self.systems.todo)),
             6 => Some(("lists", self.systems.lists)),
-=======
-            0 => Some(self.systems.db),
-            1 => Some(self.systems.log),
-            2 => Some(self.systems.notes),
-            3 => Some(self.systems.project),
-            4 => Some(self.systems.tasks),
-            5 => Some(self.systems.todo),
->>>>>>> master
             _ => None,
         };
         self.index += 1;
