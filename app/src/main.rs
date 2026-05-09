@@ -5,7 +5,11 @@
 
 use db;
 use log;
+<<<<<<< rework_v1
 use nogo::{SystemsGoNogo, Status};
+=======
+use nogo::SystemsGoNogo;
+>>>>>>> master
 use notes;
 use project;
 use printer;
@@ -17,7 +21,10 @@ pub mod error;
 pub mod macros;
 pub mod nogo;
 pub mod prelude;
+<<<<<<< rework_v1
 pub mod api; // New API module
+=======
+>>>>>>> master
 mod test;
 
 use crate::prelude::*;
@@ -25,6 +32,7 @@ use crate::prelude::*;
 /// Main Function of the app
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+<<<<<<< rework_v1
     // 1. Load configuration
     let config = AppConfig::load()?;
     AppConfig::init(config)?;
@@ -158,5 +166,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("API server shut down. Application exiting.");
     
+=======
+    // initialize logging
+    let _ = tracing_subscriber::fmt()
+        .with_max_level(Level::DEBUG)
+        .with_line_number(true)
+        .with_ansi(false)
+        .with_timer(ChronoLocal::rfc_3339())
+        .init();
+
+    // initialize all systems
+    let systems = SystemsStatus::new().init();
+    // Setup monitoring
+    let _ = SystemsGoNogo::new().init(systems).await;
+>>>>>>> master
     Ok(())
 }
