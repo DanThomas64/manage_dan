@@ -1727,11 +1727,11 @@ fn draw_section_header(
         ),
         ratatui::text::Span::styled(
             format!(" v{}  ", VERSION),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(Color::Rgb(160, 160, 160)),
         ),
         ratatui::text::Span::styled(
             summary.to_string(),
-            Style::default().fg(Color::White),
+            Style::default().fg(Color::Rgb(220, 220, 220)),
         ),
     ]);
     frame.render_widget(
@@ -2603,7 +2603,7 @@ fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let item_area    = panels[2];
 
     let focused_style   = Style::default().fg(Color::Green);
-    let unfocused_style = Style::default().fg(Color::DarkGray);
+    let unfocused_style = Style::default().fg(Color::Rgb(110, 110, 110));
 
     // --- Groups panel ---
     let group_items: Vec<ListItem> = app.list_groups.iter().map(|g| {
@@ -2731,7 +2731,7 @@ fn draw_notes_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .split(area);
 
     let focused_style = Style::default().fg(Color::Yellow);
-    let normal_style = Style::default().fg(Color::DarkGray);
+    let normal_style = Style::default().fg(Color::Rgb(110, 110, 110));
 
     let field_style = |f: NotesCreateFocus| {
         if app.notes_create_focus == f { focused_style } else { normal_style }
@@ -2777,7 +2777,7 @@ fn draw_notes_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // Footer
     frame.render_widget(
         Paragraph::new("Tab: next field  Ctrl+S: save  Esc: cancel")
-            .style(Style::default().fg(Color::DarkGray)),
+            .style(Style::default().fg(Color::Rgb(160, 160, 160))),
         chunks[4],
     );
 }
@@ -2828,7 +2828,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         }
     );
     frame.render_widget(
-        Paragraph::new(filter_label).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(filter_label).style(Style::default().fg(Color::Rgb(180, 180, 180))),
         filter_area,
     );
 
@@ -2865,7 +2865,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             ratatui::text::Span::raw(format!("{}{}", folder_prefix, title)),
             ratatui::text::Span::styled(
                 format!("  {}", date),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(Color::Rgb(160, 160, 160)),
             ),
         ]))
     }).collect();
@@ -2875,7 +2875,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .title(list_title)
         .border_style(Style::default().fg(
-            if app.notes_mode == NotesMode::List { Color::Yellow } else { Color::DarkGray }
+            if app.notes_mode == NotesMode::List { Color::Yellow } else { Color::Rgb(110, 110, 110) }
         ));
     let list_widget = List::new(list_items)
         .block(list_block)
@@ -2936,7 +2936,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .title(viewer_title)
         .border_style(Style::default().fg(
-            if app.notes_mode == NotesMode::View { Color::Yellow } else { Color::DarkGray }
+            if app.notes_mode == NotesMode::View { Color::Yellow } else { Color::Rgb(110, 110, 110) }
         ));
     let viewer = Paragraph::new(viewer_content)
         .block(viewer_block)
