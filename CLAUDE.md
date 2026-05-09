@@ -20,9 +20,9 @@ cargo run                      # Run the app
 
 ## Architecture
 
-This is a Rust Cargo workspace with one binary (`app`) and six library crates: `db`, `log`, `tasks`, `todo`, `notes`, `project`. The `app` crate depends on all of them.
+This is a Rust Cargo workspace with one binary (`app`) and library crates: `db`, `log`, `printer`, `todo`, `vikunja`, `lists`, `notes`, `project`, plus a second binary `tui`. The `app` crate depends on all library crates.
 
-**Execution flow**: `main()` initializes tracing, calls `SystemsStatus::init()` which sequentially calls `init()` on each subsystem crate, tracking per-subsystem `Status` (Go/Nogo/Degraded/Unknown/Init). A tokio task (`SystemsGoNogo`) then loops every 500ms logging overall health — any `Nogo` subsystem makes the overall status `Nogo`.
+**Execution flow**: `main()` loads `AppConfig`, calls `SystemsStatus::init()` which sequentially calls `init()` on each subsystem crate in dependency order (db → log → notes → project → printer → todo → lists), tracking per-subsystem `Status` (Go/Nogo/Degraded/Unknown/Init). `SystemsGoNogo::calculate_initial_status()` derives overall health; `start_monitoring()` spawns a tokio task that loops every 500ms updating it. After init, the app prints a startup receipt, spawns background tasks (print monitor, daily summary, completed summary), then starts the warp HTTP API server.
 
 **Standardized module pattern** — every library crate follows the same structure:
 - `lib.rs`: `init() -> Result<(), Error>` and tests

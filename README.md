@@ -1,6 +1,6 @@
 # manage_dan
 
-A personal management system built in Rust. Integrates with a self-hosted [Vikunja](https://vikunja.io) instance to manage todos, prints physical tickets to a USB thermal printer, maintains shopping lists, and exposes everything through an HTTP API, a terminal UI, and a web frontend.
+A personal management system built in Rust. Integrates with a self-hosted [Vikunja](https://vikunja.io) instance to manage todos, prints physical tickets to a USB thermal printer, maintains shopping lists, manages markdown notes, and exposes everything through an HTTP API, a terminal UI, a web frontend, and an Android app.
 
 ---
 
@@ -11,9 +11,13 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 | **Todo management** | Create, edit, and complete tasks backed by Vikunja. New tasks automatically print a ticket. |
 | **Physical printing** | Sends formatted receipts to a USB ESC/POS thermal printer (or renders to stdout for testing). |
 | **Daily summary** | Prints an overdue/high-priority/upcoming task summary at a configurable hour each morning. |
-| **Shopping lists** | Category-based shopping lists (Groceries, Toiletries, etc.) with check-off and print support. |
-| **Web frontend** | Simple shopping list UI served at `http://localhost`. |
-| **Terminal UI** | Full keyboard-driven TUI for todo and shopping management. |
+| **End-of-day summary** | Prints tasks completed during the day at a configurable evening hour. |
+| **Recurring tasks** | Configurable recurring tasks printed automatically when due. |
+| **Shopping lists** | Category-based shopping lists with check-off, print support, and common-items templates. |
+| **Notes** | Markdown notes stored as `.md` files with YAML frontmatter. Three-stage workflow: Raw → Note → Article. Full-text search via SQLite FTS5. Printable. |
+| **Web frontend** | SPA served at `http://localhost` covering todos, shopping lists, and notes. |
+| **Android app** | Native Android client for quick capture and list management. |
+| **Terminal UI** | Full keyboard-driven TUI for todo, notes, shopping, and project management. |
 | **System health** | Monitors and reports the status of every subsystem at startup and continuously. |
 
 ---
@@ -71,7 +75,7 @@ The first build compiles the entire Rust workspace and will take a few minutes. 
 
 | Service | URL |
 |---|---|
-| Shopping list web UI | http://localhost |
+| Web UI | http://localhost |
 | Raw API | http://localhost/api/v1/... |
 
 ### 4. Stop the stack
@@ -80,7 +84,7 @@ The first build compiles the entire Rust workspace and will take a few minutes. 
 docker compose down
 ```
 
-Your data (SQLite database) is stored in a Docker named volume (`app_data`) and persists across restarts. To wipe it entirely:
+Your data (SQLite database and notes files) is stored in a Docker named volume (`app_data`) and persists across restarts. To wipe it entirely:
 
 ```bash
 docker compose down -v
@@ -198,8 +202,7 @@ The TUI reads the API URL from the `MANAGE_API_URL` environment variable, defaul
 
 | Scenario | Command |
 |---|---|
-| Docker Compose (default) | `cargo run -p tui` |
-| Local `cargo run -p app` | `MANAGE_API_URL=http://127.0.0.1:8080 cargo run -p tui` |
+| Local `cargo run -p app` | `cargo run -p tui` |
 | Docker Compose (direct, port 8080) | `MANAGE_API_URL=http://localhost:8080 cargo run -p tui` |
 
 ---
@@ -248,10 +251,24 @@ summary_hour = 8
 # full     — overdue + high priority + upcoming 7 days
 summary_level = "full"
 
+# Print an end-of-day completed-task summary
+completed_summary_enabled = true
+
+# Hour of day (0–23) to print the completed-task summary
+completed_summary_hour = 20
+
+[logging]
+# Path to the log file (relative to working directory, or absolute)
+file = "data/logs/app.log"
+
 [vikunja]
 base_url  = "http://localhost:3456"
 api_token = ""
 project_id = 1
+
+[notes]
+# Directory where .md note files are stored
+dir = "data/notes"
 ```
 
 ---
@@ -283,18 +300,20 @@ To enable USB printing, set `mode = "usb"` in `config/local.toml`.
 
 Launch with `cargo run -p tui` (requires the backend server to be running).
 
+Each section has its own colour theme: Dashboard (white), Tasks (blue), Notes (yellow), Lists (green), Project (magenta).
+
 ### Dashboard
 
 | Key | Action |
 |---|---|
-| `1` | Open Todo screen |
+| `1` | Open Tasks screen |
 | `2` | Open Notes screen |
-| `3` | Open Project screen |
-| `4` | Open Shopping screen |
+| `3` | Open Lists screen |
+| `4` | Open Project screen |
 | `R` | Refresh status |
 | `Q` | Quit |
 
-### Todo screen
+### Tasks screen
 
 | Key | Action |
 |---|---|
@@ -311,20 +330,39 @@ Launch with `cargo run -p tui` (requires the backend server to be running).
 
 | Key | Action |
 |---|---|
-| `I` / `Enter` | Enter insert mode on focused field |
-| `H` `J` `K` `L` / arrows | Move between fields |
-| `Esc` / `Ctrl+C` | Exit insert mode |
+| `Tab` / `Shift+Tab` | Move between fields |
+| `Enter` | Edit focused field |
+| `Esc` | Cancel / close form |
 | `<` / `>` | Previous / next month (calendar) |
-| `Esc` (Normal mode) | Cancel and close form |
 
-### Shopping screen
+### Notes screen
 
 | Key | Action |
 |---|---|
-| `Tab` | Switch focus between categories and items |
 | `J` / `K` or `↑` `↓` | Navigate list |
-| `A` | Add category (when categories focused) / Add item (when items focused) |
-| `D` | Delete selected category or item |
+| `N` | Create new note |
+| `Enter` | View selected note |
+| `P` | Print selected note |
+| `R` | Refresh |
+| `Q` | Back to dashboard |
+
+**In the create form (Title → Folder → Tags → Content):**
+
+| Key | Action |
+|---|---|
+| `Tab` / `Shift+Tab` | Move between fields |
+| `Enter` | Advance to next field (or insert newline in Content) |
+| `Ctrl+S` | Submit and create note |
+| `Esc` | Cancel |
+
+### Lists screen
+
+| Key | Action |
+|---|---|
+| `Tab` | Switch focus between groups/categories and items |
+| `J` / `K` or `↑` `↓` | Navigate list |
+| `A` | Add group or item |
+| `D` | Delete selected group or item |
 | `Space` | Check / uncheck item |
 | `C` | Clear all checked items |
 | `P` | Print list |
@@ -347,27 +385,51 @@ GET  /api/v1/logs?limit=N        Latest N log entries (default 20)
 ### Todo
 
 ```
-GET    /api/v1/todo              List all tasks
-POST   /api/v1/todo              Create task
-PUT    /api/v1/todo/:id          Update task
-DELETE /api/v1/todo/:id          Delete task
-POST   /api/v1/todo/:id/print    Print ticket
-POST   /api/v1/todo/:id/archive  Archive task
-GET    /api/v1/todo/summary      Summary statistics
+GET    /api/v1/todo                   List all tasks
+POST   /api/v1/todo                   Create task
+PUT    /api/v1/todo/:id               Update task
+DELETE /api/v1/todo/:id               Delete task
+PATCH  /api/v1/todo/:id/done          Set completed state  { "done": true }
+POST   /api/v1/todo/:id/print         Print ticket
+POST   /api/v1/todo/:id/archive       Archive task
+GET    /api/v1/todo/summary           Summary statistics
 ```
 
-### Shopping
+### Notes
 
 ```
-GET    /api/v1/shopping/categories              List categories
-POST   /api/v1/shopping/categories              Create category  { "name": "..." }
-DELETE /api/v1/shopping/categories/:id          Delete category + all items
-GET    /api/v1/shopping/categories/:id/items    List items
-POST   /api/v1/shopping/categories/:id/items    Add item  { "name": "...", "quantity": "..." }
-POST   /api/v1/shopping/categories/:id/clear    Remove all checked items
-POST   /api/v1/shopping/categories/:id/print    Print list
-PATCH  /api/v1/shopping/items/:id/check         Toggle check  { "checked": true }
-DELETE /api/v1/shopping/items/:id               Delete item
+GET    /api/v1/notes                  List notes  (?status=raw&folder=work&tag=rust)
+POST   /api/v1/notes                  Create note
+GET    /api/v1/notes/search           Full-text search  (?q=query)
+GET    /api/v1/notes/folders          List all folders
+GET    /api/v1/notes/tags             List all tags
+GET    /api/v1/notes/:uuid            Get single note (JSON)
+PUT    /api/v1/notes/:uuid            Update note
+DELETE /api/v1/notes/:uuid            Delete note
+PATCH  /api/v1/notes/:uuid/status     Advance status (Raw → Note → Article)
+POST   /api/v1/notes/:uuid/print      Print note
+GET    /notes/:uuid                   HTML viewer (markdown rendered in browser)
+```
+
+### Lists
+
+```
+GET    /api/v1/lists/groups                         List all groups
+POST   /api/v1/lists/groups                         Create group  { "name": "..." }
+DELETE /api/v1/lists/groups/:id                     Delete group + all categories
+GET    /api/v1/lists/groups/:id/categories          List categories in group
+POST   /api/v1/lists/groups/:id/categories          Create category  { "name": "..." }
+DELETE /api/v1/lists/categories/:id                 Delete category + all items
+GET    /api/v1/lists/categories/:id/items           List items
+POST   /api/v1/lists/categories/:id/items           Add item  { "name": "...", "quantity": "..." }
+POST   /api/v1/lists/categories/:id/clear           Remove all checked items
+POST   /api/v1/lists/categories/:id/print           Print list
+GET    /api/v1/lists/categories/:id/common          List common-item templates
+POST   /api/v1/lists/categories/:id/common          Add common-item template
+POST   /api/v1/lists/common/:id/add                 Add common item to active list
+DELETE /api/v1/lists/common/:id                     Delete common-item template
+PATCH  /api/v1/lists/items/:id/check                Toggle check  { "checked": true }
+DELETE /api/v1/lists/items/:id                      Delete item
 ```
 
 ---
@@ -377,16 +439,17 @@ DELETE /api/v1/shopping/items/:id               Delete item
 ```
 manage_dan/
 ├── app/          Main server — HTTP API, system init, background tasks
-├── db/           SQLite access layer (logs, print records, shopping data)
+├── db/           SQLite access layer (logs, print records, lists, notes index)
 ├── log/          Logging subsystem initialisation
 ├── printer/      ESC/POS USB printer + terminal renderer
-├── todo/         Todo business logic, Vikunja integration, print monitor
+├── todo/         Todo business logic, Vikunja integration, print monitor, summaries
 ├── vikunja/      Vikunja HTTP client
-├── shopping/     Shopping list CRUD and printing
-├── notes/        Notes subsystem (stub, in progress)
-├── project/      Project subsystem (stub, in progress)
+├── lists/        Shopping list CRUD and printing
+├── notes/        Markdown notes — file storage, DB index, FTS5 search, printing
+├── project/      Project subsystem (stub)
 ├── tui/          Terminal UI client
-├── frontend/     Shopping list web UI (nginx + vanilla JS)
+├── frontend/     Web UI (nginx + vanilla JS) — todos, lists, notes
+├── android/      Android client app
 ├── config/       Configuration files
 ├── Dockerfile    Multi-stage Rust build
 └── docker-compose.yml
@@ -412,4 +475,7 @@ The udev rule may not have been applied. Try unplugging and replugging the print
 Ensure Docker BuildKit is enabled (`DOCKER_BUILDKIT=1`) and that you have an internet connection for downloading crates during the first build.
 
 **TUI can't connect**
-The TUI defaults to `http://localhost` (Docker Compose via nginx). If running the server locally with `cargo run -p app`, set `MANAGE_API_URL=http://127.0.0.1:8080`. Make sure the server is running before launching the TUI.
+The TUI defaults to `http://127.0.0.1:8080`. If running via Docker Compose with nginx, set `MANAGE_API_URL=http://localhost`. Make sure the server is running before launching the TUI.
+
+**Notes not appearing after editing files on disk**
+Notes are synced from disk at startup only. Restart the server to pick up external edits.
