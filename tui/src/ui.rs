@@ -865,7 +865,7 @@ impl App {
                                 KeyCode::Char('p') => { self.print_selected().await; action_taken = true; }
                                 KeyCode::Char('x') => { self.archive_selected().await; action_taken = true; }
                                 KeyCode::Char('d') => { self.delete_selected().await; action_taken = true; }
-                                _ => {}
+                                _ => { self.handle_nav_key(key.code); }
                             }
                         }
                     }
@@ -917,7 +917,7 @@ impl App {
                             KeyCode::Char('n') => {
                                 self.notes_mode = NotesMode::Create;
                             }
-                            _ => {}
+                            _ => { self.handle_nav_key(key.code); }
                         },
                         NotesMode::Create => {
                             match key.code {
@@ -1005,7 +1005,7 @@ impl App {
                                     action_taken = true;
                                 }
                             }
-                            _ => {}
+                            _ => { self.handle_nav_key(key.code); }
                         },
                         NotesMode::Search => match key.code {
                             KeyCode::Esc => {
@@ -1043,7 +1043,7 @@ impl App {
                 if let CEvent::Key(key) = event {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => self.current_screen = Screen::Dashboard,
-                        _ => {}
+                        _ => { self.handle_nav_key(key.code); }
                     }
                 }
             }
@@ -1141,7 +1141,7 @@ impl App {
                                     self.fetch_list_groups().await;
                                     action_taken = true;
                                 }
-                                _ => {}
+                                _ => { self.handle_nav_key(key.code); }
                             }
                         }
                         ListsInputMode::QuickAdd => {
@@ -1237,15 +1237,21 @@ impl App {
         }
     }
 
+    fn handle_nav_key(&mut self, key_code: KeyCode) -> bool {
+        match key_code {
+            KeyCode::Char('1') => { self.current_screen = Screen::Todo; true }
+            KeyCode::Char('2') => { self.current_screen = Screen::Notes; true }
+            KeyCode::Char('3') => { self.current_screen = Screen::Project; true }
+            KeyCode::Char('4') => { self.current_screen = Screen::Lists; true }
+            _ => false,
+        }
+    }
+
     fn handle_dashboard_input(&mut self, key_code: KeyCode) {
         match key_code {
             KeyCode::Char('q') => self.current_screen = Screen::Quit,
-            KeyCode::Char('1') => self.current_screen = Screen::Todo,
-            KeyCode::Char('2') => self.current_screen = Screen::Notes,
-            KeyCode::Char('3') => self.current_screen = Screen::Project,
-            KeyCode::Char('4') => self.current_screen = Screen::Lists,
             KeyCode::Char('r') => { /* update_status is called automatically */ }
-            _ => {}
+            _ => { self.handle_nav_key(key_code); }
         }
     }
     
