@@ -335,18 +335,34 @@ pub async fn update(uuid: &str, req: UpdateNoteRequest) -> NotesLibResult<Note> 
 }
 
 pub async fn delete(uuid: &str) -> NotesLibResult {
-    let note = get(uuid).await?;
-    let uuid_owned = uuid.to_string();
+    let u_db = uuid.to_string();
+    let uuid_for_path = uuid.to_string();
 
+    // Best-effort: fetch title/folder for file cleanup. If missing from DB or
+    // file is gone, we still proceed with the DB delete below.
+    let path_info: Option<(String, String)> = db::execute_async(move |conn| {
+        conn.query_row(
+            "SELECT title, folder FROM notes WHERE uuid = ?1",
+            params![u_db],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()
+    })
+    .await
+    .map_err(NotesLibError::Db)?;
+
+    let uuid_del = uuid.to_string();
     db::execute_async(move |conn| {
-        conn.execute("DELETE FROM notes WHERE uuid=?1", params![uuid_owned])?;
+        conn.execute("DELETE FROM notes WHERE uuid=?1", params![uuid_del])?;
         Ok(())
     })
     .await
     .map_err(NotesLibError::Db)?;
 
-    let path = note_path(&note.title, &note.uuid, &note.folder);
-    let _ = std::fs::remove_file(path);
+    if let Some((title, folder)) = path_info {
+        let path = note_path(&title, &uuid_for_path, &folder);
+        let _ = std::fs::remove_file(path);
+    }
 
     Ok(())
 }
