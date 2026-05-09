@@ -1172,27 +1172,23 @@
   <div class="notes-panel active" id="npanel-add">
     <div class="quick-note-form">
       <div>
+        <div class="field-label">Title <span style="color:var(--text-dim)">(optional)</span></div>
+        <input type="text" id="note-title" placeholder="Leave blank to use first line" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Folder <span style="color:var(--text-dim)">(optional)</span></div>
+        <input type="text" id="note-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
+        <datalist id="folder-suggestions"></datalist>
+      </div>
+      <div>
+        <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
+        <input type="text" id="note-tags" placeholder="e.g. idea, work" autocomplete="off" />
+      </div>
+      <div>
         <div class="field-label">Content</div>
         <textarea id="note-content" placeholder="Write your note here… (markdown supported)" autofocus></textarea>
       </div>
-      <div class="quick-note-meta">
-        <div>
-          <div class="field-label">Title <span style="color:var(--text-muted)">(optional)</span></div>
-          <input type="text" id="note-title" placeholder="Leave blank to use first line" autocomplete="off" />
-        </div>
-        <div>
-          <div class="field-label">Tags <span style="color:var(--text-muted)">(comma-separated)</span></div>
-          <input type="text" id="note-tags" placeholder="e.g. idea, work" autocomplete="off" />
-        </div>
-        <div>
-          <div class="field-label">Folder <span style="color:var(--text-muted)">(optional)</span></div>
-          <input type="text" id="note-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
-          <datalist id="folder-suggestions"></datalist>
-        </div>
-        <div style="display:flex;align-items:flex-end;">
-          <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitQuickNote()">Save Note</button>
-        </div>
-      </div>
+      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitQuickNote()">Save Note</button>
     </div>
   </div>
 
@@ -1247,30 +1243,28 @@
         <input type="text" id="edit-title" placeholder="Note title" autocomplete="off" />
       </div>
       <div>
+        <div class="field-label">Folder</div>
+        <input type="text" id="edit-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Tags</div>
+        <input type="text" id="edit-tags" placeholder="comma-separated" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Status</div>
+        <select id="edit-status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:0.85rem;width:100%;">
+          <option value="raw">Raw</option>
+          <option value="note">Note</option>
+          <option value="article">Article</option>
+        </select>
+      </div>
+      <div>
         <div class="field-label">Content</div>
         <textarea id="edit-content" style="min-height:250px;resize:none;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:12px;font-size:16px;font-family:inherit;line-height:1.6;width:100%;"></textarea>
       </div>
-      <div class="quick-note-meta">
-        <div>
-          <div class="field-label">Tags</div>
-          <input type="text" id="edit-tags" placeholder="comma-separated" autocomplete="off" />
-        </div>
-        <div>
-          <div class="field-label">Folder</div>
-          <input type="text" id="edit-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
-        </div>
-        <div>
-          <div class="field-label">Status</div>
-          <select id="edit-status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:0.85rem;width:100%;">
-            <option value="raw">Raw</option>
-            <option value="note">Note</option>
-            <option value="article">Article</option>
-          </select>
-        </div>
-        <div style="display:flex;gap:8px;align-items:flex-end;">
-          <button class="btn-primary btn-sm" style="flex:1;" onclick="notesSaveEdit()">Save</button>
-          <button class="btn-ghost btn-sm" onclick="notesCancelEdit()">Cancel</button>
-        </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary btn-sm" style="flex:1;" onclick="notesSaveEdit()">Save</button>
+        <button class="btn-ghost btn-sm" onclick="notesCancelEdit()">Cancel</button>
       </div>
     </div>
   </div>

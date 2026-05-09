@@ -69,7 +69,16 @@ pub enum NotesMode {
     List,
     View,
     Search,
+    Create,
     ConfirmDelete,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotesCreateFocus {
+    Title,
+    Tags,
+    Folder,
+    Content,
 }
 
 /// Status filter on the Notes list.
@@ -160,6 +169,11 @@ pub struct App {
     pub notes_search_buf: String,
     pub notes_scroll: u16,
     pub notes_folders: Vec<String>,
+    pub notes_create_title: String,
+    pub notes_create_tags: String,
+    pub notes_create_folder: String,
+    pub notes_create_content: String,
+    pub notes_create_focus: NotesCreateFocus,
 
     // Lists State
     pub list_groups: Vec<ListGroup>,
@@ -232,6 +246,11 @@ impl App {
             notes_search_buf: String::new(),
             notes_scroll: 0,
             notes_folders: Vec::new(),
+            notes_create_title: String::new(),
+            notes_create_tags: String::new(),
+            notes_create_folder: String::new(),
+            notes_create_content: String::new(),
+            notes_create_focus: NotesCreateFocus::Content,
 
             list_groups: Vec::new(),
             list_categories: Vec::new(),
@@ -722,6 +741,32 @@ impl App {
         }
     }
 
+    pub async fn notes_submit_create(&mut self) {
+        let content = self.notes_create_content.trim().to_string();
+        if content.is_empty() {
+            return;
+        }
+        let tags: Vec<String> = self.notes_create_tags
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let title = self.notes_create_title.trim().to_string();
+        let folder = self.notes_create_folder.trim().to_string();
+        match self.api_client.create_note(&title, &content, tags, &folder).await {
+            Ok(_) => {
+                self.notes_create_title.clear();
+                self.notes_create_tags.clear();
+                self.notes_create_folder.clear();
+                self.notes_create_content.clear();
+                self.notes_create_focus = NotesCreateFocus::Content;
+                self.notes_mode = NotesMode::List;
+                self.fetch_notes_filtered().await;
+            }
+            Err(e) => self.last_error = Some(format!("Create failed: {}", e)),
+        }
+    }
+
     /// Suspend the TUI, open the note in an external editor, sync content back via API.
     pub async fn notes_open_editor(&mut self) {
         let note = match self.notes_view_note.clone() {
@@ -869,8 +914,69 @@ impl App {
                             KeyCode::Char('d') => {
                                 self.notes_mode = NotesMode::ConfirmDelete;
                             }
+                            KeyCode::Char('n') => {
+                                self.notes_mode = NotesMode::Create;
+                            }
                             _ => {}
                         },
+                        NotesMode::Create => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.notes_mode = NotesMode::List;
+                                }
+                                KeyCode::Tab => {
+                                    self.notes_create_focus = match self.notes_create_focus {
+                                        NotesCreateFocus::Title => NotesCreateFocus::Folder,
+                                        NotesCreateFocus::Folder => NotesCreateFocus::Tags,
+                                        NotesCreateFocus::Tags => NotesCreateFocus::Content,
+                                        NotesCreateFocus::Content => NotesCreateFocus::Title,
+                                    };
+                                }
+                                KeyCode::BackTab => {
+                                    self.notes_create_focus = match self.notes_create_focus {
+                                        NotesCreateFocus::Title => NotesCreateFocus::Content,
+                                        NotesCreateFocus::Folder => NotesCreateFocus::Title,
+                                        NotesCreateFocus::Tags => NotesCreateFocus::Folder,
+                                        NotesCreateFocus::Content => NotesCreateFocus::Tags,
+                                    };
+                                }
+                                KeyCode::Char('s') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                                    self.notes_submit_create().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Enter => {
+                                    if self.notes_create_focus == NotesCreateFocus::Content {
+                                        self.notes_create_content.push('\n');
+                                    } else {
+                                        self.notes_create_focus = match self.notes_create_focus {
+                                            NotesCreateFocus::Title => NotesCreateFocus::Folder,
+                                            NotesCreateFocus::Folder => NotesCreateFocus::Tags,
+                                            NotesCreateFocus::Tags => NotesCreateFocus::Content,
+                                            NotesCreateFocus::Content => NotesCreateFocus::Content,
+                                        };
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    let buf = match self.notes_create_focus {
+                                        NotesCreateFocus::Title => &mut self.notes_create_title,
+                                        NotesCreateFocus::Tags => &mut self.notes_create_tags,
+                                        NotesCreateFocus::Folder => &mut self.notes_create_folder,
+                                        NotesCreateFocus::Content => &mut self.notes_create_content,
+                                    };
+                                    buf.pop();
+                                }
+                                KeyCode::Char(c) => {
+                                    let buf = match self.notes_create_focus {
+                                        NotesCreateFocus::Title => &mut self.notes_create_title,
+                                        NotesCreateFocus::Tags => &mut self.notes_create_tags,
+                                        NotesCreateFocus::Folder => &mut self.notes_create_folder,
+                                        NotesCreateFocus::Content => &mut self.notes_create_content,
+                                    };
+                                    buf.push(c);
+                                }
+                                _ => {}
+                            }
+                        }
                         NotesMode::View => match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => {
                                 self.notes_mode = NotesMode::List;
@@ -1605,17 +1711,54 @@ impl Tui {
 
 // --- Drawing Helper Functions ---
 
-fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
-    let _overall_status = app.status.as_ref().map(|s| s.overall.gono).unwrap_or(Status::Unknown);
-    let systems_status = app.status.as_ref().map(|s| s.systems);
-    let _now = Local::now();
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-    let chunks = Layout::default()
+fn draw_section_header(
+    frame: &mut ratatui::Frame,
+    area: Rect,
+    title: &str,
+    summary: &str,
+    color: Color,
+) {
+    let content = Line::from(vec![
+        ratatui::text::Span::styled(
+            format!(" {} ", title),
+            Style::default().fg(color).add_modifier(ratatui::style::Modifier::BOLD),
+        ),
+        ratatui::text::Span::styled(
+            format!(" v{}  ", VERSION),
+            Style::default().fg(Color::DarkGray),
+        ),
+        ratatui::text::Span::styled(
+            summary.to_string(),
+            Style::default().fg(Color::White),
+        ),
+    ]);
+    frame.render_widget(
+        Paragraph::new(content)
+            .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(color))),
+        area,
+    );
+}
+
+fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::Rect) {
+    let overall_status = app.status.as_ref().map(|s| s.overall.gono).unwrap_or(Status::Unknown);
+    let systems_status = app.status.as_ref().map(|s| s.systems);
+
+    let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
         .split(area);
+    let (header_area, content_area, footer_area) = (outer[0], outer[1], outer[2]);
 
-    let (_header_area, content_area, footer_area) = (chunks[0], chunks[1], chunks[2]);
+    let status_label = match overall_status {
+        Status::Go => "● GO",
+        Status::Nogo => "● NOGO",
+        Status::Degraded => "◐ DEGRADED",
+        _ => "○ UNKNOWN",
+    };
+    let now_str = Local::now().format("%a %d %b %Y  %H:%M").to_string();
+    draw_section_header(frame, header_area, "DASHBOARD", &format!("{now_str}  {status_label}"), Color::White);
 
     // Content Area: Split vertically for lists and status/logs
     let main_content_chunks = Layout::default()
@@ -1752,22 +1895,32 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
 
 
     // Footer/Menu
-    let footer_text = "Q: Quit | 1: Todo | 2: Notes | 3: Project | 4: Lists | R: Refresh";
-    let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan));
+    let footer_text = "Q: Quit | 1: Tasks | 2: Notes | 3: Project | 4: Lists | R: Refresh";
+    let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::White));
     frame.render_widget(footer, footer_area);
 }
 
 
 fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::layout::Rect) {
-    // 1. Define main layout: List (50%), Details (50%), Footer (1 line)
+    let open_count = app.todo_items.iter().filter(|t| !t.completed).count();
+    let done_count = app.todo_items.iter().filter(|t| t.completed).count();
+    let summary = format!("{} open  {}  completed", open_count, done_count);
+
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+    let (header_area, body) = (outer[0], outer[1]);
+    draw_section_header(frame, header_area, "TASKS", &summary, Color::Blue);
+
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(50), // Top half: List
-            Constraint::Min(0),         // Bottom half: Details
-            Constraint::Length(1),      // Footer
+            Constraint::Percentage(50),
+            Constraint::Min(0),
+            Constraint::Length(1),
         ])
-        .split(area);
+        .split(body);
 
     let (list_area, details_area, footer_area) = (main_chunks[0], main_chunks[1], main_chunks[2]);
 
@@ -1824,14 +1977,16 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
     };
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(list_title))
-        .highlight_style(Style::default().bg(Color::Blue).fg(Color::Black));
+        .block(Block::default().borders(Borders::ALL).title(list_title)
+            .border_style(Style::default().fg(Color::Blue)))
+        .highlight_style(Style::default().bg(Color::Blue).fg(Color::White));
 
     frame.render_stateful_widget(list, list_area, &mut app.todo_list_state);
 
     // --- 2. Details Panel Rendering ---
-    
-    let details_block = Block::default().borders(Borders::ALL).title("Item Details");
+
+    let details_block = Block::default().borders(Borders::ALL).title("Item Details")
+        .border_style(Style::default().fg(Color::Blue));
     
     if let Some(vis_index) = app.todo_list_state.selected() {
         if let Some(item) = visible_indices.get(vis_index).and_then(|&i| app.todo_items.get(i)) {
@@ -1894,7 +2049,7 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
 
     // --- 3. Footer/Menu ---
     let footer_text = "Q: Back | R: Refresh | C: Toggle Complete | A: Add New | P: Print | X: Archive | D: Delete";
-    let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan));
+    let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Blue));
     frame.render_widget(footer, footer_area);
     
     // 4. Floating Input Form (if in Adding or Editing mode)
@@ -2419,13 +2574,19 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
 // --- Lists Screen ---
 
 fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
-        .split(area);
+    let summary = format!(
+        "{} groups  {} lists  {} items",
+        app.list_groups.len(),
+        app.list_categories.len(),
+        app.list_items.len(),
+    );
 
-    let main_area = chunks[0];
-    let footer_area = chunks[1];
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(3), Constraint::Length(3)])
+        .split(area);
+    let (header_area, main_area, footer_area) = (outer[0], outer[1], outer[2]);
+    draw_section_header(frame, header_area, "LISTS", &summary, Color::Green);
 
     // Three-column layout: Groups | Categories | Items
     let panels = Layout::default()
@@ -2441,8 +2602,8 @@ fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let cat_area     = panels[1];
     let item_area    = panels[2];
 
-    let focused_style   = Style::default().fg(Color::Yellow);
-    let unfocused_style = Style::default().fg(Color::White);
+    let focused_style   = Style::default().fg(Color::Green);
+    let unfocused_style = Style::default().fg(Color::DarkGray);
 
     // --- Groups panel ---
     let group_items: Vec<ListItem> = app.list_groups.iter().map(|g| {
@@ -2452,7 +2613,7 @@ fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let group_list = List::new(group_items)
         .block(Block::default().borders(Borders::ALL).title("Groups")
             .border_style(if app.lists_focus == ListsFocus::Groups { focused_style } else { unfocused_style }))
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Yellow))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Green))
         .highlight_symbol("> ");
     frame.render_stateful_widget(group_list, group_area, &mut app.list_group_state);
 
@@ -2464,7 +2625,7 @@ fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let cat_list = List::new(cat_items)
         .block(Block::default().borders(Borders::ALL).title("Lists")
             .border_style(if app.lists_focus == ListsFocus::Categories { focused_style } else { unfocused_style }))
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Yellow))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Green))
         .highlight_symbol("> ");
     frame.render_stateful_widget(cat_list, cat_area, &mut app.list_category_state);
 
@@ -2492,7 +2653,7 @@ fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     let item_list = List::new(item_items)
         .block(Block::default().borders(Borders::ALL).title(item_title)
             .border_style(if app.lists_focus == ListsFocus::Items { focused_style } else { unfocused_style }))
-        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Green))
         .highlight_symbol("> ");
     frame.render_stateful_widget(item_list, item_area, &mut app.list_item_state);
 
@@ -2507,10 +2668,7 @@ fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             "Q:Back | Tab:Focus | j/k:Nav | a:Add | d:Del | Space:Check | C:Clear | p:Print | s:Save common | A:Quick add | r:Refresh".to_string(),
     };
 
-    let footer_style = match app.lists_input_mode {
-        ListsInputMode::Normal => Style::default().fg(Color::Cyan),
-        _                      => Style::default().fg(Color::Yellow),
-    };
+    let footer_style = Style::default().fg(Color::Green);
     let footer = Paragraph::new(footer_content)
         .style(footer_style)
         .block(Block::default().borders(Borders::ALL));
@@ -2560,11 +2718,91 @@ fn draw_quick_add_overlay(frame: &mut ratatui::Frame, app: &mut App, anchor: Rec
     frame.render_stateful_widget(list, popup_area, &mut app.common_item_state);
 }
 
+fn draw_notes_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // title
+            Constraint::Length(3), // tags
+            Constraint::Length(3), // folder
+            Constraint::Min(5),    // content
+            Constraint::Length(1), // footer
+        ])
+        .split(area);
+
+    let focused_style = Style::default().fg(Color::Yellow);
+    let normal_style = Style::default().fg(Color::DarkGray);
+
+    let field_style = |f: NotesCreateFocus| {
+        if app.notes_create_focus == f { focused_style } else { normal_style }
+    };
+
+    // Title
+    let title_text = format!("{}_", app.notes_create_title);
+    frame.render_widget(
+        Paragraph::new(title_text)
+            .block(Block::default().borders(Borders::ALL).title(" Title (optional) ").border_style(field_style(NotesCreateFocus::Title))),
+        chunks[0],
+    );
+
+    // Folder
+    let folder_text = format!("{}_", app.notes_create_folder);
+    frame.render_widget(
+        Paragraph::new(folder_text)
+            .block(Block::default().borders(Borders::ALL).title(" Folder (optional) ").border_style(field_style(NotesCreateFocus::Folder))),
+        chunks[1],
+    );
+
+    // Tags
+    let tags_text = format!("{}_", app.notes_create_tags);
+    frame.render_widget(
+        Paragraph::new(tags_text)
+            .block(Block::default().borders(Borders::ALL).title(" Tags (comma-separated, optional) ").border_style(field_style(NotesCreateFocus::Tags))),
+        chunks[2],
+    );
+
+    // Content
+    let content_display = if app.notes_create_focus == NotesCreateFocus::Content {
+        format!("{}_", app.notes_create_content)
+    } else {
+        app.notes_create_content.clone()
+    };
+    frame.render_widget(
+        Paragraph::new(content_display)
+            .block(Block::default().borders(Borders::ALL).title(" Content * ").border_style(field_style(NotesCreateFocus::Content)))
+            .wrap(Wrap { trim: false }),
+        chunks[3],
+    );
+
+    // Footer
+    frame.render_widget(
+        Paragraph::new("Tab: next field  Ctrl+S: save  Esc: cancel")
+            .style(Style::default().fg(Color::DarkGray)),
+        chunks[4],
+    );
+}
+
 fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    if app.notes_mode == NotesMode::Create {
+        return draw_notes_create(frame, app, area);
+    }
+
+    let raw_count = app.notes.iter().filter(|n| n.status == NoteStatus::Raw).count();
+    let note_count = app.notes.iter().filter(|n| n.status == NoteStatus::Note).count();
+    let art_count = app.notes.iter().filter(|n| n.status == NoteStatus::Article).count();
+    let summary = format!("{} raw  {} note  {} article", raw_count, note_count, art_count);
+
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+    let (header_area, body) = (outer[0], outer[1]);
+    draw_section_header(frame, header_area, "NOTES", &summary, Color::Yellow);
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(1)])
-        .split(area);
+        .split(body);
     let (filter_area, content_area, footer_area) = (chunks[0], chunks[1], chunks[2]);
 
     // Filter / search bar
@@ -2637,11 +2875,11 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .title(list_title)
         .border_style(Style::default().fg(
-            if app.notes_mode == NotesMode::List { Color::Cyan } else { Color::DarkGray }
+            if app.notes_mode == NotesMode::List { Color::Yellow } else { Color::DarkGray }
         ));
     let list_widget = List::new(list_items)
         .block(list_block)
-        .highlight_style(Style::default().bg(Color::Rgb(40, 44, 66)).fg(Color::White));
+        .highlight_style(Style::default().bg(Color::Yellow).fg(Color::Black));
     frame.render_stateful_widget(list_widget, list_area, &mut app.notes_list_state);
 
     // Note viewer
@@ -2698,7 +2936,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .title(viewer_title)
         .border_style(Style::default().fg(
-            if app.notes_mode == NotesMode::View { Color::Cyan } else { Color::DarkGray }
+            if app.notes_mode == NotesMode::View { Color::Yellow } else { Color::DarkGray }
         ));
     let viewer = Paragraph::new(viewer_content)
         .block(viewer_block)
@@ -2708,13 +2946,14 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Footer
     let footer_text = match app.notes_mode {
-        NotesMode::List   => "j/k: move  Enter: open  Tab: filter  /: search  a: advance  d: delete  r: refresh  q: back",
+        NotesMode::List   => "j/k: move  Enter: open  Tab: filter  /: search  n: new  a: advance  d: delete  r: refresh  q: back",
         NotesMode::View   => "j/k: scroll  e: edit  a: advance status  p: print  d: delete  q: back to list",
         NotesMode::Search => "Type to search  Enter: run  Esc: cancel",
+        NotesMode::Create => "Tab: next field  Ctrl+S: save  Esc: cancel",
         NotesMode::ConfirmDelete => "y: confirm delete  any other key: cancel",
     };
     frame.render_widget(
-        Paragraph::new(footer_text).style(Style::default().fg(Color::DarkGray)),
+        Paragraph::new(footer_text).style(Style::default().fg(Color::Yellow)),
         footer_area,
     );
 
@@ -2738,9 +2977,14 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_project_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-    let text = Paragraph::new("Projects — coming soon\n\nPress Q or Esc to go back")
-        .block(Block::default().borders(Borders::ALL).title("Projects"));
-    frame.render_widget(text, area);
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+    draw_section_header(frame, outer[0], "PROJECT", "Coming soon", Color::Magenta);
+    let text = Paragraph::new("\nPress Q or Esc to go back")
+        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Magenta)));
+    frame.render_widget(text, outer[1]);
 }
 
 // ---------------------------------------------------------------------------------

@@ -401,6 +401,23 @@ impl ApiClient {
         Ok(self.client.patch(&url).send().await?.error_for_status()?.json().await?)
     }
 
+    pub async fn create_note(
+        &self,
+        title: &str,
+        content: &str,
+        tags: Vec<String>,
+        folder: &str,
+    ) -> Result<Note> {
+        let url = format!("{}/api/v1/notes", self.base_url);
+        let body = serde_json::json!({
+            "title": if title.is_empty() { None::<&str> } else { Some(title) },
+            "content": content,
+            "tags": tags,
+            "folder": if folder.is_empty() { None::<&str> } else { Some(folder) },
+        });
+        Ok(self.client.post(&url).json(&body).send().await?.error_for_status()?.json().await?)
+    }
+
     pub async fn print_note(&self, uuid: &str) -> Result<()> {
         let url = format!("{}/api/v1/notes/{}/print", self.base_url, uuid);
         self.client.post(&url).send().await?.error_for_status()?;

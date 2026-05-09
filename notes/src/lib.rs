@@ -28,17 +28,35 @@ fn notes_dir() -> &'static str {
     NOTES_DIR.get().expect("notes subsystem not initialized")
 }
 
-fn note_path(uuid: &str, folder: &str) -> PathBuf {
+fn title_to_slug(title: &str) -> String {
+    let raw: String = title.trim().chars()
+        .map(|c| match c {
+            ' ' | '_' => '-',
+            c if c.is_alphanumeric() || c == '-' => c.to_ascii_lowercase(),
+            _ => '\0',
+        })
+        .filter(|&c| c != '\0')
+        .collect();
+    raw.split('-').filter(|s| !s.is_empty()).collect::<Vec<_>>().join("-")
+}
+
+fn note_path(title: &str, uuid: &str, folder: &str) -> PathBuf {
+    let slug = title_to_slug(title);
+    let filename = if slug.is_empty() {
+        format!("{}.md", uuid)
+    } else {
+        format!("{}.md", slug)
+    };
     let base = Path::new(notes_dir());
     if folder.is_empty() {
-        base.join(format!("{}.md", uuid))
+        base.join(filename)
     } else {
-        base.join(folder).join(format!("{}.md", uuid))
+        base.join(folder).join(filename)
     }
 }
 
 fn write_md_file(note: &Note) -> NotesLibResult {
-    let path = note_path(&note.uuid, &note.folder);
+    let path = note_path(&note.title, &note.uuid, &note.folder);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -226,11 +244,11 @@ pub async fn get(uuid: &str) -> NotesLibResult<Note> {
     let u_err = uuid.to_string();
     let uuid_owned = uuid.to_string();
 
-    let folder = db::execute_async(move |conn| {
+    let (title, folder) = db::execute_async(move |conn| {
         conn.query_row(
-            "SELECT folder FROM notes WHERE uuid = ?1",
+            "SELECT title, folder FROM notes WHERE uuid = ?1",
             params![u_db],
-            |row| row.get::<_, String>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .optional()
     })
@@ -238,7 +256,7 @@ pub async fn get(uuid: &str) -> NotesLibResult<Note> {
     .map_err(NotesLibError::Db)?
     .ok_or_else(|| NotesLibError::NotFound(u_err))?;
 
-    let path = note_path(&uuid_owned, &folder);
+    let path = note_path(&title, &uuid_owned, &folder);
     parse_md_file(&path)
 }
 
@@ -275,22 +293,22 @@ pub async fn list(
 pub async fn update(uuid: &str, req: UpdateNoteRequest) -> NotesLibResult<Note> {
     let current = get(uuid).await?;
 
-    let new_folder = req.folder.unwrap_or(current.folder.clone());
     let updated = Note {
         id: current.id,
         uuid: uuid.to_string(),
-        title: req.title.unwrap_or(current.title),
+        title: req.title.unwrap_or(current.title.clone()),
         content: req.content.unwrap_or(current.content),
         status: req.status.unwrap_or(current.status),
         tags: req.tags.unwrap_or(current.tags),
-        folder: new_folder,
+        folder: req.folder.unwrap_or(current.folder.clone()),
         created_at: current.created_at,
         updated_at: chrono::Local::now(),
     };
 
-    if updated.folder != current.folder {
-        let old_path = note_path(uuid, &current.folder);
-        let _ = std::fs::remove_file(old_path);
+    let old_path = note_path(&current.title, uuid, &current.folder);
+    let new_path = note_path(&updated.title, uuid, &updated.folder);
+    if old_path != new_path {
+        let _ = std::fs::remove_file(&old_path);
     }
 
     write_md_file(&updated)?;
@@ -327,7 +345,7 @@ pub async fn delete(uuid: &str) -> NotesLibResult {
     .await
     .map_err(NotesLibError::Db)?;
 
-    let path = note_path(&note.uuid, &note.folder);
+    let path = note_path(&note.title, &note.uuid, &note.folder);
     let _ = std::fs::remove_file(path);
 
     Ok(())
@@ -493,7 +511,7 @@ mod tests {
         };
 
         write_md_file(&note).unwrap();
-        let path = super::note_path(&note.uuid, &note.folder);
+        let path = super::note_path(&note.title, &note.uuid, &note.folder);
         let parsed = parse_md_file(&path).unwrap();
 
         assert_eq!(parsed.uuid, note.uuid);
