@@ -1,0 +1,2363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <!-- PWA / add-to-home-screen -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#1a1d27" />
+  <title>Lists</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0f1117;
+      --surface:     #1a1d27;
+      --surface2:    #22263a;
+      --border:      #2e3250;
+      --accent:      #5b8dee;
+      --accent-dim:  #2c4480;
+      --green:       #3ecf8e;
+      --red:         #e05c5c;
+      --text:        #e4e8f0;
+      --text-muted:  #7a82a0;
+      --checked-fg:  #4a4f68;
+      --radius:      10px;
+      --shadow:      0 4px 24px rgba(0,0,0,0.4);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left:   env(safe-area-inset-left, 0px);
+      --safe-right:  env(safe-area-inset-right, 0px);
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+    }
+
+    /* ── Layout ── */
+    .app {
+      display: grid;
+      grid-template-rows: 56px 1fr;
+      height: 100dvh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 20px;
+      padding-left: max(20px, var(--safe-left));
+      padding-right: max(20px, var(--safe-right));
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    header h1 span { color: var(--accent); }
+
+    /* Back button — hidden by default, shown via JS on mobile */
+    #btn-back {
+      display: none;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+    }
+
+    .sidebar-header {
+      padding: 14px 16px 10px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .category-list {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0 8px 8px;
+    }
+
+    .category-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 10px;
+      min-height: 48px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.15s;
+      gap: 8px;
+    }
+
+    .category-item:hover { background: var(--surface2); }
+
+    .category-item.active {
+      background: var(--accent-dim);
+      color: #c5d9ff;
+      font-weight: 500;
+    }
+
+    .category-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .category-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 4px 6px;
+      min-width: 30px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .category-item:hover .category-delete { opacity: 1; }
+    .category-delete:hover { color: var(--red); }
+
+    .add-category-form {
+      padding: 8px;
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    /* ── Group section (vertical list in sidebar) ── */
+    .group-section {
+      display: flex;
+      flex-direction: column;
+      border-bottom: 2px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .group-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px 6px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+
+    .group-list {
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 0 8px 4px;
+      max-height: 220px;
+    }
+
+    .group-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 10px;
+      min-height: 48px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: background 0.15s;
+      gap: 8px;
+    }
+
+    .group-item:hover { background: var(--surface2); }
+
+    .group-item.active {
+      background: var(--accent-dim);
+      color: #c5d9ff;
+      font-weight: 500;
+    }
+
+    .group-item-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .group-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 4px 6px;
+      min-width: 30px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .group-item:hover .group-delete { opacity: 1; }
+    .group-delete:hover { color: var(--red); }
+
+    .btn-icon {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      padding: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    .btn-icon:hover { background: var(--surface2); color: var(--text); }
+
+    .add-group-form {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      border-top: 1px solid var(--border);
+      background: var(--surface2);
+      flex-shrink: 0;
+    }
+
+    .add-group-form input { font-size: 14px; }
+
+    /* ── Items panel ── */
+    .panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .panel-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+
+    .panel-title small {
+      font-weight: 400;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      margin-left: 8px;
+    }
+
+    .panel-actions { display: flex; gap: 8px; }
+
+    /* ── Category hamburger menu ── */
+    .cat-menu-wrap { position: relative; }
+    .cat-menu-btn  { background: none; border: none; cursor: pointer; font-size: 1.1rem;
+                     padding: 2px 6px; color: var(--text-muted); line-height: 1; }
+    .cat-menu-btn:hover { color: var(--text); }
+    .cat-menu-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      min-width: 160px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+      z-index: 200;
+    }
+    .cat-menu-dropdown.open { display: block; }
+    .cat-menu-item {
+      display: flex; align-items: center; gap: 8px;
+      width: 100%; padding: 10px 14px;
+      background: none; border: none; cursor: pointer;
+      color: var(--text); font-size: 0.9rem; text-align: left;
+      white-space: nowrap;
+    }
+    .cat-menu-item:hover { background: var(--surface3, #333); }
+    .cat-menu-item .menu-check { font-size: 0.75rem; color: var(--accent); margin-left: auto; }
+
+    .item-list {
+      flex: 1;
+      min-height: 0; /* allow flex shrink so the add-bar stays pinned at the bottom */
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding: 10px 20px;
+    }
+
+    /* ── Swipe containers ── */
+    .item-row-container {
+      position: relative;
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 2px;
+    }
+
+    /* Reveal areas shown behind the sliding row */
+    .swipe-hint {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 80px;
+      padding: 0 20px;
+      font-size: 1.3rem;
+      pointer-events: none;
+    }
+
+    .swipe-hint-left  { right: 0; background: var(--red);   color: #fff; }
+    .swipe-hint-right { left:  0; background: var(--green); color: var(--bg); }
+
+    /* ── Item rows ── */
+    .item-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 10px;
+      min-height: 38px;
+      border-radius: var(--radius);
+      background: var(--bg);
+      position: relative;
+      z-index: 1;
+      transition: background 0.12s;
+      border: 1px solid transparent;
+      /* Allow vertical scroll; we handle horizontal in JS */
+      touch-action: pan-y;
+      user-select: none;
+      -webkit-user-select: none;
+      will-change: transform;
+    }
+
+    .item-row-container:hover .item-row { background: var(--surface2); border-color: var(--border); }
+
+    .item-check {
+      width: 22px;
+      height: 22px;
+      accent-color: var(--green);
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .item-label {
+      flex: 1;
+      font-size: 0.82rem;
+      line-height: 1.25;
+      transition: color 0.15s, text-decoration 0.15s;
+    }
+
+    .item-label.checked {
+      color: var(--checked-fg);
+      text-decoration: line-through;
+    }
+
+    .item-qty {
+      font-size: 0.74rem;
+      color: var(--text-muted);
+      background: var(--surface2);
+      padding: 1px 6px;
+      border-radius: 12px;
+      flex-shrink: 0;
+    }
+
+    .item-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      padding: 4px 6px;
+      min-width: 30px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+
+    .item-row-container:hover .item-delete { opacity: 1; }
+    .item-delete:hover { color: var(--red); }
+
+    .item-save {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.85rem;
+      padding: 4px 4px;
+      min-width: 26px;
+      min-height: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .item-row-container:hover .item-save { opacity: 1; }
+    .item-save:hover { color: var(--green); }
+
+    /* ── Quick-add (saved/common items) ── */
+    .quick-add-section {
+      border-top: 2px solid var(--border);
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      max-height: 240px;
+    }
+    .quick-add-section.collapsed {
+      max-height: none; /* shrinks to header only */
+    }
+    .quick-add-section.collapsed .quick-add-list {
+      display: none;
+    }
+    .quick-add-header {
+      display: flex;
+      align-items: center;
+      padding: 8px 16px 6px;
+      gap: 6px;
+      flex-shrink: 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .quick-add-header:hover { background: var(--surface2); }
+    .quick-add-label {
+      flex: 1;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--text-muted);
+    }
+    .quick-add-chevron {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+      line-height: 1;
+    }
+    .quick-add-section.collapsed .quick-add-chevron {
+      transform: rotate(-90deg);
+    }
+    .quick-add-list {
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      flex: 1;
+    }
+    .quick-add-item {
+      display: flex;
+      align-items: center;
+      padding: 11px 16px;
+      min-height: 48px;
+      cursor: pointer;
+      transition: background 0.12s;
+      gap: 10px;
+      user-select: none;
+    }
+    .quick-add-item:hover { background: var(--surface2); }
+    .quick-add-item:active { background: var(--accent-dim); opacity: 0.9; }
+    .quick-add-item-name {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .quick-add-item-qty {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      flex-shrink: 0;
+    }
+    .quick-add-item-delete {
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 4px 6px;
+      min-width: 30px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .quick-add-item:hover .quick-add-item-delete { opacity: 1; }
+    .quick-add-item-delete:hover { color: var(--red); }
+    .quick-add-section.editing .quick-add-item-delete { opacity: 0.55; }
+    .btn-icon-sm {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 4px 8px;
+      font-size: 0.75rem;
+      border-radius: 6px;
+    }
+    .btn-icon-sm.active { color: var(--accent); border-color: var(--accent); }
+
+    .items-divider {
+      margin: 16px 0 8px;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+
+    .add-item-form {
+      padding: 12px 20px;
+      padding-bottom: max(12px, calc(10px + var(--safe-bottom)));
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    /* ── Empty / loading states ── */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 8px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 40px;
+    }
+
+    .empty-state .icon { font-size: 2.5rem; }
+
+    /* ── Controls ── */
+    input[type="text"] {
+      flex: 1;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 9px 12px;
+      color: var(--text);
+      /* 16px minimum prevents iOS auto-zoom on focus */
+      font-size: 16px;
+      outline: none;
+      transition: border-color 0.15s;
+      min-width: 0;
+    }
+
+    input[type="text"]:focus { border-color: var(--accent); }
+    input[type="text"]::placeholder { color: var(--text-muted); }
+
+    button {
+      border: none;
+      border-radius: var(--radius);
+      padding: 9px 14px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: filter 0.15s, opacity 0.15s, transform 0.1s;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    button:hover  { filter: brightness(1.15); }
+    button:active { filter: brightness(0.9); transform: scale(0.96); }
+    button:disabled { opacity: 0.4; cursor: default; filter: none; transform: none; }
+
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-ghost   { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+    .btn-danger  { background: var(--red); color: #fff; }
+    .btn-success { background: var(--green); color: #0f1117; }
+    .btn-sm { padding: 7px 12px; font-size: 0.82rem; }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: calc(24px + var(--safe-bottom));
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 20px;
+      border-radius: 99px;
+      font-size: 0.85rem;
+      transition: transform 0.25s ease;
+      pointer-events: none;
+      z-index: 1000;
+      box-shadow: var(--shadow);
+      white-space: nowrap;
+    }
+
+    #toast.show  { transform: translateX(-50%) translateY(0); }
+    #toast.error { border-color: var(--red); color: var(--red); }
+
+    /* ═══════════════════════════════════════════
+       MOBILE  (touch devices or ≤ 1024px)
+    ═══════════════════════════════════════════ */
+    @media (hover: none) and (pointer: coarse), (max-width: 1024px) {
+      html, body { font-size: 16px; }
+
+      header {
+        padding: 0 12px;
+        padding-left: max(12px, var(--safe-left));
+        padding-right: max(12px, var(--safe-right));
+      }
+
+      header h1 { font-size: 1rem; }
+
+      .header-actions { gap: 6px; }
+
+      /* Main becomes a single-slot stack; children position themselves */
+      .main {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr;
+        position: relative;
+        overflow: hidden;
+      }
+
+      /* Sidebar fills the screen by default */
+      .sidebar {
+        position: absolute;
+        inset: 0;
+        background: var(--bg);
+        border-right: none;
+        max-height: none;
+        z-index: 1;
+        transition: transform 0.28s cubic-bezier(.4,0,.2,1),
+                    opacity  0.28s cubic-bezier(.4,0,.2,1);
+      }
+
+      /* Panel slides in from the right */
+      .panel {
+        position: absolute;
+        inset: 0;
+        background: var(--bg);
+        z-index: 2;
+        transform: translateX(100%);
+        transition: transform 0.28s cubic-bezier(.4,0,.2,1);
+      }
+
+      /* When a list is selected: slide panel in, push sidebar left */
+      .main.show-panel .panel   { transform: translateX(0); }
+      .main.show-panel .sidebar { transform: translateX(-25%); opacity: 0; pointer-events: none; }
+
+      /* Larger list items for thumbs */
+      .group-item { min-height: 56px; padding: 14px 10px; }
+      .category-item { min-height: 56px; padding: 14px 10px; }
+      .quick-add-item { min-height: 56px; padding: 14px 16px; }
+
+      /* Delete always somewhat visible on touch (no hover) */
+      .group-delete { opacity: 0.55; }
+      .category-delete { opacity: 0.55; }
+      .quick-add-item-delete { opacity: 0.55; }
+
+      /* Quick-add: more room on mobile */
+      .quick-add-section { max-height: 280px; }
+
+      /* Group list: allow more room on mobile */
+      .group-list { max-height: 280px; }
+
+      /* Panel header on mobile: tighter */
+      .panel-header { padding: 12px 16px; }
+
+      /* Item list scrollable area */
+      .item-list { padding: 8px 12px; }
+
+      /* Bigger item rows */
+      .item-row { padding: 11px 12px; min-height: 48px; }
+
+      /* Bigger checkbox for fat fingers */
+      .item-check { width: 26px; height: 26px; }
+
+      /* Delete button always visible on mobile */
+      .item-delete { opacity: 0.55; }
+
+      /* Add-item form: tighter, respects home bar */
+      .add-item-form {
+        padding: 10px 12px;
+        padding-bottom: max(10px, calc(8px + var(--safe-bottom)));
+        gap: 8px;
+      }
+
+      /* Sidebar add form: home bar padding */
+      .add-category-form {
+        padding: 8px;
+        padding-bottom: max(8px, calc(6px + var(--safe-bottom)));
+      }
+    }
+
+    /* ── Drag handle (shown only in reorder mode) ── */
+    .drag-handle {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      font-size: 1rem;
+      padding: 4px 2px;
+      min-width: 24px;
+      min-height: 30px;
+      cursor: grab;
+      flex-shrink: 0;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      letter-spacing: -2px;
+    }
+    .drag-handle:active { cursor: grabbing; }
+
+    .item-list.reorder-mode .drag-handle { display: flex; }
+    .item-list.reorder-mode .swipe-hint  { display: none; }
+
+    /* ── No-checkboxes mode ── */
+    .item-list.no-checkboxes .item-check       { display: none; }
+    .item-list.no-checkboxes .swipe-hint-right { display: none; }
+
+    /* ── Active toggle button state ── */
+    .btn-toggle-active {
+      background: var(--accent-dim) !important;
+      color: var(--accent) !important;
+      border-color: var(--accent) !important;
+    }
+
+    /* ═══════════════════════════════════════════
+       NARROW MOBILE  (closed fold / small phone, ≤ 480px)
+       Compact but still finger-friendly (48 px min tap targets).
+    ═══════════════════════════════════════════ */
+    @media (max-width: 480px) {
+      html, body { font-size: 13px; }
+
+      .app { grid-template-rows: 52px 1fr; }
+
+      header { padding: 0 12px; }
+      header h1 { font-size: 1rem; }
+
+      /* Header buttons */
+      button { padding: 8px 12px; font-size: 0.88rem; }
+      .btn-sm { padding: 6px 10px; font-size: 0.82rem; }
+
+      /* Sidebar list items */
+      .group-item {
+        min-height: 48px;
+        padding: 10px 12px;
+        font-size: 0.9rem;
+      }
+
+      .category-item {
+        min-height: 48px;
+        padding: 10px 12px;
+        font-size: 0.9rem;
+      }
+
+      .group-delete,
+      .category-delete {
+        opacity: 0.65;
+        min-width: 36px;
+        min-height: 36px;
+        font-size: 1.1rem;
+      }
+
+      .quick-add-item {
+        min-height: 48px;
+        padding: 9px 12px;
+        font-size: 0.88rem;
+      }
+
+      .quick-add-item-delete {
+        opacity: 0.65;
+        min-width: 36px;
+        min-height: 36px;
+        font-size: 1.1rem;
+      }
+
+      .quick-add-section { max-height: none; }
+      .group-list { max-height: none; }
+
+      /* Panel header */
+      .panel-header { padding: 10px 12px; }
+      .panel-title  { font-size: 0.95rem; }
+
+      /* Item list */
+      .item-list { padding: 6px 8px; }
+
+      .item-row {
+        padding: 8px 10px;
+        min-height: 44px;
+        gap: 8px;
+        font-size: 0.88rem;
+      }
+
+      .item-label { font-size: 0.82rem; }
+
+      .item-check { width: 22px; height: 22px; }
+
+      .item-qty { font-size: 0.7rem; padding: 1px 5px; }
+
+      .item-delete {
+        opacity: 0.65;
+        min-width: 36px;
+        min-height: 36px;
+        font-size: 1.1rem;
+      }
+
+      /* Add-item form — 16 px minimum on inputs prevents iOS auto-zoom */
+      input[type="text"] {
+        font-size: 16px;
+        padding: 9px 10px;
+      }
+
+      .add-item-form {
+        padding: 8px;
+        padding-bottom: max(8px, calc(6px + var(--safe-bottom)));
+        gap: 6px;
+      }
+
+      .add-category-form {
+        padding: 6px 8px;
+        padding-bottom: max(6px, calc(4px + var(--safe-bottom)));
+      }
+
+      /* Sidebar header labels */
+      .sidebar-header       { font-size: 0.65rem; padding: 10px 12px 6px; }
+      .group-section-header { font-size: 0.65rem; padding: 10px 12px 6px; }
+    }
+
+    /* ── Notes overlay ── */
+    #notes-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      z-index: 100;
+      flex-direction: column;
+    }
+    #notes-overlay.active { display: flex; }
+
+    .notes-nav {
+      display: flex;
+      gap: 4px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .notes-tab {
+      padding: 7px 16px;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-muted);
+      border: 1px solid transparent;
+      font-size: 0.85rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .notes-tab.active {
+      background: var(--accent-dim);
+      color: #c5d9ff;
+      border-color: transparent;
+    }
+    .notes-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+
+    .notes-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+    .notes-panel.active { display: flex; }
+
+    /* Quick Add panel */
+    .quick-note-form {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px;
+      overflow-y: auto;
+    }
+    .quick-note-form textarea {
+      flex: 1;
+      min-height: 180px;
+      resize: none;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 12px;
+      font-size: 16px;
+      font-family: inherit;
+      line-height: 1.6;
+    }
+    .quick-note-form textarea:focus { outline: none; border-color: var(--accent); }
+    .quick-note-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .field-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+
+    /* Browse panel */
+    .notes-filters {
+      padding: 10px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .filter-pill {
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      background: var(--surface2);
+      color: var(--text-muted);
+      border: none;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .filter-pill.active { background: var(--accent-dim); color: #c5d9ff; }
+    .filter-pill:hover:not(.active) { background: var(--border); color: var(--text); }
+
+    .notes-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .note-card {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 12px 14px;
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: border-color 0.15s;
+    }
+    .note-card:hover { border-color: var(--accent-dim); }
+    .note-card-title { font-weight: 600; font-size: 0.95rem; }
+    .note-card-preview { color: var(--text-muted); font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .note-card-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .note-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+    .note-badge.raw { background: #2d1f3d; color: #ce93d8; }
+    .note-badge.note { background: #1a3a5c; color: #64b5f6; }
+    .note-badge.article { background: #1b3a1b; color: #a5d6a7; }
+    .note-badge.tag { background: var(--surface2); color: var(--text-muted); }
+    .note-badge.folder { background: #2a2a1a; color: #ffd54f; }
+    .note-date { font-size: 0.72rem; color: var(--text-muted); margin-left: auto; }
+
+    /* Note viewer panel */
+    .note-viewer { flex: 1; overflow-y: auto; padding: 16px; }
+    .note-viewer-header { margin-bottom: 12px; }
+    .note-viewer-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 8px; }
+    .note-viewer-actions { display: flex; gap: 8px; margin-top: 12px; flex-shrink: 0; padding: 12px 16px; border-top: 1px solid var(--border); }
+
+    /* Markdown rendered content */
+    .md-body h1,.md-body h2,.md-body h3 { color: var(--text); margin: 1em 0 .5em; line-height: 1.3; }
+    .md-body h1 { font-size: 1.6em; border-bottom: 1px solid var(--border); padding-bottom:.3em; }
+    .md-body h2 { font-size: 1.3em; }
+    .md-body h3 { font-size: 1.1em; }
+    .md-body p { margin: .7em 0; line-height: 1.7; }
+    .md-body ul,.md-body ol { padding-left: 1.5em; margin: .7em 0; }
+    .md-body li { margin: .3em 0; line-height: 1.6; }
+    .md-body code { background: rgba(255,255,255,.1); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: .9em; }
+    .md-body pre { background: #0d1117; border-radius: 8px; padding: 14px; overflow-x: auto; margin: 1em 0; }
+    .md-body pre code { background: none; padding: 0; }
+    .md-body blockquote { border-left: 3px solid var(--accent); padding-left: 1em; color: var(--text-muted); margin: 1em 0; }
+    .md-body a { color: #64b5f6; }
+    .md-body hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+    .md-body table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+    .md-body th,.md-body td { padding: 8px 10px; border: 1px solid var(--border); }
+    .md-body th { background: var(--surface2); }
+
+    /* Nav toggle in header */
+    .nav-toggle { display: flex; gap: 4px; }
+    .nav-btn {
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .nav-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .nav-btn:hover:not(.active) { background: var(--surface2); color: var(--text); }
+  </style>
+</head>
+<body>
+<div class="app">
+
+  <!-- Header -->
+  <header>
+    <div class="header-left">
+      <button id="btn-back" class="btn-ghost btn-sm" onclick="goBack()">&#8592; Lists</button>
+      <h1 id="header-title"><span>&#9676;</span> Lists</h1>
+    </div>
+    <div class="nav-toggle" style="margin:0 8px;">
+      <button class="nav-btn active" id="nav-lists" onclick="switchView('lists')">Lists</button>
+      <button class="nav-btn" id="nav-notes" onclick="switchView('notes')">Notes</button>
+    </div>
+    <div class="header-actions">
+      <button class="btn-ghost btn-sm" id="btn-clear" disabled onclick="clearChecked()">Clear checked</button>
+      <button class="btn-success btn-sm" id="btn-print" disabled onclick="printList()">&#128424; Print</button>
+    </div>
+  </header>
+
+  <div class="main" id="main">
+
+    <!-- Sidebar: group list + category list -->
+    <aside class="sidebar">
+      <!-- Group selector -->
+      <div class="group-section">
+        <div class="group-section-header">
+          <span>Groups</span>
+          <button class="btn-icon" onclick="toggleAddGroupForm()" title="New group">+</button>
+        </div>
+        <div class="group-list" id="group-tabs"></div>
+        <div class="add-group-form" id="add-group-form" style="display:none;">
+          <input type="text" id="new-group-input" placeholder="Group name…"
+                 autocomplete="off" autocorrect="off" onkeydown="groupKeydown(event)" />
+          <button class="btn-primary btn-sm" onclick="submitAddGroup()">Add</button>
+          <button class="btn-ghost btn-sm" onclick="toggleAddGroupForm()">&#215;</button>
+        </div>
+      </div>
+      <!-- Lists within selected group -->
+      <div class="sidebar-header">Lists</div>
+      <div class="category-list" id="category-list">
+        <div class="empty-state"><span class="icon">&#128722;</span><span>No lists yet</span></div>
+      </div>
+      <div class="add-category-form">
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="new-cat-input" placeholder="New list name…"
+                 autocomplete="off" autocorrect="off" onkeydown="catKeydown(event)" />
+          <button class="btn-primary btn-sm" onclick="addCategory()">+</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Panel: items in the selected category -->
+    <main class="panel">
+      <div class="panel-header">
+        <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+          <div class="cat-menu-wrap" id="cat-menu-wrap" style="display:none;">
+            <button class="cat-menu-btn" onclick="toggleCategoryMenu(event)" title="List options">&#9776;</button>
+            <div class="cat-menu-dropdown" id="cat-menu-dropdown">
+              <button class="cat-menu-item" onclick="renameCategory()">&#9998; Rename</button>
+              <button class="cat-menu-item" id="menu-item-checkboxes" onclick="toggleCheckboxes()">
+                &#9745; Checkboxes <span class="menu-check" id="menu-checkboxes-check"></span>
+              </button>
+            </div>
+          </div>
+          <div class="panel-title" id="panel-title">Select a list</div>
+        </div>
+        <div class="panel-actions" id="panel-actions" style="display:none;">
+          <button class="btn-ghost btn-sm" id="btn-reorder"
+                  onclick="toggleReorderMode()" title="Reorder items">&#8597;</button>
+        </div>
+      </div>
+
+      <div class="item-list" id="item-list">
+        <div class="empty-state">
+          <span class="icon">&#8592;</span>
+          <span>Pick a list to get started</span>
+        </div>
+      </div>
+
+      <div class="quick-add-section" id="quick-add-section" style="display:none;">
+        <div class="quick-add-header" onclick="toggleQuickAddCollapsed()">
+          <span class="quick-add-label">&#9733; Quick Add</span>
+          <span class="quick-add-chevron">&#9660;</span>
+          <button class="btn-icon-sm" id="btn-edit-common"
+                  onclick="event.stopPropagation(); toggleEditCommon()">Edit</button>
+        </div>
+        <div class="quick-add-list" id="quick-add-chips"></div>
+      </div>
+
+      <div class="add-item-form" id="add-item-form" style="display:none;">
+        <input type="text" id="new-item-name" placeholder="Item name…"
+               autocomplete="off" autocorrect="off" onkeydown="itemKeydown(event)" />
+        <input type="text" id="new-item-qty" placeholder="Qty" style="max-width:72px;"
+               autocomplete="off" onkeydown="itemKeydown(event)" />
+        <button class="btn-primary btn-sm" onclick="addItem()">Add</button>
+      </div>
+    </main>
+
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- Notes overlay -->
+<div id="notes-overlay">
+
+  <!-- Notes sub-nav -->
+  <div class="notes-nav">
+    <button class="notes-tab active" id="ntab-add" onclick="notesShowTab('add')">&#43; Quick Add</button>
+    <button class="notes-tab" id="ntab-browse" onclick="notesShowTab('browse')">Browse</button>
+    <button class="notes-tab" id="ntab-search" onclick="notesShowTab('search')">Search</button>
+  </div>
+
+  <!-- Quick Add panel -->
+  <div class="notes-panel active" id="npanel-add">
+    <div class="quick-note-form">
+      <div>
+        <div class="field-label">Title <span style="color:var(--text-dim)">(optional)</span></div>
+        <input type="text" id="note-title" placeholder="Leave blank to use first line" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Folder <span style="color:var(--text-dim)">(optional)</span></div>
+        <input type="text" id="note-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
+        <datalist id="folder-suggestions"></datalist>
+      </div>
+      <div>
+        <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
+        <input type="text" id="note-tags" placeholder="e.g. idea, work" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Content</div>
+        <textarea id="note-content" placeholder="Write your note here… (markdown supported)" autofocus></textarea>
+      </div>
+      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitQuickNote()">Save Note</button>
+    </div>
+  </div>
+
+  <!-- Browse panel -->
+  <div class="notes-panel" id="npanel-browse">
+    <div class="notes-filters">
+      <button class="filter-pill active" data-status="" onclick="notesSetFilter(this,'')">All</button>
+      <button class="filter-pill" data-status="raw" onclick="notesSetFilter(this,'raw')">Raw</button>
+      <button class="filter-pill" data-status="note" onclick="notesSetFilter(this,'note')">Note</button>
+      <button class="filter-pill" data-status="article" onclick="notesSetFilter(this,'article')">Article</button>
+      <select id="folder-filter" onchange="notesLoadBrowse()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:0.82rem;">
+        <option value="">All folders</option>
+      </select>
+    </div>
+    <div class="notes-list" id="notes-list">
+      <div class="empty-state"><span class="icon">&#128221;</span><span>No notes yet</span></div>
+    </div>
+  </div>
+
+  <!-- Search panel -->
+  <div class="notes-panel" id="npanel-search">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0;">
+      <div style="display:flex;gap:8px;">
+        <input type="text" id="note-search-input" placeholder="Search notes…" autocomplete="off"
+               oninput="notesSearch(this.value)" style="flex:1;" />
+      </div>
+    </div>
+    <div class="notes-list" id="search-list">
+      <div class="empty-state"><span class="icon">&#128269;</span><span>Type to search</span></div>
+    </div>
+  </div>
+
+  <!-- Note viewer panel (shown when a note is opened) -->
+  <div class="notes-panel" id="npanel-viewer" style="overflow:hidden;">
+    <div class="note-viewer" id="note-viewer-content">
+      <!-- filled dynamically -->
+    </div>
+    <div class="note-viewer-actions">
+      <button class="btn-primary btn-sm" id="btn-advance-status" onclick="notesAdvanceStatus()">Advance Status</button>
+      <button class="btn-ghost btn-sm" onclick="notesPrint()">&#128438; Print</button>
+      <button class="btn-ghost btn-sm" onclick="notesCloseViewer()">&#8592; Back</button>
+      <button class="btn-ghost btn-sm" onclick="notesOpenEditMode()">Edit</button>
+    </div>
+  </div>
+
+  <!-- Note edit panel -->
+  <div class="notes-panel" id="npanel-edit">
+    <div class="quick-note-form">
+      <input type="hidden" id="edit-uuid" />
+      <div>
+        <div class="field-label">Title</div>
+        <input type="text" id="edit-title" placeholder="Note title" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Folder</div>
+        <input type="text" id="edit-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Tags</div>
+        <input type="text" id="edit-tags" placeholder="comma-separated" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Status</div>
+        <select id="edit-status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:0.85rem;width:100%;">
+          <option value="raw">Raw</option>
+          <option value="note">Note</option>
+          <option value="article">Article</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Content</div>
+        <textarea id="edit-content" style="min-height:250px;resize:none;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);color:var(--text);padding:12px;font-size:16px;font-family:inherit;line-height:1.6;width:100%;"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary btn-sm" style="flex:1;" onclick="notesSaveEdit()">Save</button>
+        <button class="btn-ghost btn-sm" onclick="notesCancelEdit()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const API = '/api/v1/lists';
+
+  let groups            = [];
+  let selectedGroupId   = null;
+  let categories        = [];
+  let selectedCategoryId = null;
+  let items             = [];
+  let commonItems       = [];
+  let editingCommon     = false;
+  let quickAddCollapsed = true;
+  let wasAutoCollapsed  = false;
+  let currentCategoryHasCheckboxes = true;
+  let reorderMode       = false;
+
+  // Treat as mobile when the primary input is touch (no fine pointer / no hover).
+  // This correctly catches folding phones at any resolution.
+  const isMobile = () =>
+    window.matchMedia('(hover: none) and (pointer: coarse)').matches ||
+    window.innerWidth <= 1024;
+
+  // ── Keyboard avoidance ─────────────────────────────────────────────────────
+  // When the virtual keyboard opens, shrink .app to the visual viewport height
+  // so the add-item bar stays pinned above the keyboard rather than behind it.
+
+  function onViewportResize() {
+    const app = document.querySelector('.app');
+    app.style.height = window.visualViewport.height + 'px';
+    checkAutoCollapse();
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onViewportResize);
+    // Restore full height when keyboard closes (resize fires again with full height)
+  }
+
+  // ── Bootstrap ──────────────────────────────────────────────────────────────
+
+  async function init() {
+    await loadGroups();
+  }
+
+  // ── Mobile navigation ──────────────────────────────────────────────────────
+
+  function showPanel(listName) {
+    if (!isMobile()) return;
+    document.getElementById('main').classList.add('show-panel');
+    const backBtn = document.getElementById('btn-back');
+    backBtn.style.display = 'flex';
+    document.getElementById('header-title').textContent = listName;
+  }
+
+  function goBack() {
+    document.getElementById('main').classList.remove('show-panel');
+    document.getElementById('btn-back').style.display = 'none';
+    document.getElementById('header-title').innerHTML = '<span>&#9676;</span> Lists';
+  }
+
+  // ── Groups ─────────────────────────────────────────────────────────────────
+
+  async function loadGroups() {
+    try {
+      const res = await fetch(`${API}/groups`);
+      if (!res.ok) throw new Error(await res.text());
+      groups = await res.json();
+      renderGroupTabs();
+      if (groups.length > 0 && selectedGroupId === null) {
+        await selectGroup(groups[0].id);
+      }
+    } catch (e) {
+      toast('Failed to load groups: ' + e.message, true);
+    }
+  }
+
+  function renderGroupTabs() {
+    const el = document.getElementById('group-tabs');
+    if (!groups.length) {
+      el.innerHTML = '<div class="empty-state" style="padding:12px 8px;font-size:0.85rem;">No groups yet</div>';
+      return;
+    }
+    el.innerHTML = groups.map(g => `
+      <div class="group-item${g.id === selectedGroupId ? ' active' : ''}"
+           onclick="selectGroup(${g.id})">
+        <span class="group-item-name">${esc(g.name)}</span>
+        <button class="group-delete" onclick="event.stopPropagation(); deleteGroup(${g.id})"
+                title="Delete group">&#215;</button>
+      </div>
+    `).join('');
+  }
+
+  async function selectGroup(id) {
+    selectedGroupId = id;
+    selectedCategoryId = null;
+    items = [];
+    currentCategoryHasCheckboxes = true;
+    reorderMode = false;
+    renderGroupTabs();
+    // Reset the items panel
+    document.getElementById('item-list').innerHTML =
+      '<div class="empty-state"><span class="icon">&#8592;</span><span>Pick a list to get started</span></div>';
+    document.getElementById('panel-title').innerHTML = 'Select a list';
+    document.getElementById('add-item-form').style.display = 'none';
+    document.getElementById('btn-print').disabled = true;
+    document.getElementById('btn-clear').disabled = true;
+    document.getElementById('quick-add-section').style.display = 'none';
+    document.getElementById('panel-actions').style.display = 'none';
+    document.getElementById('cat-menu-wrap').style.display = 'none';
+    commonItems = [];
+    editingCommon = false;
+    if (isMobile()) {
+      document.getElementById('main').classList.remove('show-panel');
+      document.getElementById('btn-back').style.display = 'none';
+      document.getElementById('header-title').innerHTML = '<span>&#9676;</span> Lists';
+    }
+    await loadCategories();
+  }
+
+  function toggleAddGroupForm() {
+    const form = document.getElementById('add-group-form');
+    const visible = form.style.display !== 'none';
+    form.style.display = visible ? 'none' : 'flex';
+    if (!visible) document.getElementById('new-group-input').focus();
+  }
+
+  async function submitAddGroup() {
+    const input = document.getElementById('new-group-input');
+    const name  = input.value.trim();
+    if (!name) return;
+    try {
+      const res = await fetch(`${API}/groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      input.value = '';
+      toggleAddGroupForm();
+      await loadGroups();
+      const added = groups.find(g => g.name === name);
+      if (added) selectGroup(added.id);
+    } catch (e) {
+      toast('Failed to add group: ' + e.message, true);
+    }
+  }
+
+  async function deleteGroup(id) {
+    const group = groups.find(g => g.id === id);
+    if (!confirm(`Delete group "${group?.name}"?\nThis removes all its lists and items.`)) return;
+    try {
+      const res = await fetch(`${API}/groups/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      if (selectedGroupId === id) {
+        selectedGroupId = null;
+        selectedCategoryId = null;
+        categories = [];
+        items = [];
+      }
+      await loadGroups();
+      toast(`Deleted "${group?.name}"`);
+    } catch (e) {
+      toast('Failed to delete group: ' + e.message, true);
+    }
+  }
+
+  function groupKeydown(e) { if (e.key === 'Enter') submitAddGroup(); }
+
+  // ── Categories ─────────────────────────────────────────────────────────────
+
+  async function loadCategories() {
+    if (!selectedGroupId) return;
+    try {
+      const res = await fetch(`${API}/groups/${selectedGroupId}/categories`);
+      if (!res.ok) throw new Error(await res.text());
+      categories = await res.json();
+      renderCategories();
+    } catch (e) {
+      toast('Failed to load categories: ' + e.message, true);
+    }
+  }
+
+  function renderCategories() {
+    const el = document.getElementById('category-list');
+    if (categories.length === 0) {
+      el.innerHTML = '<div class="empty-state"><span class="icon">&#128722;</span><span>No lists yet</span></div>';
+      return;
+    }
+    el.innerHTML = categories.map(c => `
+      <div class="category-item${c.id === selectedCategoryId ? ' active' : ''}"
+           onclick="selectCategory(${c.id})">
+        <span class="category-name">${esc(c.name)}</span>
+        <button class="category-delete btn-sm" title="Delete list"
+                onclick="event.stopPropagation(); deleteCategory(${c.id})">&#215;</button>
+      </div>
+    `).join('');
+  }
+
+  async function selectCategory(id) {
+    selectedCategoryId = id;
+    // Reset collapse state for the new list so auto-collapse runs fresh
+    quickAddCollapsed = true;
+    wasAutoCollapsed  = false;
+    reorderMode = false;
+    renderCategories();
+    const cat = categories.find(c => c.id === id);
+    currentCategoryHasCheckboxes = cat.has_checkboxes !== false;
+    document.getElementById('panel-title').innerHTML =
+      `${esc(cat.name)} <small id="item-count"></small>`;
+    document.getElementById('add-item-form').style.display = 'flex';
+    document.getElementById('btn-print').disabled = false;
+    document.getElementById('panel-actions').style.display = 'flex';
+    document.getElementById('cat-menu-wrap').style.display = 'block';
+    updatePanelButtons();
+    showPanel(cat.name);
+    await loadItems(id);
+    await loadCommonItems(id);
+    if (!isMobile()) document.getElementById('new-item-name').focus();
+  }
+
+  async function addCategory() {
+    if (!selectedGroupId) return;
+    const input = document.getElementById('new-cat-input');
+    const name  = input.value.trim();
+    if (!name) return;
+    try {
+      const res = await fetch(`${API}/groups/${selectedGroupId}/categories`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      input.value = '';
+      await loadCategories();
+      const added = categories.find(c => c.name === name);
+      if (added) selectCategory(added.id);
+    } catch (e) {
+      toast('Failed to add list: ' + e.message, true);
+    }
+  }
+
+  async function deleteCategory(id) {
+    const cat = categories.find(c => c.id === id);
+    if (!confirm(`Delete list "${cat?.name}"?\nThis removes all its items.`)) return;
+    try {
+      const res = await fetch(`${API}/categories/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      if (selectedCategoryId === id) {
+        selectedCategoryId = null;
+        items = [];
+        commonItems = [];
+        editingCommon = false;
+        currentCategoryHasCheckboxes = true;
+        reorderMode = false;
+        document.getElementById('item-list').innerHTML =
+          '<div class="empty-state"><span class="icon">&#8592;</span><span>Pick a list to get started</span></div>';
+        document.getElementById('panel-title').innerHTML = 'Select a list';
+        document.getElementById('add-item-form').style.display = 'none';
+        document.getElementById('quick-add-section').style.display = 'none';
+        document.getElementById('panel-actions').style.display = 'none';
+        document.getElementById('cat-menu-wrap').style.display = 'none';
+        document.getElementById('btn-print').disabled = true;
+        document.getElementById('btn-clear').disabled = true;
+        goBack();
+      }
+      await loadCategories();
+      toast(`Deleted "${cat?.name}"`);
+    } catch (e) {
+      toast('Failed to delete list: ' + e.message, true);
+    }
+  }
+
+  function catKeydown(e) { if (e.key === 'Enter') addCategory(); }
+
+  // ── Items ──────────────────────────────────────────────────────────────────
+
+  async function loadItems(categoryId) {
+    try {
+      const res = await fetch(`${API}/categories/${categoryId}/items`);
+      if (!res.ok) throw new Error(await res.text());
+      items = await res.json();
+      renderItems();
+    } catch (e) {
+      toast('Failed to load items: ' + e.message, true);
+    }
+  }
+
+  function renderItems() {
+    const el = document.getElementById('item-list');
+    el.classList.toggle('reorder-mode', reorderMode);
+    el.classList.toggle('no-checkboxes', !currentCategoryHasCheckboxes);
+
+    const countEl = document.getElementById('item-count');
+    if (countEl) {
+      const pendingCount = currentCategoryHasCheckboxes
+        ? items.filter(i => !i.checked).length
+        : items.length;
+      countEl.textContent = currentCategoryHasCheckboxes
+        ? `${pendingCount} remaining`
+        : `${items.length} item${items.length === 1 ? '' : 's'}`;
+    }
+
+    if (items.length === 0) {
+      el.innerHTML = '<div class="empty-state"><span class="icon">&#9989;</span><span>Nothing here — add something!</span></div>';
+      return;
+    }
+
+    const row = i => `
+      <div class="item-row-container">
+        <div class="swipe-hint swipe-hint-right" aria-hidden="true">&#10003;</div>
+        <div class="swipe-hint swipe-hint-left"  aria-hidden="true">&#128465;</div>
+        <div class="item-row" data-id="${i.id}" data-checked="${i.checked}">
+          <span class="drag-handle" title="Drag to reorder">&#9776;</span>
+          <input type="checkbox" class="item-check" ${i.checked ? 'checked' : ''}
+                 onchange="checkItem(${i.id}, this.checked)" />
+          <span class="item-label${i.checked ? ' checked' : ''}">${esc(i.name)}</span>
+          ${i.quantity ? `<span class="item-qty">${esc(i.quantity)}</span>` : ''}
+          <button class="item-save" title="Save to quick-add" onclick="saveItemAsCommon(${i.id})">&#9733;</button>
+          <button class="item-delete" title="Remove" onclick="deleteItem(${i.id})">&#215;</button>
+        </div>
+      </div>`;
+
+    if (reorderMode) {
+      // Flat list with drag handles
+      el.innerHTML = items.map(row).join('');
+    } else if (currentCategoryHasCheckboxes) {
+      const pending = items.filter(i => !i.checked);
+      const done    = items.filter(i =>  i.checked);
+      el.innerHTML =
+        pending.map(row).join('') +
+        (done.length
+          ? `<div class="items-divider">Already obtained</div>` + done.map(row).join('')
+          : '');
+    } else {
+      // No checkboxes: flat list
+      el.innerHTML = items.map(row).join('');
+    }
+
+    // Attach interaction handlers
+    el.querySelectorAll('.item-row-container').forEach((container, listIdx) => {
+      const rowEl    = container.querySelector('.item-row');
+      const itemId   = parseInt(rowEl.dataset.id, 10);
+      const isChecked = rowEl.dataset.checked === 'true';
+
+      if (reorderMode) {
+        const handle = rowEl.querySelector('.drag-handle');
+        if (handle) initDragHandle(handle, listIdx);
+      } else {
+        initSwipe(container, rowEl, itemId, isChecked);
+      }
+    });
+  }
+
+  async function addItem() {
+    if (!selectedCategoryId) return;
+    const nameEl = document.getElementById('new-item-name');
+    const qtyEl  = document.getElementById('new-item-qty');
+    const name   = nameEl.value.trim();
+    const qty    = qtyEl.value.trim() || null;
+    if (!name) return;
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, quantity: qty }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      nameEl.value = '';
+      qtyEl.value  = '';
+      if (!isMobile()) nameEl.focus();
+      await loadItems(selectedCategoryId);
+    } catch (e) {
+      toast('Failed to add item: ' + e.message, true);
+    }
+  }
+
+  async function checkItem(id, checked) {
+    try {
+      const res = await fetch(`${API}/items/${id}/check`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checked }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      if (navigator.vibrate) navigator.vibrate(8);
+      await loadItems(selectedCategoryId);
+    } catch (e) {
+      toast('Failed to update item: ' + e.message, true);
+    }
+  }
+
+  async function deleteItem(id) {
+    try {
+      const res = await fetch(`${API}/items/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      await loadItems(selectedCategoryId);
+    } catch (e) {
+      toast('Failed to delete item: ' + e.message, true);
+    }
+  }
+
+  async function clearChecked() {
+    if (!selectedCategoryId || !currentCategoryHasCheckboxes) return;
+    const count = items.filter(i => i.checked).length;
+    if (count === 0) { toast('No checked items to clear'); return; }
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/clear`, { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      await loadItems(selectedCategoryId);
+      toast(`Cleared ${count} item${count === 1 ? '' : 's'}`);
+    } catch (e) {
+      toast('Failed to clear: ' + e.message, true);
+    }
+  }
+
+  async function printList() {
+    if (!selectedCategoryId) return;
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/print`, { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      toast('Sent to printer!');
+    } catch (e) {
+      toast('Print failed: ' + e.message, true);
+    }
+  }
+
+  function itemKeydown(e) { if (e.key === 'Enter') addItem(); }
+
+  // ── Common / saved items ────────────────────────────────────────────────────
+
+  async function loadCommonItems(categoryId) {
+    try {
+      const res = await fetch(`${API}/categories/${categoryId}/common`);
+      if (!res.ok) throw new Error(await res.text());
+      commonItems = await res.json();
+      renderCommonItems();
+      document.getElementById('quick-add-section').style.display = '';
+      setQuickAddCollapsed(true);
+      checkAutoCollapse();
+    } catch (e) {
+      toast('Failed to load saved items: ' + e.message, true);
+    }
+  }
+
+  function renderCommonItems() {
+    const el = document.getElementById('quick-add-chips');
+    if (commonItems.length === 0) {
+      el.innerHTML = '<div class="empty-state" style="padding:10px 16px;font-size:0.85rem;">Tap &#9733; on an item to save it here</div>';
+    } else {
+      el.innerHTML = commonItems.map(c => `
+        <div class="quick-add-item" onclick="addItemFromCommon(${c.id})">
+          <span class="quick-add-item-name">${esc(c.name)}</span>
+          ${c.quantity ? `<span class="quick-add-item-qty">${esc(c.quantity)}</span>` : ''}
+          <button class="quick-add-item-delete" onclick="event.stopPropagation(); deleteCommonItem(${c.id})" title="Remove">&#215;</button>
+        </div>
+      `).join('');
+    }
+  }
+
+  async function addItemFromCommon(commonId) {
+    try {
+      const res = await fetch(`${API}/common/${commonId}/add`, { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      if (navigator.vibrate) navigator.vibrate(8);
+      await loadItems(selectedCategoryId);
+    } catch (e) {
+      toast('Failed to add item: ' + e.message, true);
+    }
+  }
+
+  async function deleteCommonItem(id) {
+    try {
+      const res = await fetch(`${API}/common/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      commonItems = commonItems.filter(c => c.id !== id);
+      renderCommonItems();
+    } catch (e) {
+      toast('Failed to remove saved item: ' + e.message, true);
+    }
+  }
+
+  async function saveItemAsCommon(itemId) {
+    const item = items.find(i => i.id === itemId);
+    if (!item || !selectedCategoryId) return;
+    if (commonItems.some(c => c.name.toLowerCase() === item.name.toLowerCase())) {
+      toast(`"${item.name}" is already saved`);
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/common`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: item.name, quantity: item.quantity || null }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const added = await res.json();
+      commonItems.push(added);
+      renderCommonItems();
+      toast(`Saved "${item.name}" to quick-add`);
+    } catch (e) {
+      toast('Failed to save item: ' + e.message, true);
+    }
+  }
+
+  // Min item-list height before auto-collapse kicks in (~3 compact rows)
+  const MIN_ITEM_LIST_H = 120;
+
+  function setQuickAddCollapsed(collapsed, auto = false) {
+    quickAddCollapsed = collapsed;
+    if (collapsed && auto)  wasAutoCollapsed = true;
+    if (!collapsed)         wasAutoCollapsed = false;
+    const section = document.getElementById('quick-add-section');
+    section.classList.toggle('collapsed', collapsed);
+  }
+
+  function toggleQuickAddCollapsed() {
+    wasAutoCollapsed = false; // manual action: disable auto-expand
+    setQuickAddCollapsed(!quickAddCollapsed, false);
+  }
+
+  function checkAutoCollapse() {
+    const section = document.getElementById('quick-add-section');
+    if (!section || section.style.display === 'none') return;
+
+    const panel      = document.querySelector('.panel');
+    const headerEl   = document.querySelector('.panel-header');
+    const addFormEl  = document.getElementById('add-item-form');
+
+    const panelH    = panel.offsetHeight;
+    const headerH   = headerEl ? headerEl.offsetHeight : 0;
+    const addFormH  = (addFormEl && addFormEl.style.display !== 'none') ? addFormEl.offsetHeight : 0;
+    // Estimate how much vertical space quick-add would need when fully open
+    const quickAddH = section.scrollHeight || 240;
+
+    const usableH            = panelH - headerH - addFormH;
+    const spaceForItemsIfOpen = usableH - quickAddH;
+
+    if (spaceForItemsIfOpen < MIN_ITEM_LIST_H && !quickAddCollapsed) {
+      setQuickAddCollapsed(true, true);
+    } else if (spaceForItemsIfOpen >= MIN_ITEM_LIST_H && quickAddCollapsed && wasAutoCollapsed) {
+      setQuickAddCollapsed(false, false);
+    }
+  }
+
+  // Watch for panel height changes (window resize, keyboard, orientation)
+  if (window.ResizeObserver) {
+    new ResizeObserver(checkAutoCollapse).observe(document.querySelector('.panel'));
+  }
+
+  function toggleEditCommon() {
+    editingCommon = !editingCommon;
+    const section = document.getElementById('quick-add-section');
+    const btn = document.getElementById('btn-edit-common');
+    if (editingCommon) {
+      section.classList.add('editing');
+      btn.textContent = 'Done';
+      btn.classList.add('active');
+    } else {
+      section.classList.remove('editing');
+      btn.textContent = 'Edit';
+      btn.classList.remove('active');
+    }
+  }
+
+  // ── Panel button state ─────────────────────────────────────────────────────
+
+  function updatePanelButtons() {
+    const btnReorder = document.getElementById('btn-reorder');
+    const btnClear   = document.getElementById('btn-clear');
+    const menuCheck  = document.getElementById('menu-checkboxes-check');
+
+    if (menuCheck) {
+      menuCheck.textContent = currentCategoryHasCheckboxes ? '✓' : '';
+    }
+    if (btnReorder) {
+      btnReorder.classList.toggle('btn-toggle-active', reorderMode);
+      btnReorder.title = reorderMode ? 'Exit reorder mode' : 'Reorder items';
+    }
+    if (btnClear) {
+      btnClear.disabled = !selectedCategoryId || !currentCategoryHasCheckboxes;
+    }
+  }
+
+  function toggleCategoryMenu(e) {
+    e.stopPropagation();
+    document.getElementById('cat-menu-dropdown').classList.toggle('open');
+  }
+
+  function closeCategoryMenu() {
+    const d = document.getElementById('cat-menu-dropdown');
+    if (d) d.classList.remove('open');
+  }
+
+  document.addEventListener('click', closeCategoryMenu);
+
+  async function renameCategory() {
+    closeCategoryMenu();
+    if (!selectedCategoryId) return;
+    const cat = categories.find(c => c.id === selectedCategoryId);
+    if (!cat) return;
+    const newName = prompt('Rename list:', cat.name);
+    if (!newName || !newName.trim() || newName.trim() === cat.name) return;
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/name`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName.trim() }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      cat.name = newName.trim();
+      document.getElementById('panel-title').innerHTML =
+        `${esc(cat.name)} <small id="item-count"></small>`;
+      renderCategories();
+    } catch (e) {
+      toast('Failed to rename: ' + e.message, true);
+    }
+  }
+
+  async function toggleCheckboxes() {
+    closeCategoryMenu();
+    if (!selectedCategoryId) return;
+    const newVal = !currentCategoryHasCheckboxes;
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/checkboxes`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ has_checkboxes: newVal }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      currentCategoryHasCheckboxes = newVal;
+      const cat = categories.find(c => c.id === selectedCategoryId);
+      if (cat) cat.has_checkboxes = newVal;
+      updatePanelButtons();
+      renderItems();
+    } catch (e) {
+      toast('Failed to update: ' + e.message, true);
+    }
+  }
+
+  function toggleReorderMode() {
+    reorderMode = !reorderMode;
+    updatePanelButtons();
+    renderItems();
+  }
+
+  // ── Drag-to-reorder ────────────────────────────────────────────────────────
+
+  function initDragHandle(handleEl, fromIndex) {
+    handleEl.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      handleEl.setPointerCapture(e.pointerId);
+
+      const container = handleEl.closest('.item-row-container');
+      const rect = container.getBoundingClientRect();
+      const offsetY = e.clientY - rect.top;
+
+      const ghost = container.cloneNode(true);
+      Object.assign(ghost.style, {
+        position: 'fixed',
+        left: rect.left + 'px',
+        top: rect.top + 'px',
+        width: rect.width + 'px',
+        margin: '0',
+        zIndex: '9999',
+        opacity: '0.85',
+        pointerEvents: 'none',
+        boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
+        borderRadius: 'var(--radius)',
+      });
+      document.body.appendChild(ghost);
+      container.style.opacity = '0.25';
+
+      let toIndex = fromIndex;
+
+      function onMove(e) {
+        ghost.style.top = (e.clientY - offsetY) + 'px';
+
+        const list = document.getElementById('item-list');
+        const rows = list.querySelectorAll('.item-row-container');
+        let newTo = 0;
+        rows.forEach((row, i) => {
+          const r = row.getBoundingClientRect();
+          if (e.clientY > r.top + r.height / 2) newTo = i + 1;
+        });
+        toIndex = Math.min(newTo, items.length - 1);
+      }
+
+      function onEnd() {
+        handleEl.removeEventListener('pointermove', onMove);
+        handleEl.removeEventListener('pointerup', onEnd);
+        handleEl.removeEventListener('pointercancel', onEnd);
+        ghost.remove();
+        container.style.opacity = '';
+
+        const insertAt = fromIndex < toIndex ? toIndex - 1 : toIndex;
+        if (insertAt !== fromIndex) {
+          const newItems = [...items];
+          const [moved] = newItems.splice(fromIndex, 1);
+          newItems.splice(insertAt, 0, moved);
+          items = newItems;
+          renderItems();
+          reorderItemsApi(newItems.map(i => i.id));
+        }
+      }
+
+      handleEl.addEventListener('pointermove', onMove);
+      handleEl.addEventListener('pointerup', onEnd);
+      handleEl.addEventListener('pointercancel', onEnd);
+    });
+  }
+
+  async function reorderItemsApi(ids) {
+    if (!selectedCategoryId) return;
+    try {
+      const res = await fetch(`${API}/categories/${selectedCategoryId}/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (e) {
+      toast('Failed to save order: ' + e.message, true);
+    }
+  }
+
+  // ── Swipe gestures ─────────────────────────────────────────────────────────
+  //
+  //  Swipe LEFT  on an item → delete it  (red reveal)
+  //  Swipe RIGHT on an item → toggle checked (green reveal)
+  //
+  //  Uses touch-action:pan-y on the row so the browser still handles vertical
+  //  scrolling while we intercept horizontal drags.
+
+  function initSwipe(container, rowEl, itemId, isChecked) {
+    let startX = 0, startY = 0, lastX = 0;
+    let axis = null;   // 'h' | 'v' | null — locked after first clear movement
+
+    rowEl.addEventListener('touchstart', e => {
+      startX = lastX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      axis   = null;
+      rowEl.style.transition = 'none';
+    }, { passive: true });
+
+    rowEl.addEventListener('touchmove', e => {
+      const dx = e.touches[0].clientX - startX;
+      const dy = e.touches[0].clientY - startY;
+
+      // Lock axis on first meaningful movement
+      if (!axis) {
+        if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+        axis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      }
+      if (axis === 'v') return; // let the browser scroll vertically
+
+      lastX = e.touches[0].clientX;
+      // Clamp: allow up to 110px left, 90px right
+      const clamped = Math.max(-110, Math.min(90, dx));
+      rowEl.style.transform = `translateX(${clamped}px)`;
+    }, { passive: true });
+
+    rowEl.addEventListener('touchend', () => {
+      if (axis !== 'h') { rowEl.style.transition = ''; return; }
+
+      const dx = lastX - startX;
+      rowEl.style.transition = 'transform 0.22s ease';
+
+      if (dx < -80) {
+        // ── Swipe left: delete ───────────────────────────────────────────
+        if (navigator.vibrate) navigator.vibrate([40, 20, 40]);
+        rowEl.style.transform = 'translateX(-110%)';
+
+        // Collapse the container height to close the gap smoothly
+        const h = container.offsetHeight;
+        container.style.overflow   = 'hidden';
+        container.style.maxHeight  = h + 'px';
+        container.style.transition = 'max-height 0.3s ease, opacity 0.2s, margin-bottom 0.3s';
+        // Double rAF ensures the browser registers the initial maxHeight before we collapse
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          container.style.maxHeight   = '0';
+          container.style.opacity     = '0';
+          container.style.marginBottom = '0';
+        }));
+        setTimeout(() => deleteItem(itemId), 320);
+
+      } else if (dx > 60 && currentCategoryHasCheckboxes) {
+        // ── Swipe right: toggle checked ──────────────────────────────────
+        rowEl.style.transform = '';
+        if (navigator.vibrate) navigator.vibrate(8);
+        checkItem(itemId, !isChecked);
+
+      } else {
+        // ── Snap back ────────────────────────────────────────────────────
+        rowEl.style.transform = '';
+      }
+    });
+
+    rowEl.addEventListener('touchcancel', () => {
+      rowEl.style.transition = 'transform 0.22s ease';
+      rowEl.style.transform  = '';
+    });
+  }
+
+  // ── Utilities ──────────────────────────────────────────────────────────────
+
+  function esc(str) {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  let toastTimer;
+  function toast(msg, isError = false) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'show' + (isError ? ' error' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = ''; }, 3000);
+  }
+
+  // ── Start ──────────────────────────────────────────────────────────────────
+  init();
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NOTES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const NOTES_API = '/api/v1/notes';
+  let notesCurrentTab = 'add';
+  let notesFilterStatus = '';
+  let notesCurrentNote = null;
+  let notesViewerFromTab = 'browse';
+  let notesSearchTimer = null;
+  let markedLoaded = false;
+
+  function switchView(view) {
+    const overlay = document.getElementById('notes-overlay');
+    const navLists = document.getElementById('nav-lists');
+    const navNotes = document.getElementById('nav-notes');
+    if (view === 'notes') {
+      overlay.classList.add('active');
+      navNotes.classList.add('active');
+      navLists.classList.remove('active');
+      notesOnOpen();
+    } else {
+      overlay.classList.remove('active');
+      navLists.classList.add('active');
+      navNotes.classList.remove('active');
+    }
+  }
+
+  function notesOnOpen() {
+    notesLoadFolders();
+    if (notesCurrentTab === 'browse') notesLoadBrowse();
+  }
+
+  function notesShowTab(tab) {
+    notesCurrentTab = tab;
+    document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('ntab-' + tab).classList.add('active');
+    document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('npanel-' + tab).classList.add('active');
+    if (tab === 'browse') notesLoadBrowse();
+    if (tab === 'add') setTimeout(() => document.getElementById('note-content').focus(), 80);
+  }
+
+  async function notesLoadFolders() {
+    try {
+      const r = await fetch(NOTES_API + '/folders');
+      const folders = await r.json();
+      const dl = document.getElementById('folder-suggestions');
+      dl.innerHTML = folders.map(f => `<option value="${esc(f)}">`).join('');
+      const sel = document.getElementById('folder-filter');
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All folders</option>' +
+        folders.map(f => `<option value="${esc(f)}" ${f === cur ? 'selected' : ''}>${esc(f)}</option>`).join('');
+    } catch (_) {}
+  }
+
+  async function notesLoadBrowse() {
+    const folder = document.getElementById('folder-filter').value;
+    let url = NOTES_API + '?';
+    if (notesFilterStatus) url += 'status=' + encodeURIComponent(notesFilterStatus) + '&';
+    if (folder) url += 'folder=' + encodeURIComponent(folder);
+    try {
+      const r = await fetch(url);
+      const notes = await r.json();
+      renderNoteList(notes, 'notes-list', 'browse');
+    } catch (_) {
+      document.getElementById('notes-list').innerHTML = '<div class="empty-state"><span>Failed to load notes</span></div>';
+    }
+  }
+
+  function notesSetFilter(btn, status) {
+    notesFilterStatus = status;
+    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    notesLoadBrowse();
+  }
+
+  let searchDebounce;
+  function notesSearch(q) {
+    clearTimeout(searchDebounce);
+    if (!q.trim()) {
+      document.getElementById('search-list').innerHTML =
+        '<div class="empty-state"><span class="icon">&#128269;</span><span>Type to search</span></div>';
+      return;
+    }
+    searchDebounce = setTimeout(async () => {
+      try {
+        const r = await fetch(NOTES_API + '/search?q=' + encodeURIComponent(q));
+        const notes = await r.json();
+        renderNoteList(notes, 'search-list', 'search');
+      } catch (_) {}
+    }, 300);
+  }
+
+  function renderNoteList(notes, containerId, fromTab) {
+    const el = document.getElementById(containerId);
+    if (!notes || notes.length === 0) {
+      el.innerHTML = '<div class="empty-state"><span class="icon">&#128221;</span><span>No notes found</span></div>';
+      return;
+    }
+    el.innerHTML = notes.map(n => {
+      const preview = (n.content || '').replace(/[#*`_>\[\]]/g, '').trim().slice(0, 100);
+      const tagsHtml = (n.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
+      const folderHtml = n.folder ? `<span class="note-badge folder">&#128193; ${esc(n.folder)}</span>` : '';
+      const dateStr = new Date(n.updated_at).toLocaleDateString('en-GB', {day:'numeric',month:'short'});
+      return `<div class="note-card" onclick="notesOpenNote('${esc(n.uuid)}','${fromTab}')">
+        <div class="note-card-title">${esc(n.title || 'Untitled')}</div>
+        ${preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
+        <div class="note-card-meta">
+          <span class="note-badge ${esc(n.status)}">${esc(n.status)}</span>
+          ${folderHtml}${tagsHtml}
+          <span class="note-date">${dateStr}</span>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  async function notesOpenNote(uuid, fromTab) {
+    notesViewerFromTab = fromTab || 'browse';
+    try {
+      const r = await fetch(NOTES_API + '/' + uuid);
+      if (!r.ok) throw 0;
+      notesCurrentNote = await r.json();
+      notesRenderViewer(notesCurrentNote);
+      document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
+      document.getElementById('npanel-viewer').classList.add('active');
+      notesCurrentTab = 'viewer';
+    } catch (_) {
+      toast('Failed to load note', true);
+    }
+  }
+
+  function notesRenderViewer(note) {
+    const adv = document.getElementById('btn-advance-status');
+    adv.textContent = note.status === 'raw' ? 'Raw → Note' :
+                      note.status === 'note' ? 'Note → Article' : 'Published ✓';
+    adv.disabled = note.status === 'article';
+
+    const tagsHtml = (note.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
+    const folderHtml = note.folder ? `<span class="note-badge folder">&#128193; ${esc(note.folder)}</span>` : '';
+    const updDate = new Date(note.updated_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
+
+    const viewer = document.getElementById('note-viewer-content');
+    viewer.innerHTML = `
+      <div class="note-viewer-header">
+        <div class="note-viewer-title">${esc(note.title || 'Untitled')}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+          <span class="note-badge ${esc(note.status)}">${esc(note.status)}</span>
+          ${folderHtml}${tagsHtml}
+          <span class="note-date">Updated ${updDate}</span>
+        </div>
+      </div>
+      <div class="md-body" id="md-render"></div>`;
+
+    const mdEl = document.getElementById('md-render');
+    if (window.marked) {
+      mdEl.innerHTML = window.marked.parse(note.content || '');
+    } else {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+      s.onload = () => { mdEl.innerHTML = window.marked.parse(note.content || ''); };
+      document.head.appendChild(s);
+    }
+  }
+
+  function notesCloseViewer() {
+    notesShowTab(notesViewerFromTab === 'search' ? 'search' : 'browse');
+  }
+
+  function notesOpenEditMode() {
+    if (!notesCurrentNote) return;
+    const n = notesCurrentNote;
+    document.getElementById('edit-uuid').value = n.uuid;
+    document.getElementById('edit-title').value = n.title || '';
+    document.getElementById('edit-content').value = n.content || '';
+    document.getElementById('edit-tags').value = (n.tags || []).join(', ');
+    document.getElementById('edit-folder').value = n.folder || '';
+    document.getElementById('edit-status').value = n.status || 'raw';
+    document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('npanel-edit').classList.add('active');
+    notesCurrentTab = 'edit';
+  }
+
+  function notesCancelEdit() {
+    notesRenderViewer(notesCurrentNote);
+    document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('npanel-viewer').classList.add('active');
+    notesCurrentTab = 'viewer';
+  }
+
+  async function notesSaveEdit() {
+    const uuid = document.getElementById('edit-uuid').value;
+    const body = {
+      title: document.getElementById('edit-title').value.trim() || null,
+      content: document.getElementById('edit-content').value,
+      tags: document.getElementById('edit-tags').value.split(',').map(s => s.trim()).filter(Boolean),
+      folder: document.getElementById('edit-folder').value.trim() || null,
+      status: document.getElementById('edit-status').value,
+    };
+    try {
+      const r = await fetch(NOTES_API + '/' + uuid, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw 0;
+      notesCurrentNote = await r.json();
+      notesCancelEdit();
+      toast('Note saved');
+      notesLoadFolders();
+    } catch (_) {
+      toast('Failed to save note', true);
+    }
+  }
+
+  async function notesAdvanceStatus() {
+    if (!notesCurrentNote) return;
+    try {
+      const r = await fetch(NOTES_API + '/' + notesCurrentNote.uuid + '/status', {method: 'PATCH'});
+      if (!r.ok) throw 0;
+      notesCurrentNote = await r.json();
+      notesRenderViewer(notesCurrentNote);
+      toast('Status advanced to ' + notesCurrentNote.status);
+    } catch (_) {
+      toast('Failed to advance status', true);
+    }
+  }
+
+  async function notesPrint() {
+    if (!notesCurrentNote) return;
+    try {
+      const r = await fetch(NOTES_API + '/' + notesCurrentNote.uuid + '/print', {method: 'POST'});
+      if (!r.ok) throw 0;
+      toast('Note sent to printer');
+    } catch (_) {
+      toast('Print failed', true);
+    }
+  }
+
+  async function submitQuickNote() {
+    const content = document.getElementById('note-content').value.trim();
+    if (!content) { toast('Note content is required', true); return; }
+    const title = document.getElementById('note-title').value.trim() || null;
+    const tagsRaw = document.getElementById('note-tags').value;
+    const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    const folder = document.getElementById('note-folder').value.trim() || null;
+    try {
+      const r = await fetch(NOTES_API, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({content, title, tags, folder}),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('note-content').value = '';
+      document.getElementById('note-title').value = '';
+      document.getElementById('note-tags').value = '';
+      toast('Note saved');
+      notesLoadFolders();
+    } catch (_) {
+      toast('Failed to save note', true);
+    }
+  }
+</script>
+</body>
+</html>

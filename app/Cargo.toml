@@ -5,15 +5,21 @@ authors.workspace = true
 edition.workspace = true
 
 [dependencies]
-db = { path = "../db" }
-log = { path = "../log" }
-notes = { path = "../notes" }
+db      = { path = "../db" }
+log     = { path = "../log" }
+notes   = { path = "../notes" }
 project = { path = "../project" }
-tasks = { path = "../tasks" }
-todo = { path = "../todo" }
+printer = { path = "../printer" }
+todo     = { path = "../todo" }
+lists = { path = "../lists" }
+vikunja = { path = "../vikunja" }
 tracing-subscriber = { version = "0.3.18", features = ["chrono"] }
 anyhow.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 tokio.workspace = true
+serde = { workspace = true }
+config = { workspace = true }
+# HTTP Server Dependency
+warp = "0.3"

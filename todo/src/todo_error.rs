@@ -1,4 +1,5 @@
-use crate::todo_prelude::*;
+use thiserror::Error;
+use vikunja::vikunja_error::VikunjaError;
 
 pub type TodoLibResult<T = ()> = Result<T, TodoLibError>;
 
@@ -7,6 +8,15 @@ pub enum TodoLibError {
     #[error("unable to initialize todo system: {0}")]
     CannotInitialize(String),
 
-    #[error("unknown project error")]
+    #[error("todo item not found: {0}")]
+    NotFound(i64),
+
+    #[error("Vikunja error: {0}")]
+    Vikunja(#[from] VikunjaError),
+
+    #[error("database error: {0}")]
+    Db(String),
+
+    #[error("unknown todo error")]
     Unknown,
 }

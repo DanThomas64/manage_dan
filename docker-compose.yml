@@ -1,0 +1,54 @@
+services:
+
+  # ── Backend (Rust app) ────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    volumes:
+      # Persist the SQLite database and log file in the project directory.
+      # Logs are written to ./data/logs/app.log on the host.
+      - ./data:/data
+      # Mount the project config/ directory at /config so local.toml is read
+      # from projectroot/config/local.toml without touching ./data/ at all.
+      - ./config:/config:ro
+    environment:
+      # Config directory — points to the bind-mounted projectroot/config/.
+      - APP_CONFIG_DIR=/config
+      # Log file path inside the container (mapped to ./data/logs/app.log on the host).
+      - APP_LOGGING_FILE=/data/logs/app.log
+      # Set to "false" to suppress stdout logging (fully headless).
+      - LOG_STDOUT=${LOG_STDOUT:-true}
+      # Timezone — override with e.g. TZ=America/Toronto in .env or shell.
+      - TZ=${TZ:-America/Halifax}
+
+    # ── USB printer passthrough ──────────────────────────────────────────────
+    # Passes the host USB bus into the container so the app can talk to a
+    # physical ESC/POS printer.
+    #
+    # Prerequisites on the host:
+    #   1. The udev rule must be installed (see README — USB printer setup).
+    #      This sets MODE="0666" so the device is accessible without root.
+    #   2. The printer must be plugged in before the container starts.
+    #   3. Set APP_PRINTER_MODE=usb (env var or config/local.toml).
+    #
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+
+    # The app binds on 0.0.0.0:8080.  Expose it directly only if you need
+    # to access the raw API without going through the frontend proxy.
+    # ports:
+    #   - "8080:8080"
+
+  # ── Frontend (nginx static + API proxy) ───────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+

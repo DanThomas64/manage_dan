@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">manage_dan</string>
+    <string name="menu_settings">Change server URL</string>
+    <string name="menu_reload">Reload</string>
+    <string name="dialog_title">Server URL</string>
+    <string name="dialog_message">Enter your manage_dan server address (e.g. http://192.168.1.x)</string>
+    <string name="dialog_connect">Connect</string>
+</resources>

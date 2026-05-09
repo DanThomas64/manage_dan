@@ -1,0 +1,13 @@
+[package]
+name = "printer"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+escpos = { workspace = true, features = ["native_usb"] }
+once_cell = "1.19"

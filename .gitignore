@@ -1,1 +1,15 @@
 /target
+.aider*
+.termdbms/.2186236571916154720
+*.log
+app.sqlite
+app.sqlite-journal
+.termdbms
+
+# Local config overrides — never commit these
+config/local.toml
+config/local.*.toml
+config/recurring.toml
+
+# Runtime data (bind-mounted from docker-compose)
+/data/

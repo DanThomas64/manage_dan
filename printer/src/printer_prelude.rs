@@ -1,4 +1,4 @@
-pub use crate::tasks_error::{TasksLibError, TasksLibResult};
+pub use crate::printer_error::{PrinterLibError, PrinterLibResult};
 
 pub use anyhow::Result;
 pub use thiserror::Error;

@@ -45,7 +45,7 @@ mod nogo_tests {
         // reset systems and try with unknown system
         systems.init();
         systems.update("project", Status::Degraded);
-        systems.update("tasks", Status::Init);
+        systems.update("printer", Status::Init);
         // reset status to degraded
         status.gono = Status::Go;
         status.gonogo(systems);

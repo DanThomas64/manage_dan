@@ -1,0 +1,11 @@
+        // We need to spawn an async task to handle the DB insertion
+        // Since this is running inside a tracing subscriber hook, we must ensure
+        // we have a runtime available. `tokio::spawn` is appropriate here.
+        tokio::spawn(async move {
+            if let Err(e) = log_event(&level, &target, &message).await {
+                // If DB logging fails, we should log this failure somewhere else,
+                // but since we are inside the logging system, we'll just print to stderr
+                // or use a standard library print for safety.
+                eprintln!("Failed to log event to database: {:?}", e);
+            }
+        });
