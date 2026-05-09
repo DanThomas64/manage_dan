@@ -1006,7 +1006,7 @@
   let items             = [];
   let commonItems       = [];
   let editingCommon     = false;
-  let quickAddCollapsed = false;
+  let quickAddCollapsed = true;
   let wasAutoCollapsed  = false;
   let currentCategoryHasCheckboxes = true;
   let reorderMode       = false;
@@ -1195,10 +1195,9 @@
   async function selectCategory(id) {
     selectedCategoryId = id;
     // Reset collapse state for the new list so auto-collapse runs fresh
-    quickAddCollapsed = false;
+    quickAddCollapsed = true;
     wasAutoCollapsed  = false;
     reorderMode = false;
-    document.getElementById('quick-add-section').classList.remove('collapsed');
     renderCategories();
     const cat = categories.find(c => c.id === id);
     currentCategoryHasCheckboxes = cat.has_checkboxes !== false;
@@ -1432,6 +1431,7 @@
       commonItems = await res.json();
       renderCommonItems();
       document.getElementById('quick-add-section').style.display = '';
+      setQuickAddCollapsed(true);
       checkAutoCollapse();
     } catch (e) {
       toast('Failed to load saved items: ' + e.message, true);
