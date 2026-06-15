@@ -219,7 +219,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
   <div class="completed-banner" id="comp-banner" style="display:none"></div>
   <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
   <div class="msg" id="msg"></div>
-  <button class="btn" id="close-btn" onclick="history.back()" style="margin-top:8px;background:var(--surface2);color:var(--text-dim);">Close</button>
+  <button class="btn" id="close-btn" onclick="window.location.href='/'" style="margin-top:8px;background:var(--surface2);color:var(--text-dim);">Go to Dashboard</button>
 </div>
 <script>
 const ID={id};
@@ -252,8 +252,10 @@ function render(t){{
     subs.forEach(s=>c.innerHTML+=`<div class="subtask"><div class="check ${{s.done?'done':''}}"></div><span class="sub-title ${{s.done?'done':''}}">${{s.title}}</span></div>`);
     document.getElementById('subs-card').style.display='block';
   }}
+  document.title=t.title||('Task #'+ID);
   const info=document.getElementById('info');
   if(t.created_at)info.innerHTML+=`<span class="info-item">&#128197; Created: ${{fmtDate(t.created_at)}}</span>`;
+  if(t.updated_at)info.innerHTML+=`<span class="info-item">&#9998; Updated: ${{fmtDate(t.updated_at)}}</span>`;
   if(t.printed_at)info.innerHTML+=`<span class="info-item">&#128438; Printed: ${{fmtDate(t.printed_at)}}</span>`;
   const rems=t.reminders||[];
   if(rems.length){{
