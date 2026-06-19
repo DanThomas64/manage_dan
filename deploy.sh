@@ -2,40 +2,40 @@
 # Cross-compile app for linux/arm64 and deploy to homepi via systemd + nginx.
 # Run from the project root: ./deploy.sh
 #
-# One-time Pi setup required:
-#   sudo apt-get install -y nginx libudev1 libssl3
+# ── One-time dev machine setup ───────────────────────────────────────────────
+#   rustup target add aarch64-unknown-linux-gnu.2.41
+#   cargo install cargo-zigbuild
+#   yay -S zig                        # or: zigup install latest
+#
+#   # Sync Pi sysroot (re-run if Pi system packages update)
+#   sudo mkdir -p /opt/pi-sysroot
+#   sudo rsync -a 10.0.0.221:/usr/include/                  /opt/pi-sysroot/usr/include/
+#   sudo rsync -a 10.0.0.221:/usr/lib/aarch64-linux-gnu/    /opt/pi-sysroot/usr/lib/aarch64-linux-gnu/
+#   sudo rsync -a 10.0.0.221:/lib/aarch64-linux-gnu/        /opt/pi-sysroot/lib/aarch64-linux-gnu/
+#
+# ── One-time Pi setup ────────────────────────────────────────────────────────
+#   sudo apt-get install -y nginx libudev1
 #   sudo systemctl enable nginx
-#   sudo usermod -aG plugdev dan   # USB device access
+#   sudo usermod -aG plugdev dan       # USB device access
 set -euo pipefail
 
-REMOTE_HOST="10.0.0.221"
+REMOTE_HOST="homepi.timmins"
 REMOTE_DIR="/home/dan/manage_dan"
-BUILDER="arm-builder"
-DIST_DIR="$(mktemp -d)"
+SYSROOT="$HOME/pi-sysroot"
+BINARY="target/aarch64-unknown-linux-gnu/release/app"
 
-trap 'rm -rf "$DIST_DIR"' EXIT
-
-# ── Ensure ARM buildx builder exists ─────────────────────────────────────────
-if ! docker buildx inspect "$BUILDER" &>/dev/null; then
-    echo "Creating buildx builder '$BUILDER'..."
-    docker buildx create --name "$BUILDER" --driver docker-container --bootstrap
-fi
-docker buildx use "$BUILDER"
-
-# ── Cross-compile and extract binary ─────────────────────────────────────────
-# Reuses the existing Dockerfile builder stage; extracts the binary from the
-# final image filesystem instead of loading the full image into Docker on Pi.
-echo "Building app binary for linux/arm64..."
-docker buildx build \
-    --platform linux/arm64 \
-    --output "type=local,dest=$DIST_DIR" \
-    .
-# Binary lands at $DIST_DIR/usr/local/bin/manage (from COPY in Dockerfile)
+# ── Cross-compile for linux/arm64 ────────────────────────────────────────────
+echo "Cross-compiling for linux/arm64..."
+PKG_CONFIG_SYSROOT_DIR="$SYSROOT" \
+PKG_CONFIG_PATH="$SYSROOT/usr/lib/aarch64-linux-gnu/pkgconfig" \
+PKG_CONFIG_ALLOW_CROSS=1 \
+CFLAGS_aarch64_unknown_linux_gnu="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/aarch64-linux-gnu" \
+    cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.41 -p app
 
 # ── Deploy binary ─────────────────────────────────────────────────────────────
 echo "Deploying binary..."
 ssh "$REMOTE_HOST" "mkdir -p $REMOTE_DIR/config $REMOTE_DIR/data/logs"
-scp "$DIST_DIR/usr/local/bin/manage" "$REMOTE_HOST:/tmp/manage_dan_new"
+scp "$BINARY" "$REMOTE_HOST:/tmp/manage_dan_new"
 ssh "$REMOTE_HOST" "sudo install -m 755 /tmp/manage_dan_new /usr/local/bin/manage_dan \
     && rm /tmp/manage_dan_new"
 
