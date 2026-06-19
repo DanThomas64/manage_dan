@@ -188,8 +188,17 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-ser
 #loading{{text-align:center;padding:60px;color:var(--text-dim);}}
 #err{{text-align:center;padding:60px;color:var(--red-on);display:none;}}
 #app{{display:none;}}
-.info-row{{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:12px;color:var(--text-dim);}}
-.info-item{{display:flex;align-items:center;gap:4px;}}
+.badge.overdue{{background:var(--red-cont);color:var(--red-on);border-color:transparent;}}
+.task-info-row{{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:13px;margin-top:8px;}}
+.task-info-row:last-child{{border-bottom:none;}}
+.task-info-label{{color:var(--text-dim);}}
+.task-info-value{{font-weight:500;max-width:60%;text-align:right;}}
+.history-item{{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:13px;}}
+.history-item:last-child{{border-bottom:none;}}
+.history-label{{color:var(--text-dim);}}
+.history-val{{text-align:right;}}
+.history-abs{{font-weight:500;}}
+.history-rel{{color:var(--text-dim);font-size:11px;}}
 .reminder-list{{display:flex;flex-direction:column;gap:6px;}}
 .reminder-item{{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;}}
 .completed-banner{{background:var(--green-cont);border-radius:8px;padding:12px 16px;margin-bottom:12px;color:var(--green-on);font-weight:600;font-size:13px;}}
@@ -202,8 +211,8 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-ser
   <div class="card">
     <div class="task-id" id="tid"></div>
     <div class="task-title" id="title"></div>
+    <div id="task-info"></div>
     <div class="meta-row" id="meta"></div>
-    <div class="info-row" id="info"></div>
   </div>
   <div class="card" id="desc-card" style="display:none">
     <div class="section-label">Description</div>
@@ -217,6 +226,10 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-ser
     <div class="section-label">Reminders</div>
     <div class="reminder-list" id="rems"></div>
   </div>
+  <div class="card" id="hist-card" style="display:none">
+    <div class="section-label">History</div>
+    <div id="hist"></div>
+  </div>
   <div class="completed-banner" id="comp-banner" style="display:none"></div>
   <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
   <div class="msg" id="msg"></div>
@@ -226,6 +239,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-ser
 const ID={id};
 const PRI=['UNSET','LOW','MEDIUM','HIGH','URGENT','DO NOW'];
 function fmtDate(d){{if(!d)return null;return new Date(d).toLocaleDateString('en-GB',{{weekday:'short',day:'numeric',month:'short',year:'numeric'}});}}
+function fmtRel(d){{if(!d)return'';const days=Math.floor((Date.now()-new Date(d))/86400000);if(days<1)return'today';if(days===1)return'yesterday';if(days<7)return days+' days ago';if(days<30)return Math.floor(days/7)+' wks ago';return Math.floor(days/30)+' mo ago';}}
 async function load(){{
   try{{
     const r=await fetch('/api/v1/todo/'+ID);
@@ -238,10 +252,13 @@ async function load(){{
 }}
 function render(t){{
   document.getElementById('tid').textContent='TODO #'+(t.id||ID);
-  document.getElementById('title').textContent=t.title;
+  document.getElementById('title').textContent=t.title||('Task #'+ID);
+  const ti=document.getElementById('task-info');
+  if(t.project_title)ti.innerHTML+=`<div class="task-info-row"><span class="task-info-label">&#128193; Project</span><span class="task-info-value">${{t.project_title}}</span></div>`;
+  if(t.created_at)ti.innerHTML+=`<div class="task-info-row"><span class="task-info-label">&#128197; Created</span><span class="task-info-value">${{fmtDate(t.created_at)}}</span></div>`;
   const m=document.getElementById('meta');
-  if(t.project_title)m.innerHTML+=`<span class="badge project">&#128193; ${{t.project_title}}</span>`;
-  if(t.due_date)m.innerHTML+=`<span class="badge due">&#128197; ${{fmtDate(t.due_date)}}</span>`;
+  if(t.due_date){{const ov=!t.completed&&new Date(t.due_date)<new Date();m.innerHTML+=`<span class="badge due${{ov?' overdue':''}}">${{ov?'&#9888;':'&#128197;'}} ${{fmtDate(t.due_date)}}</span>`;}}
+
   if(t.priority>0)m.innerHTML+=`<span class="badge p${{t.priority}}">&#9873; ${{PRI[Math.min(t.priority,5)]}}</span>`;
   (t.labels||[]).forEach(l=>m.innerHTML+=`<span class="badge label">${{l}}</span>`);
   if(t.description){{document.getElementById('desc').textContent=t.description;document.getElementById('desc-card').style.display='block';}}
@@ -254,10 +271,10 @@ function render(t){{
     document.getElementById('subs-card').style.display='block';
   }}
   document.title=t.title||('Task #'+ID);
-  const info=document.getElementById('info');
-  if(t.created_at)info.innerHTML+=`<span class="info-item">&#128197; Created: ${{fmtDate(t.created_at)}}</span>`;
-  if(t.updated_at)info.innerHTML+=`<span class="info-item">&#9998; Updated: ${{fmtDate(t.updated_at)}}</span>`;
-  if(t.printed_at)info.innerHTML+=`<span class="info-item">&#128438; Printed: ${{fmtDate(t.printed_at)}}</span>`;
+  const hist=document.getElementById('hist');
+  if(t.updated_at)hist.innerHTML+=`<div class="history-item"><span class="history-label">&#9998; Updated</span><div class="history-val"><div class="history-abs">${{fmtDate(t.updated_at)}}</div><div class="history-rel">${{fmtRel(t.updated_at)}}</div></div></div>`;
+  if(t.printed_at)hist.innerHTML+=`<div class="history-item"><span class="history-label">&#128438; Printed</span><div class="history-val"><div class="history-abs">${{fmtDate(t.printed_at)}}</div><div class="history-rel">${{fmtRel(t.printed_at)}}</div></div></div>`;
+  document.getElementById('hist-card').style.display='block';
   const rems=t.reminders||[];
   if(rems.length){{
     const rc=document.getElementById('rems');
@@ -295,7 +312,11 @@ load();
 </script>
 </body>
 </html>"#, id = id);
-    Ok(warp::reply::html(html))
+    Ok(warp::reply::with_header(
+        warp::reply::html(html),
+        "Cache-Control",
+        "no-cache, no-store, must-revalidate",
+    ))
 }
 
 // --- List Endpoints ---
@@ -539,18 +560,21 @@ pub async fn add_item_from_common_handler(id: i64) -> Result<impl Reply, Rejecti
 
 #[derive(Deserialize)]
 pub struct NoteQuery {
-    pub status: Option<String>,
-    pub folder: Option<String>,
+    pub notebook: Option<String>,
     pub tag: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct NoteIdQuery {
+    pub notebook: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct NoteSearchQuery { pub q: Option<String> }
 
-/// GET /api/v1/notes - list notes with optional filters
+/// GET /api/v1/notes?notebook=&tag=
 pub async fn list_notes_handler(q: NoteQuery) -> Result<impl Reply, Rejection> {
-    let status = q.status.as_deref().map(notes::NoteStatus::from_str);
-    match notes::list(status, q.folder, q.tag).await {
+    match notes::list(q.notebook, q.tag).await {
         Ok(notes) => Ok(warp::reply::json(&notes)),
         Err(e) => {
             error!("Failed to list notes: {}", e);
@@ -559,7 +583,7 @@ pub async fn list_notes_handler(q: NoteQuery) -> Result<impl Reply, Rejection> {
     }
 }
 
-/// POST /api/v1/notes - create a note
+/// POST /api/v1/notes
 pub async fn create_note_handler(req: notes::CreateNoteRequest) -> Result<impl Reply, Rejection> {
     match notes::create(req).await {
         Ok(note) => Ok(warp::reply::with_status(warp::reply::json(&note), StatusCode::CREATED)),
@@ -570,7 +594,7 @@ pub async fn create_note_handler(req: notes::CreateNoteRequest) -> Result<impl R
     }
 }
 
-/// GET /api/v1/notes/search?q= - FTS5 search
+/// GET /api/v1/notes/search?q=
 pub async fn search_notes_handler(q: NoteSearchQuery) -> Result<impl Reply, Rejection> {
     let query = q.q.unwrap_or_default();
     match notes::search(&query).await {
@@ -604,75 +628,61 @@ pub async fn list_note_tags_handler() -> Result<impl Reply, Rejection> {
     }
 }
 
-/// GET /api/v1/notes/:uuid - single note JSON
-pub async fn get_note_handler(uuid: String) -> Result<impl Reply, Rejection> {
-    match notes::get(&uuid).await {
+/// GET /api/v1/notes/:id?notebook=
+pub async fn get_note_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, Rejection> {
+    let notebook = q.notebook.as_deref().unwrap_or("home");
+    match notes::get(id, notebook).await {
         Ok(note) => Ok(warp::reply::json(&note)),
-        Err(notes::notes_error::NotesLibError::NotFound(_)) => {
-            Err(warp::reject::not_found())
-        }
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
-            error!("Failed to get note {}: {}", uuid, e);
+            error!("Failed to get note {}:{}: {}", notebook, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
 }
 
-/// PUT /api/v1/notes/:uuid - update note
-pub async fn update_note_handler(uuid: String, req: notes::UpdateNoteRequest) -> Result<impl Reply, Rejection> {
-    match notes::update(&uuid, req).await {
+/// PUT /api/v1/notes/:id?notebook=
+pub async fn update_note_handler(id: u64, q: NoteIdQuery, req: notes::UpdateNoteRequest) -> Result<impl Reply, Rejection> {
+    let notebook = q.notebook.as_deref().unwrap_or("home");
+    match notes::update(id, notebook, req).await {
         Ok(note) => Ok(warp::reply::json(&note)),
-        Err(notes::notes_error::NotesLibError::NotFound(_)) => {
-            Err(warp::reject::not_found())
-        }
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
-            error!("Failed to update note {}: {}", uuid, e);
+            error!("Failed to update note {}:{}: {}", notebook, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
 }
 
-/// DELETE /api/v1/notes/:uuid - delete note
-pub async fn delete_note_handler(uuid: String) -> Result<impl Reply, Rejection> {
-    match notes::delete(&uuid).await {
+/// DELETE /api/v1/notes/:id?notebook=
+pub async fn delete_note_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, Rejection> {
+    let notebook = q.notebook.as_deref().unwrap_or("home");
+    match notes::delete(id, notebook).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
-        Err(notes::notes_error::NotesLibError::NotFound(_)) => {
-            Err(warp::reject::not_found())
-        }
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
-            error!("Failed to delete note {}: {}", uuid, e);
+            error!("Failed to delete note {}:{}: {}", notebook, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
 }
 
-/// PATCH /api/v1/notes/:uuid/status - advance status Raw→Note→Article
-pub async fn advance_note_status_handler(uuid: String) -> Result<impl Reply, Rejection> {
-    match notes::advance_status(&uuid).await {
-        Ok(note) => Ok(warp::reply::json(&note)),
-        Err(notes::notes_error::NotesLibError::NotFound(_)) => {
-            Err(warp::reject::not_found())
-        }
-        Err(e) => {
-            error!("Failed to advance note status {}: {}", uuid, e);
-            Err(warp::reject::custom(ApiError::NotesOperationFailed))
-        }
-    }
-}
-
-pub async fn print_note_handler(uuid: String) -> Result<impl Reply, Rejection> {
-    match notes::print(&uuid).await {
+/// POST /api/v1/notes/:id/print?notebook=
+pub async fn print_note_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, Rejection> {
+    let notebook = q.notebook.as_deref().unwrap_or("home");
+    match notes::print(id, notebook).await {
         Ok(()) => Ok(warp::reply::json(&true)),
         Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
-            error!("Failed to print note {}: {}", uuid, e);
+            error!("Failed to print note {}:{}: {}", notebook, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
 }
 
-/// GET /notes/:uuid - rendered markdown viewer page
-pub async fn get_note_page_handler(uuid: String) -> Result<impl Reply, Rejection> {
+/// GET /notes/:id?notebook= - rendered markdown viewer page
+pub async fn get_note_page_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, Rejection> {
+    let notebook = q.notebook.clone().unwrap_or_else(|| "home".to_string());
     let html = format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -680,17 +690,14 @@ pub async fn get_note_page_handler(uuid: String) -> Result<impl Reply, Rejection
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Note</title>
 <style>
-:root{{--bg:#1a1a2e;--surface:#16213e;--surface2:#0f3460;--accent:#e94560;--text:#eaeaea;--text-dim:#9a9ab0;--success:#4caf50;--radius:12px;}}
+:root{{--bg:#1a1a2e;--surface:#16213e;--surface2:#0f3460;--accent:#e94560;--text:#eaeaea;--text-dim:#9a9ab0;--radius:12px;}}
 *{{box-sizing:border-box;margin:0;padding:0;}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:800px;margin:0 auto;}}
 .meta-bar{{background:var(--surface);border-radius:var(--radius);padding:14px 18px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;}}
 .title{{font-size:24px;font-weight:700;margin-bottom:4px;}}
 .badge{{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;}}
-.badge.raw{{background:#2d1f3d;color:#ce93d8;}}
-.badge.note{{background:#1a3a5c;color:#64b5f6;}}
-.badge.article{{background:#1b3a1b;color:#a5d6a7;}}
+.badge.notebook{{background:#2a2a1a;color:#ffd54f;}}
 .badge.tag{{background:var(--surface2);color:var(--text);}}
-.badge.folder{{background:#2a2a1a;color:#ffd54f;}}
 .dates{{font-size:11px;color:var(--text-dim);margin-left:auto;}}
 .content-card{{background:var(--surface);border-radius:var(--radius);padding:20px 24px;}}
 .markdown-body h1,.markdown-body h2,.markdown-body h3{{color:var(--text);margin:1em 0 .5em;line-height:1.3;}}
@@ -712,8 +719,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
 .markdown-body th{{background:var(--surface2);}}
 .actions{{display:flex;gap:8px;margin-top:12px;}}
 .btn{{padding:10px 18px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .2s;}}
-.btn-advance{{background:var(--accent);color:#fff;}}
-.btn-edit{{background:var(--surface2);color:var(--text);}}
+.btn-back{{background:var(--surface2);color:var(--text);}}
 .btn:hover{{opacity:.85;}}
 #loading{{text-align:center;padding:60px;color:var(--text-dim);}}
 #app{{display:none;}}
@@ -731,44 +737,34 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
   </div>
   <div class="content-card markdown-body" id="content"></div>
   <div class="actions">
-    <button class="btn btn-advance" id="btn-advance" onclick="advance()">Advance Status</button>
-    <button class="btn btn-edit" onclick="history.back()">Back</button>
+    <button class="btn btn-back" onclick="history.back()">Back</button>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
-const UUID="{uuid}";
-const STATUS_LABELS={{raw:"Raw",note:"Note",article:"Article"}};
+const NB_ID={id};
+const NOTEBOOK="{notebook}";
 function fmtDate(d){{return new Date(d).toLocaleDateString('en-GB',{{day:'numeric',month:'short',year:'numeric'}});}}
 async function load(){{
   try{{
-    const r=await fetch('/api/v1/notes/'+UUID);
+    const r=await fetch('/api/v1/notes/'+NB_ID+'?notebook='+NOTEBOOK);
     if(!r.ok)throw 0;
     const n=await r.json();
     document.title='Note: '+(n.title||'Untitled');
     document.getElementById('title').textContent=n.title||'Untitled';
     const b=document.getElementById('badges');
-    b.innerHTML=`<span class="badge ${{n.status}}">${{STATUS_LABELS[n.status]||n.status}}</span>`;
-    if(n.folder)b.innerHTML+=`<span class="badge folder">&#128193; ${{n.folder}}</span>`;
+    b.innerHTML=`<span class="badge notebook">&#128193; ${{n.notebook}}</span>`;
     (n.tags||[]).forEach(t=>b.innerHTML+=`<span class="badge tag">#${{t}}</span>`);
     document.getElementById('dates').innerHTML=`Updated ${{fmtDate(n.updated_at)}}<br>Created ${{fmtDate(n.created_at)}}`;
     document.getElementById('content').innerHTML=marked.parse(n.content||'');
-    const adv=document.getElementById('btn-advance');
-    if(n.status==='article'){{adv.textContent='Published';adv.disabled=true;adv.style.opacity='.5';}}
     document.getElementById('loading').style.display='none';
     document.getElementById('app').style.display='block';
   }}catch{{document.getElementById('loading').textContent='Note not found';}}
 }}
-async function advance(){{
-  try{{
-    await fetch('/api/v1/notes/'+UUID+'/status',{{method:'PATCH'}});
-    load();
-  }}catch{{alert('Failed to advance status');}}
-}}
 load();
 </script>
 </body>
-</html>"#, uuid = uuid);
+</html>"#, id = id, notebook = notebook);
     Ok(warp::reply::html(html))
 }
 
@@ -1118,7 +1114,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
 fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let notes_seg = warp::path("notes");
 
-    // GET /api/v1/notes?status=&folder=&tag=
+    // GET /api/v1/notes?notebook=&tag=
     let list = notes_seg
         .and(warp::path::end())
         .and(warp::get())
@@ -1154,45 +1150,41 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(warp::get())
         .and_then(list_note_tags_handler);
 
-    // GET /api/v1/notes/:uuid
+    // GET /api/v1/notes/:id?notebook=
     let get_one = notes_seg
-        .and(warp::path::param::<String>())
+        .and(warp::path::param::<u64>())
         .and(warp::path::end())
         .and(warp::get())
+        .and(query::<NoteIdQuery>())
         .and_then(get_note_handler);
 
-    // PUT /api/v1/notes/:uuid
+    // PUT /api/v1/notes/:id?notebook=
     let update = notes_seg
-        .and(warp::path::param::<String>())
+        .and(warp::path::param::<u64>())
         .and(warp::path::end())
         .and(warp::put())
+        .and(query::<NoteIdQuery>())
         .and(warp::body::json())
-        .and_then(|uuid, req| update_note_handler(uuid, req));
+        .and_then(|id, q, req| update_note_handler(id, q, req));
 
-    // DELETE /api/v1/notes/:uuid
+    // DELETE /api/v1/notes/:id?notebook=
     let delete = notes_seg
-        .and(warp::path::param::<String>())
+        .and(warp::path::param::<u64>())
         .and(warp::path::end())
         .and(warp::delete())
-        .and_then(delete_note_handler);
+        .and(query::<NoteIdQuery>())
+        .and_then(|id, q| delete_note_handler(id, q));
 
-    // PATCH /api/v1/notes/:uuid/status
-    let advance = notes_seg
-        .and(warp::path::param::<String>())
-        .and(warp::path("status"))
-        .and(warp::path::end())
-        .and(warp::patch())
-        .and_then(advance_note_status_handler);
-
-    // POST /api/v1/notes/:uuid/print
+    // POST /api/v1/notes/:id/print?notebook=
     let print = notes_seg
-        .and(warp::path::param::<String>())
+        .and(warp::path::param::<u64>())
         .and(warp::path("print"))
         .and(warp::path::end())
         .and(warp::post())
-        .and_then(print_note_handler);
+        .and(query::<NoteIdQuery>())
+        .and_then(|id, q| print_note_handler(id, q));
 
-    search.or(folders).or(tags).or(list).or(create).or(advance).or(print).or(get_one).or(update).or(delete)
+    search.or(folders).or(tags).or(list).or(create).or(print).or(get_one).or(update).or(delete)
 }
 
 /// Defines routes related to logging.
@@ -1220,9 +1212,10 @@ pub fn routes(
 
     // Note viewer page — outside /api/v1/ for clean URLs.
     let note_page = warp::path("notes")
-        .and(warp::path::param::<String>())
+        .and(warp::path::param::<u64>())
         .and(warp::path::end())
         .and(warp::get())
+        .and(query::<NoteIdQuery>())
         .and_then(get_note_page_handler);
 
     task_page.or(note_page).or(

@@ -149,39 +149,13 @@ pub struct ListItem {
 
 // --- Notes Data Structures ---
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum NoteStatus {
-    Raw,
-    Note,
-    Article,
-}
-
-impl NoteStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            NoteStatus::Raw => "raw",
-            NoteStatus::Note => "note",
-            NoteStatus::Article => "article",
-        }
-    }
-}
-
-impl std::fmt::Display for NoteStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Note {
-    pub id: Option<i64>,
-    pub uuid: String,
+    pub nb_id: u64,
+    pub notebook: String,
     pub title: String,
     pub content: String,
-    pub status: NoteStatus,
     pub tags: Vec<String>,
-    pub folder: String,
     pub created_at: DateTime<Local>,
     pub updated_at: DateTime<Local>,
 }
@@ -373,15 +347,15 @@ impl ApiClient {
 
     // --- Notes Methods ---
 
-    pub async fn fetch_notes(&self, status: Option<&str>, folder: Option<&str>) -> Result<Vec<Note>> {
+    pub async fn fetch_notes(&self, notebook: Option<&str>, tag: Option<&str>) -> Result<Vec<Note>> {
         let mut url = format!("{}/api/v1/notes?", self.base_url);
-        if let Some(s) = status { url.push_str(&format!("status={}&", s)); }
-        if let Some(f) = folder { url.push_str(&format!("folder={}&", urlencoding::encode(f))); }
+        if let Some(nb) = notebook { url.push_str(&format!("notebook={}&", urlencoding::encode(nb))); }
+        if let Some(t) = tag { url.push_str(&format!("tag={}&", urlencoding::encode(t))); }
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
     }
 
-    pub async fn fetch_note(&self, uuid: &str) -> Result<Note> {
-        let url = format!("{}/api/v1/notes/{}", self.base_url, uuid);
+    pub async fn fetch_note(&self, nb_id: u64, notebook: &str) -> Result<Note> {
+        let url = format!("{}/api/v1/notes/{}?notebook={}", self.base_url, nb_id, urlencoding::encode(notebook));
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
     }
 
@@ -390,15 +364,10 @@ impl ApiClient {
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
     }
 
-    pub async fn update_note(&self, uuid: &str, content: &str, title: Option<&str>) -> Result<Note> {
-        let url = format!("{}/api/v1/notes/{}", self.base_url, uuid);
+    pub async fn update_note(&self, nb_id: u64, notebook: &str, content: &str, title: Option<&str>) -> Result<Note> {
+        let url = format!("{}/api/v1/notes/{}?notebook={}", self.base_url, nb_id, urlencoding::encode(notebook));
         let body = serde_json::json!({ "content": content, "title": title });
         Ok(self.client.put(&url).json(&body).send().await?.error_for_status()?.json().await?)
-    }
-
-    pub async fn advance_note_status(&self, uuid: &str) -> Result<Note> {
-        let url = format!("{}/api/v1/notes/{}/status", self.base_url, uuid);
-        Ok(self.client.patch(&url).send().await?.error_for_status()?.json().await?)
     }
 
     pub async fn create_note(
@@ -406,31 +375,31 @@ impl ApiClient {
         title: &str,
         content: &str,
         tags: Vec<String>,
-        folder: &str,
+        notebook: &str,
     ) -> Result<Note> {
         let url = format!("{}/api/v1/notes", self.base_url);
         let body = serde_json::json!({
             "title": if title.is_empty() { None::<&str> } else { Some(title) },
             "content": content,
             "tags": tags,
-            "folder": if folder.is_empty() { None::<&str> } else { Some(folder) },
+            "notebook": if notebook.is_empty() { None::<&str> } else { Some(notebook) },
         });
         Ok(self.client.post(&url).json(&body).send().await?.error_for_status()?.json().await?)
     }
 
-    pub async fn print_note(&self, uuid: &str) -> Result<()> {
-        let url = format!("{}/api/v1/notes/{}/print", self.base_url, uuid);
+    pub async fn print_note(&self, nb_id: u64, notebook: &str) -> Result<()> {
+        let url = format!("{}/api/v1/notes/{}/print?notebook={}", self.base_url, nb_id, urlencoding::encode(notebook));
         self.client.post(&url).send().await?.error_for_status()?;
         Ok(())
     }
 
-    pub async fn delete_note(&self, uuid: &str) -> Result<()> {
-        let url = format!("{}/api/v1/notes/{}", self.base_url, uuid);
+    pub async fn delete_note(&self, nb_id: u64, notebook: &str) -> Result<()> {
+        let url = format!("{}/api/v1/notes/{}?notebook={}", self.base_url, nb_id, urlencoding::encode(notebook));
         self.client.delete(&url).send().await?.error_for_status()?;
         Ok(())
     }
 
-    pub async fn fetch_note_folders(&self) -> Result<Vec<String>> {
+    pub async fn fetch_note_notebooks(&self) -> Result<Vec<String>> {
         let url = format!("{}/api/v1/notes/folders", self.base_url);
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
     }
