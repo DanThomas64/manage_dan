@@ -1,0 +1,23 @@
+services:
+
+  app:
+    image: manage_dan_app:latest
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+      - ./config:/config:ro
+    environment:
+      - APP_CONFIG_DIR=/config
+      - APP_LOGGING_FILE=/data/logs/app.log
+      - LOG_STDOUT=${LOG_STDOUT:-true}
+      - TZ=${TZ:-America/Halifax}
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+
+  frontend:
+    image: manage_dan_frontend:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - app

@@ -155,43 +155,44 @@ pub async fn get_todo_page_handler(id: i64) -> Result<impl Reply, Rejection> {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Task #{id}</title>
 <style>
-:root{{--bg:#1a1a2e;--surface:#16213e;--surface2:#0f3460;--accent:#e94560;--text:#eaeaea;--text-dim:#9a9ab0;--success:#4caf50;--radius:12px;}}
+:root{{--bg:#111318;--surface:#1f2227;--surface2:#22252b;--surface3:#262930;--border:#41474d;--accent:#a8c7fa;--accent-on:#0a305f;--accent-dim:#284777;--accent-cont:#d6e3ff;--secondary-cont:#3e4759;--secondary-on:#dae2f9;--green:#6dd58c;--green-cont:#005227;--green-on:#89f3a7;--red-cont:#93000a;--red-on:#ffdad6;--text:#e2e2e6;--text-dim:#c1c7ce;--radius:12px;--shadow:0 2px 6px rgba(0,0,0,0.45);}}
 *{{box-sizing:border-box;margin:0;padding:0;}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:600px;margin:0 auto;}}
-.card{{background:var(--surface);border-radius:var(--radius);padding:20px;margin-bottom:12px;}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:600px;margin:0 auto;}}
+.card{{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);padding:20px;margin-bottom:12px;box-shadow:var(--shadow);}}
 .task-id{{color:var(--text-dim);font-size:12px;margin-bottom:8px;}}
-.task-title{{font-size:22px;font-weight:700;margin-bottom:12px;line-height:1.3;}}
+.task-title{{font-size:22px;font-weight:500;margin-bottom:12px;line-height:1.3;letter-spacing:.01em;}}
 .meta-row{{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;}}
-.badge{{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600;background:var(--surface2);}}
-.badge.project{{background:#1a3a5c;color:#64b5f6;}}
-.badge.due{{background:#2d1f3d;color:#ce93d8;}}
-.badge.label{{background:#1b3a2d;color:#a5d6a7;}}
-.badge.p1{{background:#1b3a1b;color:#4caf50;}}
-.badge.p2,.badge.p3{{background:#3a2e1b;color:#ff9800;}}
-.badge.p4,.badge.p5{{background:#3a1b1b;color:#f44336;}}
+.badge{{display:inline-block;padding:4px 10px;border-radius:50px;font-size:12px;font-weight:500;background:var(--surface2);border:1px solid var(--border);}}
+.badge.project{{background:var(--accent-dim);color:var(--accent-cont);border-color:transparent;}}
+.badge.due{{background:var(--secondary-cont);color:var(--secondary-on);border-color:transparent;}}
+.badge.label{{background:var(--green-cont);color:var(--green-on);border-color:transparent;}}
+.badge.p1{{background:var(--green-cont);color:var(--green-on);border-color:transparent;}}
+.badge.p2,.badge.p3{{background:var(--secondary-cont);color:#ffb76b;border-color:transparent;}}
+.badge.p4,.badge.p5{{background:var(--red-cont);color:var(--red-on);border-color:transparent;}}
 .section-label{{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}}
 .description{{line-height:1.6;white-space:pre-wrap;}}
 .subtask{{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);}}
 .subtask:last-child{{border-bottom:none;}}
-.check{{width:18px;height:18px;border-radius:4px;border:2px solid var(--text-dim);flex-shrink:0;display:flex;align-items:center;justify-content:center;}}
+.check{{width:18px;height:18px;border-radius:4px;border:2px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;}}
 .check.done{{background:var(--accent);border-color:var(--accent);}}
-.check.done::after{{content:'✓';color:#fff;font-size:11px;}}
+.check.done::after{{content:'✓';color:var(--accent-on);font-size:11px;}}
 .sub-title.done{{text-decoration:line-through;color:var(--text-dim);}}
-.btn{{width:100%;padding:16px;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);font-size:16px;font-weight:700;cursor:pointer;margin-top:4px;transition:opacity .2s,transform .1s;}}
-.btn:active{{transform:scale(.98);opacity:.9;}}
-.btn:disabled{{background:var(--surface2);color:var(--text-dim);cursor:not-allowed;}}
-.btn.done{{background:#2d5a2d;color:#a5d6a7;}}
+.btn{{width:100%;padding:16px;background:var(--accent);color:var(--accent-on);border:none;border-radius:50px;font-size:16px;font-weight:600;cursor:pointer;margin-top:4px;transition:filter .2s,transform .1s;letter-spacing:.01em;}}
+.btn:hover{{filter:brightness(1.1);}}
+.btn:active{{transform:scale(.98);filter:brightness(.95);}}
+.btn:disabled{{background:var(--surface2);color:var(--text-dim);cursor:not-allowed;filter:none;}}
+.btn.done{{background:var(--green-cont);color:var(--green-on);}}
 .msg{{text-align:center;padding:12px;border-radius:8px;margin-top:8px;font-weight:600;display:none;}}
-.msg.ok{{background:#1b3a1b;color:var(--success);display:block;}}
-.msg.err{{background:#3a1b1b;color:#f44336;display:block;}}
+.msg.ok{{background:var(--green-cont);color:var(--green-on);display:block;}}
+.msg.err{{background:var(--red-cont);color:var(--red-on);display:block;}}
 #loading{{text-align:center;padding:60px;color:var(--text-dim);}}
-#err{{text-align:center;padding:60px;color:#f44336;display:none;}}
+#err{{text-align:center;padding:60px;color:var(--red-on);display:none;}}
 #app{{display:none;}}
 .info-row{{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;font-size:12px;color:var(--text-dim);}}
 .info-item{{display:flex;align-items:center;gap:4px;}}
 .reminder-list{{display:flex;flex-direction:column;gap:6px;}}
-.reminder-item{{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;background:var(--surface2);border-radius:6px;}}
-.completed-banner{{background:#1b3a1b;border-radius:8px;padding:12px 16px;margin-bottom:12px;color:#a5d6a7;font-weight:600;font-size:13px;}}
+.reminder-item{{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;}}
+.completed-banner{{background:var(--green-cont);border-radius:8px;padding:12px 16px;margin-bottom:12px;color:var(--green-on);font-weight:600;font-size:13px;}}
 </style>
 </head>
 <body>
@@ -219,7 +220,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgro
   <div class="completed-banner" id="comp-banner" style="display:none"></div>
   <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
   <div class="msg" id="msg"></div>
-  <button class="btn" id="close-btn" onclick="history.back()" style="margin-top:8px;background:var(--surface2);color:var(--text-dim);">Close</button>
+  <button class="btn" id="close-btn" onclick="window.location.href='/'" style="margin-top:8px;background:transparent;color:var(--accent);border:1px solid var(--border);">Go to Dashboard</button>
 </div>
 <script>
 const ID={id};
@@ -252,8 +253,10 @@ function render(t){{
     subs.forEach(s=>c.innerHTML+=`<div class="subtask"><div class="check ${{s.done?'done':''}}"></div><span class="sub-title ${{s.done?'done':''}}">${{s.title}}</span></div>`);
     document.getElementById('subs-card').style.display='block';
   }}
+  document.title=t.title||('Task #'+ID);
   const info=document.getElementById('info');
   if(t.created_at)info.innerHTML+=`<span class="info-item">&#128197; Created: ${{fmtDate(t.created_at)}}</span>`;
+  if(t.updated_at)info.innerHTML+=`<span class="info-item">&#9998; Updated: ${{fmtDate(t.updated_at)}}</span>`;
   if(t.printed_at)info.innerHTML+=`<span class="info-item">&#128438; Printed: ${{fmtDate(t.printed_at)}}</span>`;
   const rems=t.reminders||[];
   if(rems.length){{

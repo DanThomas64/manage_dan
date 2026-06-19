@@ -7,25 +7,50 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#1a1d27" />
+  <meta name="theme-color" content="#111318" />
   <title>Lists</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:          #0f1117;
-      --surface:     #1a1d27;
-      --surface2:    #22263a;
-      --border:      #2e3250;
-      --accent:      #5b8dee;
-      --accent-dim:  #2c4480;
-      --green:       #3ecf8e;
-      --red:         #e05c5c;
-      --text:        #e4e8f0;
-      --text-muted:  #7a82a0;
-      --checked-fg:  #4a4f68;
-      --radius:      10px;
-      --shadow:      0 4px 24px rgba(0,0,0,0.4);
+      /* MD3 dark — background & surface elevation */
+      --bg:          #111318;
+      --surface:     #1f2227;
+      --surface2:    #22252b;
+      --surface3:    #262930;
+      --border:      #41474d;
+
+      /* MD3 primary (blue) */
+      --accent:      #a8c7fa;
+      --accent-dim:  #284777;
+      --accent-on:   #0a305f;
+      --accent-cont: #d6e3ff;
+
+      /* MD3 secondary (muted blue-gray) */
+      --secondary:       #bec6dc;
+      --secondary-cont:  #3e4759;
+      --secondary-on:    #dae2f9;
+
+      /* MD3 tertiary (green — success/done) */
+      --green:       #6dd58c;
+      --green-cont:  #005227;
+      --green-on:    #89f3a7;
+
+      /* MD3 error */
+      --red:         #ffb4ab;
+      --red-cont:    #93000a;
+      --red-on:      #ffdad6;
+
+      /* Text */
+      --text:        #e2e2e6;
+      --text-muted:  #c1c7ce;
+      --checked-fg:  #6b7280;
+
+      /* Shape & shadow */
+      --radius:      12px;
+      --shadow:      0 2px 6px rgba(0,0,0,0.45);
+
+      /* Safe areas */
       --safe-bottom: env(safe-area-inset-bottom, 0px);
       --safe-left:   env(safe-area-inset-left, 0px);
       --safe-right:  env(safe-area-inset-right, 0px);
@@ -55,7 +80,7 @@
       padding: 0 20px;
       padding-left: max(20px, var(--safe-left));
       padding-right: max(20px, var(--safe-right));
-      background: var(--surface);
+      background: var(--surface3);
       border-bottom: 1px solid var(--border);
       gap: 8px;
       flex-shrink: 0;
@@ -71,8 +96,8 @@
 
     header h1 {
       font-size: 1.1rem;
-      font-weight: 600;
-      letter-spacing: 0.03em;
+      font-weight: 500;
+      letter-spacing: 0.01em;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -141,7 +166,7 @@
 
     .category-item.active {
       background: var(--accent-dim);
-      color: #c5d9ff;
+      color: var(--accent-cont);
       font-weight: 500;
     }
 
@@ -224,7 +249,7 @@
 
     .group-item.active {
       background: var(--accent-dim);
-      color: #c5d9ff;
+      color: var(--accent-cont);
       font-weight: 500;
     }
 
@@ -282,7 +307,7 @@
       gap: 6px;
       padding: 6px 8px;
       border-top: 1px solid var(--border);
-      background: var(--surface2);
+      background: var(--surface);
       flex-shrink: 0;
     }
 
@@ -307,7 +332,7 @@
 
     .panel-title {
       font-size: 1.05rem;
-      font-weight: 600;
+      font-weight: 500;
     }
 
     .panel-title small {
@@ -377,8 +402,8 @@
       pointer-events: none;
     }
 
-    .swipe-hint-left  { right: 0; background: var(--red);   color: #fff; }
-    .swipe-hint-right { left:  0; background: var(--green); color: var(--bg); }
+    .swipe-hint-left  { right: 0; background: var(--red-cont);   color: var(--red-on); }
+    .swipe-hint-right { left:  0; background: var(--green-cont); color: var(--green-on); }
 
     /* ── Item rows ── */
     .item-row {
@@ -608,8 +633,9 @@
     input[type="text"] {
       flex: 1;
       background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
+      border: none;
+      border-bottom: 2px solid var(--border);
+      border-radius: 4px 4px 0 0;
       padding: 9px 12px;
       color: var(--text);
       /* 16px minimum prevents iOS auto-zoom on focus */
@@ -619,30 +645,31 @@
       min-width: 0;
     }
 
-    input[type="text"]:focus { border-color: var(--accent); }
+    input[type="text"]:focus { border-bottom-color: var(--accent); }
     input[type="text"]::placeholder { color: var(--text-muted); }
 
     button {
       border: none;
-      border-radius: var(--radius);
-      padding: 9px 14px;
+      border-radius: 50px;
+      padding: 9px 20px;
       font-size: 0.875rem;
       font-weight: 500;
       cursor: pointer;
       transition: filter 0.15s, opacity 0.15s, transform 0.1s;
       white-space: nowrap;
       -webkit-tap-highlight-color: transparent;
+      letter-spacing: 0.01em;
     }
 
-    button:hover  { filter: brightness(1.15); }
+    button:hover  { filter: brightness(1.12); }
     button:active { filter: brightness(0.9); transform: scale(0.96); }
     button:disabled { opacity: 0.4; cursor: default; filter: none; transform: none; }
 
-    .btn-primary { background: var(--accent); color: #fff; }
-    .btn-ghost   { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
-    .btn-danger  { background: var(--red); color: #fff; }
-    .btn-success { background: var(--green); color: #0f1117; }
-    .btn-sm { padding: 7px 12px; font-size: 0.82rem; }
+    .btn-primary { background: var(--accent); color: var(--accent-on); }
+    .btn-ghost   { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+    .btn-danger  { background: var(--red-cont); color: var(--red-on); }
+    .btn-success { background: var(--green-cont); color: var(--green-on); }
+    .btn-sm { padding: 6px 14px; font-size: 0.82rem; }
 
     /* ── Toast ── */
     #toast {
@@ -650,11 +677,12 @@
       bottom: calc(24px + var(--safe-bottom));
       left: 50%;
       transform: translateX(-50%) translateY(80px);
-      background: var(--surface);
+      background: var(--surface3);
       border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
       color: var(--text);
       padding: 10px 20px;
-      border-radius: 99px;
+      border-radius: 8px;
       font-size: 0.85rem;
       transition: transform 0.25s ease;
       pointer-events: none;
@@ -664,7 +692,7 @@
     }
 
     #toast.show  { transform: translateX(-50%) translateY(0); }
-    #toast.error { border-color: var(--red); color: var(--red); }
+    #toast.error { border-left-color: var(--red); color: var(--red); }
 
     /* ═══════════════════════════════════════════
        MOBILE  (touch devices or ≤ 1024px)
@@ -694,7 +722,7 @@
       .sidebar {
         position: absolute;
         inset: 0;
-        background: var(--bg);
+        background: var(--surface);
         border-right: none;
         max-height: none;
         z-index: 1;
@@ -706,7 +734,7 @@
       .panel {
         position: absolute;
         inset: 0;
-        background: var(--bg);
+        background: var(--surface);
         z-index: 2;
         transform: translateX(100%);
         transition: transform 0.28s cubic-bezier(.4,0,.2,1);
@@ -790,7 +818,7 @@
     /* ── Active toggle button state ── */
     .btn-toggle-active {
       background: var(--accent-dim) !important;
-      color: var(--accent) !important;
+      color: var(--accent-cont) !important;
       border-color: var(--accent) !important;
     }
 
@@ -928,8 +956,9 @@
     }
     .notes-tab.active {
       background: var(--accent-dim);
-      color: #c5d9ff;
+      color: var(--accent-cont);
       border-color: transparent;
+      border-bottom: 2px solid var(--accent);
     }
     .notes-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
 
@@ -949,16 +978,17 @@
       flex: 1;
       min-height: 180px;
       resize: none;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
+      background: var(--surface2);
+      border: none;
+      border-bottom: 2px solid var(--border);
+      border-radius: 4px 4px 0 0;
       color: var(--text);
       padding: 12px;
       font-size: 16px;
       font-family: inherit;
       line-height: 1.6;
     }
-    .quick-note-form textarea:focus { outline: none; border-color: var(--accent); }
+    .quick-note-form textarea:focus { outline: none; border-bottom-color: var(--accent); }
     .quick-note-meta {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -987,7 +1017,7 @@
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
     }
-    .filter-pill.active { background: var(--accent-dim); color: #c5d9ff; }
+    .filter-pill.active { background: var(--secondary-cont); color: var(--secondary-on); }
     .filter-pill:hover:not(.active) { background: var(--border); color: var(--text); }
 
     .notes-list { flex: 1; overflow-y: auto; padding: 8px; }
@@ -1003,16 +1033,16 @@
       margin-bottom: 8px;
       transition: border-color 0.15s;
     }
-    .note-card:hover { border-color: var(--accent-dim); }
+    .note-card:hover { background: var(--surface2); border-color: var(--accent-dim); }
     .note-card-title { font-weight: 600; font-size: 0.95rem; }
     .note-card-preview { color: var(--text-muted); font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .note-card-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .note-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
-    .note-badge.raw { background: #2d1f3d; color: #ce93d8; }
-    .note-badge.note { background: #1a3a5c; color: #64b5f6; }
-    .note-badge.article { background: #1b3a1b; color: #a5d6a7; }
-    .note-badge.tag { background: var(--surface2); color: var(--text-muted); }
-    .note-badge.folder { background: #2a2a1a; color: #ffd54f; }
+    .note-badge.raw     { background: var(--secondary-cont); color: var(--secondary-on); }
+    .note-badge.note    { background: var(--accent-dim);     color: var(--accent-cont); }
+    .note-badge.article { background: var(--green-cont);     color: var(--green-on); }
+    .note-badge.tag     { background: var(--surface2);       color: var(--text-muted); }
+    .note-badge.folder  { background: #2a2500;               color: #ffd54f; }
     .note-date { font-size: 0.72rem; color: var(--text-muted); margin-left: auto; }
 
     /* Note viewer panel */
@@ -1051,7 +1081,7 @@
       font-weight: 500;
       cursor: pointer;
     }
-    .nav-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .nav-btn.active { background: var(--accent-dim); color: var(--accent-cont); border-color: var(--accent-dim); }
     .nav-btn:hover:not(.active) { background: var(--surface2); color: var(--text); }
   </style>
 </head>
