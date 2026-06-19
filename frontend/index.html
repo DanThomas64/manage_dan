@@ -1206,9 +1206,9 @@
         <input type="text" id="note-title" placeholder="Leave blank to use first line" autocomplete="off" />
       </div>
       <div>
-        <div class="field-label">Folder <span style="color:var(--text-dim)">(optional)</span></div>
-        <input type="text" id="note-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
-        <datalist id="folder-suggestions"></datalist>
+        <div class="field-label">Notebook <span style="color:var(--text-dim)">(optional)</span></div>
+        <input type="text" id="note-notebook" placeholder="e.g. work" list="notebook-suggestions" autocomplete="off" />
+        <datalist id="notebook-suggestions"></datalist>
       </div>
       <div>
         <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
@@ -1224,14 +1224,8 @@
 
   <!-- Browse panel -->
   <div class="notes-panel" id="npanel-browse">
-    <div class="notes-filters">
-      <button class="filter-pill active" data-status="" onclick="notesSetFilter(this,'')">All</button>
-      <button class="filter-pill" data-status="raw" onclick="notesSetFilter(this,'raw')">Raw</button>
-      <button class="filter-pill" data-status="note" onclick="notesSetFilter(this,'note')">Note</button>
-      <button class="filter-pill" data-status="article" onclick="notesSetFilter(this,'article')">Article</button>
-      <select id="folder-filter" onchange="notesLoadBrowse()" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 8px;font-size:0.82rem;">
-        <option value="">All folders</option>
-      </select>
+    <div class="notes-filters" id="notebook-filters">
+      <button class="filter-pill active" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>
     </div>
     <div class="notes-list" id="notes-list">
       <div class="empty-state"><span class="icon">&#128221;</span><span>No notes yet</span></div>
@@ -1257,7 +1251,6 @@
       <!-- filled dynamically -->
     </div>
     <div class="note-viewer-actions">
-      <button class="btn-primary btn-sm" id="btn-advance-status" onclick="notesAdvanceStatus()">Advance Status</button>
       <button class="btn-ghost btn-sm" onclick="notesPrint()">&#128438; Print</button>
       <button class="btn-ghost btn-sm" onclick="notesCloseViewer()">&#8592; Back</button>
       <button class="btn-ghost btn-sm" onclick="notesOpenEditMode()">Edit</button>
@@ -1267,26 +1260,15 @@
   <!-- Note edit panel -->
   <div class="notes-panel" id="npanel-edit">
     <div class="quick-note-form">
-      <input type="hidden" id="edit-uuid" />
+      <input type="hidden" id="edit-nb-id" />
+      <input type="hidden" id="edit-notebook" />
       <div>
         <div class="field-label">Title</div>
         <input type="text" id="edit-title" placeholder="Note title" autocomplete="off" />
       </div>
       <div>
-        <div class="field-label">Folder</div>
-        <input type="text" id="edit-folder" placeholder="e.g. work/projects" list="folder-suggestions" autocomplete="off" />
-      </div>
-      <div>
         <div class="field-label">Tags</div>
         <input type="text" id="edit-tags" placeholder="comma-separated" autocomplete="off" />
-      </div>
-      <div>
-        <div class="field-label">Status</div>
-        <select id="edit-status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px;font-size:0.85rem;width:100%;">
-          <option value="raw">Raw</option>
-          <option value="note">Note</option>
-          <option value="article">Article</option>
-        </select>
       </div>
       <div>
         <div class="field-label">Content</div>
@@ -2130,7 +2112,7 @@
 
   const NOTES_API = '/api/v1/notes';
   let notesCurrentTab = 'add';
-  let notesFilterStatus = '';
+  let notesFilterNotebook = '';
   let notesCurrentNote = null;
   let notesViewerFromTab = 'browse';
   let notesSearchTimer = null;
@@ -2153,7 +2135,7 @@
   }
 
   function notesOnOpen() {
-    notesLoadFolders();
+    notesLoadNotebooks();
     if (notesCurrentTab === 'browse') notesLoadBrowse();
   }
 
@@ -2167,24 +2149,21 @@
     if (tab === 'add') setTimeout(() => document.getElementById('note-content').focus(), 80);
   }
 
-  async function notesLoadFolders() {
+  async function notesLoadNotebooks() {
     try {
       const r = await fetch(NOTES_API + '/folders');
-      const folders = await r.json();
-      const dl = document.getElementById('folder-suggestions');
-      dl.innerHTML = folders.map(f => `<option value="${esc(f)}">`).join('');
-      const sel = document.getElementById('folder-filter');
-      const cur = sel.value;
-      sel.innerHTML = '<option value="">All folders</option>' +
-        folders.map(f => `<option value="${esc(f)}" ${f === cur ? 'selected' : ''}>${esc(f)}</option>`).join('');
+      const notebooks = await r.json();
+      const dl = document.getElementById('notebook-suggestions');
+      dl.innerHTML = notebooks.map(nb => `<option value="${esc(nb)}">`).join('');
+      const filtersEl = document.getElementById('notebook-filters');
+      filtersEl.innerHTML = `<button class="filter-pill ${notesFilterNotebook === '' ? 'active' : ''}" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>` +
+        notebooks.map(nb => `<button class="filter-pill ${nb === notesFilterNotebook ? 'active' : ''}" data-notebook="${esc(nb)}" onclick="notesSetNotebook(this,'${esc(nb)}')">${esc(nb)}</button>`).join('');
     } catch (_) {}
   }
 
   async function notesLoadBrowse() {
-    const folder = document.getElementById('folder-filter').value;
     let url = NOTES_API + '?';
-    if (notesFilterStatus) url += 'status=' + encodeURIComponent(notesFilterStatus) + '&';
-    if (folder) url += 'folder=' + encodeURIComponent(folder);
+    if (notesFilterNotebook) url += 'notebook=' + encodeURIComponent(notesFilterNotebook);
     try {
       const r = await fetch(url);
       const notes = await r.json();
@@ -2194,8 +2173,8 @@
     }
   }
 
-  function notesSetFilter(btn, status) {
-    notesFilterStatus = status;
+  function notesSetNotebook(btn, notebook) {
+    notesFilterNotebook = notebook;
     document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     notesLoadBrowse();
@@ -2227,24 +2206,23 @@
     el.innerHTML = notes.map(n => {
       const preview = (n.content || '').replace(/[#*`_>\[\]]/g, '').trim().slice(0, 100);
       const tagsHtml = (n.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
-      const folderHtml = n.folder ? `<span class="note-badge folder">&#128193; ${esc(n.folder)}</span>` : '';
+      const nbHtml = `<span class="note-badge folder">&#128193; ${esc(n.notebook)}</span>`;
       const dateStr = new Date(n.updated_at).toLocaleDateString('en-GB', {day:'numeric',month:'short'});
-      return `<div class="note-card" onclick="notesOpenNote('${esc(n.uuid)}','${fromTab}')">
+      return `<div class="note-card" onclick="notesOpenNote(${n.nb_id},'${esc(n.notebook)}','${fromTab}')">
         <div class="note-card-title">${esc(n.title || 'Untitled')}</div>
         ${preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
         <div class="note-card-meta">
-          <span class="note-badge ${esc(n.status)}">${esc(n.status)}</span>
-          ${folderHtml}${tagsHtml}
+          ${nbHtml}${tagsHtml}
           <span class="note-date">${dateStr}</span>
         </div>
       </div>`;
     }).join('');
   }
 
-  async function notesOpenNote(uuid, fromTab) {
+  async function notesOpenNote(nbId, notebook, fromTab) {
     notesViewerFromTab = fromTab || 'browse';
     try {
-      const r = await fetch(NOTES_API + '/' + uuid);
+      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook));
       if (!r.ok) throw 0;
       notesCurrentNote = await r.json();
       notesRenderViewer(notesCurrentNote);
@@ -2258,13 +2236,8 @@
   }
 
   function notesRenderViewer(note) {
-    const adv = document.getElementById('btn-advance-status');
-    adv.textContent = note.status === 'raw' ? 'Raw → Note' :
-                      note.status === 'note' ? 'Note → Article' : 'Published ✓';
-    adv.disabled = note.status === 'article';
-
     const tagsHtml = (note.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
-    const folderHtml = note.folder ? `<span class="note-badge folder">&#128193; ${esc(note.folder)}</span>` : '';
+    const nbHtml = `<span class="note-badge folder">&#128193; ${esc(note.notebook)}</span>`;
     const updDate = new Date(note.updated_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 
     const viewer = document.getElementById('note-viewer-content');
@@ -2272,8 +2245,7 @@
       <div class="note-viewer-header">
         <div class="note-viewer-title">${esc(note.title || 'Untitled')}</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
-          <span class="note-badge ${esc(note.status)}">${esc(note.status)}</span>
-          ${folderHtml}${tagsHtml}
+          ${nbHtml}${tagsHtml}
           <span class="note-date">Updated ${updDate}</span>
         </div>
       </div>
@@ -2301,12 +2273,11 @@
   function notesOpenEditMode() {
     if (!notesCurrentNote) return;
     const n = notesCurrentNote;
-    document.getElementById('edit-uuid').value = n.uuid;
+    document.getElementById('edit-nb-id').value = n.nb_id;
+    document.getElementById('edit-notebook').value = n.notebook;
     document.getElementById('edit-title').value = n.title || '';
     document.getElementById('edit-content').value = n.content || '';
     document.getElementById('edit-tags').value = (n.tags || []).join(', ');
-    document.getElementById('edit-folder').value = n.folder || '';
-    document.getElementById('edit-status').value = n.status || 'raw';
     document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('npanel-edit').classList.add('active');
@@ -2321,16 +2292,15 @@
   }
 
   async function notesSaveEdit() {
-    const uuid = document.getElementById('edit-uuid').value;
+    const nbId = document.getElementById('edit-nb-id').value;
+    const notebook = document.getElementById('edit-notebook').value;
     const body = {
       title: document.getElementById('edit-title').value.trim() || null,
       content: document.getElementById('edit-content').value,
       tags: document.getElementById('edit-tags').value.split(',').map(s => s.trim()).filter(Boolean),
-      folder: document.getElementById('edit-folder').value.trim() || null,
-      status: document.getElementById('edit-status').value,
     };
     try {
-      const r = await fetch(NOTES_API + '/' + uuid, {
+      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook), {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body),
@@ -2339,29 +2309,15 @@
       notesCurrentNote = await r.json();
       notesCancelEdit();
       toast('Note saved');
-      notesLoadFolders();
     } catch (_) {
       toast('Failed to save note', true);
-    }
-  }
-
-  async function notesAdvanceStatus() {
-    if (!notesCurrentNote) return;
-    try {
-      const r = await fetch(NOTES_API + '/' + notesCurrentNote.uuid + '/status', {method: 'PATCH'});
-      if (!r.ok) throw 0;
-      notesCurrentNote = await r.json();
-      notesRenderViewer(notesCurrentNote);
-      toast('Status advanced to ' + notesCurrentNote.status);
-    } catch (_) {
-      toast('Failed to advance status', true);
     }
   }
 
   async function notesPrint() {
     if (!notesCurrentNote) return;
     try {
-      const r = await fetch(NOTES_API + '/' + notesCurrentNote.uuid + '/print', {method: 'POST'});
+      const r = await fetch(NOTES_API + '/' + notesCurrentNote.nb_id + '/print?notebook=' + encodeURIComponent(notesCurrentNote.notebook), {method: 'POST'});
       if (!r.ok) throw 0;
       toast('Note sent to printer');
     } catch (_) {
@@ -2375,19 +2331,19 @@
     const title = document.getElementById('note-title').value.trim() || null;
     const tagsRaw = document.getElementById('note-tags').value;
     const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
-    const folder = document.getElementById('note-folder').value.trim() || null;
+    const notebook = document.getElementById('note-notebook').value.trim() || null;
     try {
       const r = await fetch(NOTES_API, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({content, title, tags, folder}),
+        body: JSON.stringify({content, title, tags, notebook}),
       });
       if (!r.ok) throw 0;
       document.getElementById('note-content').value = '';
       document.getElementById('note-title').value = '';
       document.getElementById('note-tags').value = '';
       toast('Note saved');
-      notesLoadFolders();
+      notesLoadNotebooks();
     } catch (_) {
       toast('Failed to save note', true);
     }

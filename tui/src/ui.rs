@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem, Note, NoteStatus};
+use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem, Note};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyModifiers},
@@ -77,46 +77,8 @@ pub enum NotesMode {
 pub enum NotesCreateFocus {
     Title,
     Tags,
-    Folder,
+    Notebook,
     Content,
-}
-
-/// Status filter on the Notes list.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NotesFilterStatus {
-    All,
-    Raw,
-    NoteStatus,
-    Article,
-}
-
-impl NotesFilterStatus {
-    fn as_api_str(&self) -> Option<&'static str> {
-        match self {
-            NotesFilterStatus::All => None,
-            NotesFilterStatus::Raw => Some("raw"),
-            NotesFilterStatus::NoteStatus => Some("note"),
-            NotesFilterStatus::Article => Some("article"),
-        }
-    }
-
-    fn label(&self) -> &'static str {
-        match self {
-            NotesFilterStatus::All => "All",
-            NotesFilterStatus::Raw => "Raw",
-            NotesFilterStatus::NoteStatus => "Note",
-            NotesFilterStatus::Article => "Article",
-        }
-    }
-
-    fn next(&self) -> Self {
-        match self {
-            NotesFilterStatus::All => NotesFilterStatus::Raw,
-            NotesFilterStatus::Raw => NotesFilterStatus::NoteStatus,
-            NotesFilterStatus::NoteStatus => NotesFilterStatus::Article,
-            NotesFilterStatus::Article => NotesFilterStatus::All,
-        }
-    }
 }
 
 /// Represents which field is currently focused in the floating input form.
@@ -165,13 +127,13 @@ pub struct App {
     pub notes_list_state: ListState,
     pub notes_view_note: Option<Note>,
     pub notes_mode: NotesMode,
-    pub notes_filter: NotesFilterStatus,
+    pub notes_filter_notebook: Option<String>,
     pub notes_search_buf: String,
     pub notes_scroll: u16,
-    pub notes_folders: Vec<String>,
+    pub notes_notebooks: Vec<String>,
     pub notes_create_title: String,
     pub notes_create_tags: String,
-    pub notes_create_folder: String,
+    pub notes_create_notebook: String,
     pub notes_create_content: String,
     pub notes_create_focus: NotesCreateFocus,
 
@@ -242,13 +204,13 @@ impl App {
             notes_list_state: ListState::default(),
             notes_view_note: None,
             notes_mode: NotesMode::List,
-            notes_filter: NotesFilterStatus::All,
+            notes_filter_notebook: None,
             notes_search_buf: String::new(),
             notes_scroll: 0,
-            notes_folders: Vec::new(),
+            notes_notebooks: Vec::new(),
             notes_create_title: String::new(),
             notes_create_tags: String::new(),
-            notes_create_folder: String::new(),
+            notes_create_notebook: String::new(),
             notes_create_content: String::new(),
             notes_create_focus: NotesCreateFocus::Content,
 
@@ -622,8 +584,8 @@ impl App {
     // --- Notes helpers ---
 
     pub async fn fetch_notes_filtered(&mut self) {
-        let status = self.notes_filter.as_api_str();
-        match self.api_client.fetch_notes(status, None).await {
+        let notebook = self.notes_filter_notebook.as_deref();
+        match self.api_client.fetch_notes(notebook, None).await {
             Ok(notes) => {
                 self.notes = notes;
                 let sel = self.notes_list_state.selected().unwrap_or(0)
@@ -637,8 +599,8 @@ impl App {
             }
             Err(e) => self.last_error = Some(format!("Notes error: {}", e)),
         }
-        match self.api_client.fetch_note_folders().await {
-            Ok(folders) => self.notes_folders = folders,
+        match self.api_client.fetch_note_notebooks().await {
+            Ok(notebooks) => self.notes_notebooks = notebooks,
             Err(_) => {}
         }
     }
@@ -654,8 +616,9 @@ impl App {
     pub async fn notes_open_selected(&mut self) {
         if let Some(idx) = self.notes_list_state.selected() {
             if let Some(note) = self.notes.get(idx) {
-                let uuid = note.uuid.clone();
-                match self.api_client.fetch_note(&uuid).await {
+                let nb_id = note.nb_id;
+                let notebook = note.notebook.clone();
+                match self.api_client.fetch_note(nb_id, &notebook).await {
                     Ok(full_note) => {
                         self.notes_view_note = Some(full_note);
                         self.notes_scroll = 0;
@@ -667,8 +630,19 @@ impl App {
         }
     }
 
-    pub fn notes_cycle_filter(&mut self) {
-        self.notes_filter = self.notes_filter.next();
+    pub fn notes_cycle_notebook_filter(&mut self) {
+        let notebooks = self.notes_notebooks.clone();
+        if notebooks.is_empty() {
+            self.notes_filter_notebook = None;
+            return;
+        }
+        self.notes_filter_notebook = match &self.notes_filter_notebook {
+            None => notebooks.first().cloned(),
+            Some(cur) => {
+                let idx = notebooks.iter().position(|n| n == cur);
+                idx.and_then(|i| notebooks.get(i + 1)).cloned()
+            }
+        };
     }
 
     pub async fn notes_run_search(&mut self) {
@@ -691,47 +665,17 @@ impl App {
         }
     }
 
-    pub async fn notes_advance_selected(&mut self) {
-        if let Some(idx) = self.notes_list_state.selected() {
-            if let Some(note) = self.notes.get(idx) {
-                let uuid = note.uuid.clone();
-                match self.api_client.advance_note_status(&uuid).await {
-                    Ok(updated) => {
-                        self.notes[idx] = updated;
-                        self.last_error = None;
-                    }
-                    Err(e) => self.last_error = Some(format!("Advance failed: {}", e)),
-                }
-            }
-        }
-    }
-
-    pub async fn notes_advance_current(&mut self) {
-        if let Some(note) = self.notes_view_note.clone() {
-            match self.api_client.advance_note_status(&note.uuid).await {
-                Ok(updated) => {
-                    if let Some(idx) = self.notes.iter().position(|n| n.uuid == note.uuid) {
-                        self.notes[idx] = updated.clone();
-                    }
-                    self.notes_view_note = Some(updated);
-                    self.last_error = None;
-                }
-                Err(e) => self.last_error = Some(format!("Advance failed: {}", e)),
-            }
-        }
-    }
-
     pub async fn notes_delete_selected(&mut self) {
-        let uuid = match &self.notes_view_note {
-            Some(n) => n.uuid.clone(),
+        let (nb_id, notebook) = match &self.notes_view_note {
+            Some(n) => (n.nb_id, n.notebook.clone()),
             None => match self.notes_list_state.selected()
                 .and_then(|i| self.notes.get(i))
             {
-                Some(n) => n.uuid.clone(),
+                Some(n) => (n.nb_id, n.notebook.clone()),
                 None => return,
             },
         };
-        match self.api_client.delete_note(&uuid).await {
+        match self.api_client.delete_note(nb_id, &notebook).await {
             Ok(()) => {
                 self.notes_view_note = None;
                 self.notes_mode = NotesMode::List;
@@ -752,12 +696,12 @@ impl App {
             .filter(|s| !s.is_empty())
             .collect();
         let title = self.notes_create_title.trim().to_string();
-        let folder = self.notes_create_folder.trim().to_string();
-        match self.api_client.create_note(&title, &content, tags, &folder).await {
+        let notebook = self.notes_create_notebook.trim().to_string();
+        match self.api_client.create_note(&title, &content, tags, &notebook).await {
             Ok(_) => {
                 self.notes_create_title.clear();
                 self.notes_create_tags.clear();
-                self.notes_create_folder.clear();
+                self.notes_create_notebook.clear();
                 self.notes_create_content.clear();
                 self.notes_create_focus = NotesCreateFocus::Content;
                 self.notes_mode = NotesMode::List;
@@ -774,7 +718,7 @@ impl App {
             None => return,
         };
 
-        let tmp_path = std::env::temp_dir().join(format!("{}.md", note.uuid));
+        let tmp_path = std::env::temp_dir().join(format!("note_{}_{}.md", note.notebook, note.nb_id));
         if let Err(e) = std::fs::write(&tmp_path, &note.content) {
             self.last_error = Some(format!("Failed to write temp file: {}", e));
             return;
@@ -784,7 +728,6 @@ impl App {
             .or_else(|_| std::env::var("EDITOR"))
             .unwrap_or_else(|_| "vi".to_string());
 
-        // Restore terminal so the editor can take over.
         let _ = disable_raw_mode();
         let _ = stdout().execute(LeaveAlternateScreen);
 
@@ -792,7 +735,6 @@ impl App {
             .arg(&tmp_path)
             .status();
 
-        // Re-acquire the terminal.
         let _ = enable_raw_mode();
         let _ = stdout().execute(EnterAlternateScreen);
 
@@ -812,9 +754,9 @@ impl App {
         };
         let _ = std::fs::remove_file(&tmp_path);
 
-        match self.api_client.update_note(&note.uuid, &new_content, None).await {
+        match self.api_client.update_note(note.nb_id, &note.notebook, &new_content, None).await {
             Ok(updated) => {
-                if let Some(idx) = self.notes.iter().position(|n| n.uuid == note.uuid) {
+                if let Some(idx) = self.notes.iter().position(|n| n.nb_id == note.nb_id && n.notebook == note.notebook) {
                     self.notes[idx] = updated.clone();
                 }
                 self.notes_view_note = Some(updated);
@@ -895,7 +837,7 @@ impl App {
                                 action_taken = true;
                             }
                             KeyCode::Tab => {
-                                self.notes_cycle_filter();
+                                self.notes_cycle_notebook_filter();
                                 self.fetch_notes_filtered().await;
                                 action_taken = true;
                             }
@@ -905,10 +847,6 @@ impl App {
                             }
                             KeyCode::Char('r') => {
                                 self.fetch_notes_filtered().await;
-                                action_taken = true;
-                            }
-                            KeyCode::Char('a') => {
-                                self.notes_advance_selected().await;
                                 action_taken = true;
                             }
                             KeyCode::Char('d') => {
@@ -926,8 +864,8 @@ impl App {
                                 }
                                 KeyCode::Tab => {
                                     self.notes_create_focus = match self.notes_create_focus {
-                                        NotesCreateFocus::Title => NotesCreateFocus::Folder,
-                                        NotesCreateFocus::Folder => NotesCreateFocus::Tags,
+                                        NotesCreateFocus::Title => NotesCreateFocus::Notebook,
+                                        NotesCreateFocus::Notebook => NotesCreateFocus::Tags,
                                         NotesCreateFocus::Tags => NotesCreateFocus::Content,
                                         NotesCreateFocus::Content => NotesCreateFocus::Title,
                                     };
@@ -935,8 +873,8 @@ impl App {
                                 KeyCode::BackTab => {
                                     self.notes_create_focus = match self.notes_create_focus {
                                         NotesCreateFocus::Title => NotesCreateFocus::Content,
-                                        NotesCreateFocus::Folder => NotesCreateFocus::Title,
-                                        NotesCreateFocus::Tags => NotesCreateFocus::Folder,
+                                        NotesCreateFocus::Notebook => NotesCreateFocus::Title,
+                                        NotesCreateFocus::Tags => NotesCreateFocus::Notebook,
                                         NotesCreateFocus::Content => NotesCreateFocus::Tags,
                                     };
                                 }
@@ -949,8 +887,8 @@ impl App {
                                         self.notes_create_content.push('\n');
                                     } else {
                                         self.notes_create_focus = match self.notes_create_focus {
-                                            NotesCreateFocus::Title => NotesCreateFocus::Folder,
-                                            NotesCreateFocus::Folder => NotesCreateFocus::Tags,
+                                            NotesCreateFocus::Title => NotesCreateFocus::Notebook,
+                                            NotesCreateFocus::Notebook => NotesCreateFocus::Tags,
                                             NotesCreateFocus::Tags => NotesCreateFocus::Content,
                                             NotesCreateFocus::Content => NotesCreateFocus::Content,
                                         };
@@ -960,7 +898,7 @@ impl App {
                                     let buf = match self.notes_create_focus {
                                         NotesCreateFocus::Title => &mut self.notes_create_title,
                                         NotesCreateFocus::Tags => &mut self.notes_create_tags,
-                                        NotesCreateFocus::Folder => &mut self.notes_create_folder,
+                                        NotesCreateFocus::Notebook => &mut self.notes_create_notebook,
                                         NotesCreateFocus::Content => &mut self.notes_create_content,
                                     };
                                     buf.pop();
@@ -969,7 +907,7 @@ impl App {
                                     let buf = match self.notes_create_focus {
                                         NotesCreateFocus::Title => &mut self.notes_create_title,
                                         NotesCreateFocus::Tags => &mut self.notes_create_tags,
-                                        NotesCreateFocus::Folder => &mut self.notes_create_folder,
+                                        NotesCreateFocus::Notebook => &mut self.notes_create_notebook,
                                         NotesCreateFocus::Content => &mut self.notes_create_content,
                                     };
                                     buf.push(c);
@@ -992,16 +930,12 @@ impl App {
                                 self.notes_open_editor().await;
                                 action_taken = true;
                             }
-                            KeyCode::Char('a') => {
-                                self.notes_advance_current().await;
-                                action_taken = true;
-                            }
                             KeyCode::Char('d') => {
                                 self.notes_mode = NotesMode::ConfirmDelete;
                             }
                             KeyCode::Char('p') => {
                                 if let Some(ref note) = self.notes_view_note.clone() {
-                                    let _ = self.api_client.print_note(&note.uuid).await;
+                                    let _ = self.api_client.print_note(note.nb_id, &note.notebook).await;
                                     action_taken = true;
                                 }
                             }
@@ -2751,11 +2685,11 @@ fn draw_notes_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         chunks[0],
     );
 
-    // Folder
-    let folder_text = format!("{}_", app.notes_create_folder);
+    // Notebook
+    let notebook_text = format!("{}_", app.notes_create_notebook);
     frame.render_widget(
-        Paragraph::new(folder_text)
-            .block(Block::default().borders(Borders::ALL).title(" Folder (optional) ").border_style(field_style(NotesCreateFocus::Folder))),
+        Paragraph::new(notebook_text)
+            .block(Block::default().borders(Borders::ALL).title(" Notebook (optional) ").border_style(field_style(NotesCreateFocus::Notebook))),
         chunks[1],
     );
 
@@ -2793,10 +2727,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         return draw_notes_create(frame, app, area);
     }
 
-    let raw_count = app.notes.iter().filter(|n| n.status == NoteStatus::Raw).count();
-    let note_count = app.notes.iter().filter(|n| n.status == NoteStatus::Note).count();
-    let art_count = app.notes.iter().filter(|n| n.status == NoteStatus::Article).count();
-    let summary = format!("{} raw  {} note  {} article", raw_count, note_count, art_count);
+    let summary = format!("{} notes", app.notes.len());
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -2811,22 +2742,14 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .split(body);
     let (filter_area, content_area, footer_area) = (chunks[0], chunks[1], chunks[2]);
 
-    // Filter / search bar
-    let all_filters = [
-        NotesFilterStatus::All,
-        NotesFilterStatus::Raw,
-        NotesFilterStatus::NoteStatus,
-        NotesFilterStatus::Article,
-    ];
+    // Notebook filter / search bar
+    let notebook_label = match &app.notes_filter_notebook {
+        None => "All notebooks".to_string(),
+        Some(nb) => format!("Notebook: [{}]", nb),
+    };
     let filter_label = format!(
-        "  Filter: {}  {}",
-        all_filters.iter()
-            .map(|f| {
-                let active = f == &app.notes_filter;
-                if active { format!("[{}]", f.label()) } else { f.label().to_string() }
-            })
-            .collect::<Vec<_>>()
-            .join("  "),
+        "  {}  {}",
+        notebook_label,
         if app.notes_mode == NotesMode::Search {
             format!("  Search: {}_", app.notes_search_buf)
         } else {
@@ -2847,28 +2770,15 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Note list
     let list_items: Vec<ListItem> = app.notes.iter().map(|note| {
-        let status_tag = match note.status {
-            NoteStatus::Raw => "[raw] ",
-            NoteStatus::Note => "[note]",
-            NoteStatus::Article => "[art] ",
-        };
         let title = if note.title.is_empty() { "(untitled)" } else { &note.title };
-        let folder_prefix = if !note.folder.is_empty() {
-            format!("{}/", note.folder)
-        } else {
-            String::new()
-        };
+        let nb_prefix = format!("{}/", note.notebook);
         let date = note.updated_at.format("%d %b").to_string();
         ListItem::new(Line::from(vec![
             ratatui::text::Span::styled(
-                format!("{} ", status_tag),
-                Style::default().fg(match note.status {
-                    NoteStatus::Raw => Color::Magenta,
-                    NoteStatus::Note => Color::Cyan,
-                    NoteStatus::Article => Color::Green,
-                }),
+                nb_prefix,
+                Style::default().fg(Color::Yellow),
             ),
-            ratatui::text::Span::raw(format!("{}{}", folder_prefix, title)),
+            ratatui::text::Span::raw(title.to_string()),
             ratatui::text::Span::styled(
                 format!("  {}", date),
                 Style::default().fg(Color::Rgb(160, 160, 160)),
@@ -2896,22 +2806,16 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             } else {
                 format!("  tags: {}", note.tags.join(", "))
             };
-            let folder = if !note.folder.is_empty() {
-                format!("  folder: {}", note.folder)
-            } else {
-                String::new()
-            };
             let header = format!(
-                "status: [{}]{}{}  updated: {}\n{}\n",
-                note.status.as_str(),
-                folder,
+                "notebook: {}{}  updated: {}\n{}\n",
+                note.notebook,
                 tags,
                 note.updated_at.format("%d %b %Y %H:%M"),
                 "─".repeat(viewer_area.width.saturating_sub(2) as usize),
             );
             let title = format!(" {} [{}] ",
                 if note.title.is_empty() { "Untitled" } else { &note.title },
-                note.status.as_str()
+                note.notebook,
             );
             (title, format!("{}{}", header, note.content))
         }
@@ -2922,16 +2826,14 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
                   Navigation:\n\
                   \u{2022} j / k or arrows — move selection\n\
                   \u{2022} Enter         — open note\n\
-                  \u{2022} Tab           — cycle filter (All→Raw→Note→Article)\n\
+                  \u{2022} Tab           — cycle notebook filter\n\
                   \u{2022} /             — search\n\
-                  \u{2022} a             — advance status\n\
                   \u{2022} d             — delete\n\
                   \u{2022} r             — refresh\n\
                   \u{2022} q             — back to dashboard\n\n\
                   In view mode:\n\
                   \u{2022} j / k         — scroll\n\
                   \u{2022} e             — edit in $NOTES_EDITOR / $EDITOR / vi\n\
-                  \u{2022} a             — advance status\n\
                   \u{2022} q             — back to list".to_string(),
             };
             (" Notes ".to_string(), help)
