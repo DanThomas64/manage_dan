@@ -14,7 +14,7 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 | **End-of-day summary** | Prints tasks completed during the day at a configurable evening hour. |
 | **Recurring tasks** | Configurable recurring tasks printed automatically when due. |
 | **Shopping lists** | Category-based shopping lists with check-off, print support, and common-items templates. |
-| **Notes** | Markdown notes stored as `.md` files with YAML frontmatter. Three-stage workflow: Raw → Note → Article. Full-text search via SQLite FTS5. Printable. |
+| **Notes** | Markdown notes managed by [nb](https://xwmx.github.io/nb/) and stored as `.md` files. Full-text search via `nb search`. Printable. |
 | **Web frontend** | SPA served at `http://localhost` covering todos, shopping lists, and notes. |
 | **Android app** | Native Android client for quick capture and list management. |
 | **Terminal UI** | Full keyboard-driven TUI for todo, notes, shopping, and project management. |
@@ -29,6 +29,7 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 | [Rust](https://rustup.rs) ≥ 1.87 | For building from source |
 | [Docker](https://docs.docker.com/get-docker/) + [Compose](https://docs.docker.com/compose/) | For the containerised setup |
 | A self-hosted [Vikunja](https://vikunja.io/docs/installing/) instance | For todo storage |
+| [nb](https://xwmx.github.io/nb/) | For notes — the `notes` subsystem will show `Nogo` without it |
 | A USB ESC/POS thermal printer | Optional — the app runs fine without one in `terminal` mode |
 
 ---
@@ -266,9 +267,6 @@ base_url  = "http://localhost:3456"
 api_token = ""
 project_id = 1
 
-[notes]
-# Directory where .md note files are stored
-dir = "data/notes"
 ```
 
 ---
@@ -398,17 +396,16 @@ GET    /api/v1/todo/summary           Summary statistics
 ### Notes
 
 ```
-GET    /api/v1/notes                  List notes  (?status=raw&folder=work&tag=rust)
+GET    /api/v1/notes                  List notes  (?notebook=work&tag=rust)
 POST   /api/v1/notes                  Create note
 GET    /api/v1/notes/search           Full-text search  (?q=query)
-GET    /api/v1/notes/folders          List all folders
+GET    /api/v1/notes/folders          List all notebooks
 GET    /api/v1/notes/tags             List all tags
-GET    /api/v1/notes/:uuid            Get single note (JSON)
-PUT    /api/v1/notes/:uuid            Update note
-DELETE /api/v1/notes/:uuid            Delete note
-PATCH  /api/v1/notes/:uuid/status     Advance status (Raw → Note → Article)
-POST   /api/v1/notes/:uuid/print      Print note
-GET    /notes/:uuid                   HTML viewer (markdown rendered in browser)
+GET    /api/v1/notes/:id              Get single note (JSON)  (?notebook=work)
+PUT    /api/v1/notes/:id              Update note  (?notebook=work)
+DELETE /api/v1/notes/:id              Delete note  (?notebook=work)
+POST   /api/v1/notes/:id/print        Print note  (?notebook=work)
+GET    /notes/:id                     HTML viewer (markdown rendered in browser)  (?notebook=work)
 ```
 
 ### Lists
@@ -445,7 +442,7 @@ manage_dan/
 ├── todo/         Todo business logic, Vikunja integration, print monitor, summaries
 ├── vikunja/      Vikunja HTTP client
 ├── lists/        Shopping list CRUD and printing
-├── notes/        Markdown notes — file storage, DB index, FTS5 search, printing
+├── notes/        Markdown notes — nb CLI backend, full-text search via nb, printing
 ├── project/      Project subsystem (stub)
 ├── tui/          Terminal UI client
 ├── frontend/     Web UI (nginx + vanilla JS) — todos, lists, notes
@@ -477,5 +474,5 @@ Ensure Docker BuildKit is enabled (`DOCKER_BUILDKIT=1`) and that you have an int
 **TUI can't connect**
 The TUI defaults to `http://127.0.0.1:8080`. If running via Docker Compose with nginx, set `MANAGE_API_URL=http://localhost`. Make sure the server is running before launching the TUI.
 
-**Notes not appearing after editing files on disk**
-Notes are synced from disk at startup only. Restart the server to pick up external edits.
+**Notes not appearing**
+Notes are served live via `nb` on every request. If you edit files outside of `nb`, run `nb index reconcile` to resync the nb index.

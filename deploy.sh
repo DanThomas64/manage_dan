@@ -8,13 +8,14 @@
 #   yay -S zig                        # or: zigup install latest
 #
 #   # Sync Pi sysroot (re-run if Pi system packages update)
-#   sudo mkdir -p /opt/pi-sysroot
-#   sudo rsync -a 10.0.0.221:/usr/include/                  /opt/pi-sysroot/usr/include/
-#   sudo rsync -a 10.0.0.221:/usr/lib/aarch64-linux-gnu/    /opt/pi-sysroot/usr/lib/aarch64-linux-gnu/
-#   sudo rsync -a 10.0.0.221:/lib/aarch64-linux-gnu/        /opt/pi-sysroot/lib/aarch64-linux-gnu/
+#   mkdir -p ~/pi-sysroot
+#   rsync -a 10.0.0.221:/usr/include/                  ~/pi-sysroot/usr/include/
+#   rsync -a 10.0.0.221:/usr/lib/aarch64-linux-gnu/    ~/pi-sysroot/usr/lib/aarch64-linux-gnu/
+#   rsync -a 10.0.0.221:/lib/aarch64-linux-gnu/        ~/pi-sysroot/lib/aarch64-linux-gnu/
 #
 # ── One-time Pi setup ────────────────────────────────────────────────────────
 #   sudo apt-get install -y nginx libudev1
+#   bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
 #   sudo systemctl enable nginx
 #   sudo usermod -aG plugdev dan       # USB device access
 set -euo pipefail
