@@ -205,7 +205,7 @@ sudo systemctl restart manage_dan
 
 Launch with `cargo run -p tui` (requires the backend server to be running).
 
-Each section has its own colour theme: Dashboard (white), Tasks (blue), Notes (yellow), Lists (green), Project (magenta).
+Each section has its own colour theme: Dashboard (white), Tasks (blue), Notes (yellow), Lists (green), Project (magenta), Log (cyan).
 
 ### Dashboard
 
@@ -215,6 +215,7 @@ Each section has its own colour theme: Dashboard (white), Tasks (blue), Notes (y
 | `2` | Open Notes screen |
 | `3` | Open Lists screen |
 | `4` | Open Project screen |
+| `5` | Open Log screen |
 | `R` | Refresh status |
 | `Q` | Quit |
 
@@ -273,6 +274,27 @@ Each section has its own colour theme: Dashboard (white), Tasks (blue), Notes (y
 | `P` | Print list |
 | `R` | Refresh |
 | `Q` / `Esc` | Back to dashboard |
+
+### Log screen
+
+Browses the same daily log backing `POST`/`GET /api/v1/notes/daily` — entries are shown newest first, list (left) + full entry viewer (right).
+
+| Key | Action |
+|---|---|
+| `J` / `K` or `↑` `↓` | Navigate list |
+| `Tab` | Cycle days-back filter (7 / 14 / 30 / 90) |
+| `N` | Create new log entry |
+| `R` | Refresh |
+| `Q` / `Esc` | Back to dashboard |
+
+**In the create form (Title → Tags → Content):**
+
+| Key | Action |
+|---|---|
+| `Tab` / `Shift+Tab` | Move between fields |
+| `Enter` | Advance to next field (or insert newline in Content) |
+| `Ctrl+S` | Submit and create entry |
+| `Esc` | Cancel |
 
 ---
 

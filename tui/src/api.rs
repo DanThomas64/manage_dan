@@ -147,6 +147,19 @@ pub struct ListItem {
     pub created_at: DateTime<Local>,
 }
 
+// --- Daily Log Data Structure (mirrors notes::models::LogEntry) ---
+
+/// A single entry from the daily `nb daily` log (distinct from the system
+/// tracing `LogEntry` above — this is a notes-backed journal entry).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyLogEntry {
+    pub date: String,
+    pub time: String,
+    pub title: String,
+    pub content: String,
+    pub tags: Vec<String>,
+}
+
 // --- Notes Data Structures ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -402,5 +415,21 @@ impl ApiClient {
     pub async fn fetch_note_notebooks(&self) -> Result<Vec<String>> {
         let url = format!("{}/api/v1/notes/folders", self.base_url);
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    // --- Daily Log Methods ---
+
+    /// Fetches daily log entries from the last `days` days, most recent first.
+    pub async fn fetch_daily_logs(&self, days: i64) -> Result<Vec<DailyLogEntry>> {
+        let url = format!("{}/api/v1/notes/daily?days={}", self.base_url, days);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    /// Appends a titled, tagged entry to today's daily log.
+    pub async fn create_daily_log(&self, title: &str, content: &str, tags: Vec<String>) -> Result<()> {
+        let url = format!("{}/api/v1/notes/daily", self.base_url);
+        let body = serde_json::json!({ "title": title, "content": content, "tags": tags });
+        self.client.post(&url).json(&body).send().await?.error_for_status()?;
+        Ok(())
     }
 }
