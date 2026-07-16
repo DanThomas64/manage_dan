@@ -14,8 +14,9 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 | **End-of-day summary** | Prints tasks completed during the day at a configurable evening hour. |
 | **Recurring tasks** | Configurable recurring tasks printed automatically when due. |
 | **Shopping lists** | Category-based shopping lists with check-off, print support, and common-items templates. |
-| **Notes** | Markdown notes managed by [nb](https://xwmx.github.io/nb/) and stored as `.md` files. Full-text search via `nb search`. Printable. |
-| **Web frontend** | SPA served at `http://localhost` covering todos, shopping lists, and notes. |
+| **Notes** | Markdown notes managed by [nb](https://xwmx.github.io/nb/) and stored as `.md` files. Full-text search via `nb search`. Printable, editable, deletable from the web UI. |
+| **Log** | Quick timestamped daily-log entries (title + tags + description) via `nb`'s `daily` plugin. Browse the last 7 days of entries in one place. |
+| **Web frontend** | SPA served at `http://localhost`, split into four sections — Home, Lists, Notes, Log — each reachable from a Home landing page. |
 | **Android app** | Native Android client for quick capture and list management. |
 | **Terminal UI** | Full keyboard-driven TUI for todo, notes, shopping, and project management. |
 | **System health** | Monitors and reports the status of every subsystem at startup and continuously. |
@@ -29,6 +30,7 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 | [Rust](https://rustup.rs) ≥ 1.87 | For building from source |
 | A self-hosted [Vikunja](https://vikunja.io/docs/installing/) instance | For todo storage |
 | [nb](https://xwmx.github.io/nb/) | For notes — the `notes` subsystem will show `Nogo` without it |
+| nb's `daily` plugin | For the Log feature — install with `nb plugin install https://github.com/xwmx/nb/blob/master/plugins/daily.nb-plugin` |
 | A USB ESC/POS thermal printer | Optional — the app runs fine without one in `terminal` mode |
 | nginx | Only needed if deploying as a service (see [Deploy as a service](#deploy-as-a-service)) |
 
@@ -185,6 +187,7 @@ One-time setup before the first run — see the comment block at the top of `dep
 ```bash
 sudo apt-get install -y nginx libudev1
 bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
+nb plugin install https://github.com/xwmx/nb/blob/master/plugins/daily.nb-plugin
 sudo usermod -aG plugdev "$USER"    # USB printer access
 ```
 
@@ -312,6 +315,15 @@ POST   /api/v1/notes/:id/print        Print note  (?notebook=work)
 GET    /notes/:id                     HTML viewer (markdown rendered in browser)  (?notebook=work)
 ```
 
+### Log
+
+Backed by nb's `daily` plugin, writing into a dedicated `log` notebook (excluded from the Notes endpoints above).
+
+```
+POST   /api/v1/notes/daily            Add a log entry  { "title": "...", "content": "...", "tags": [...] }
+GET    /api/v1/notes/daily?days=7     List entries from the last N days (default 7), most recent first
+```
+
 ### Lists
 
 ```
@@ -349,7 +361,7 @@ manage_dan/
 ├── notes/        Markdown notes — nb CLI backend, full-text search via nb, printing
 ├── project/      Project subsystem (stub)
 ├── tui/          Terminal UI client
-├── frontend/     Web UI (vanilla JS, served by nginx) — todos, lists, notes
+├── frontend/     Web UI (vanilla JS, served by nginx) — Home, Lists, Notes, Log
 ├── android/      Android client app
 ├── config/       Configuration files
 └── deploy.sh     Build + install as a native systemd service + nginx reverse proxy

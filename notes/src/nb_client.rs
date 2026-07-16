@@ -1,6 +1,6 @@
 use crate::notes_prelude::*;
 use crate::models::Note;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use tokio::process::Command;
@@ -24,20 +24,18 @@ async fn run(args: &[&str]) -> NotesLibResult<String> {
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
+// Always prefix explicitly with the notebook name (including "home"). `nb`
+// persists whichever notebook a colon-prefixed command last targeted as its
+// "current" notebook, so bare/unprefixed commands silently drift onto
+// whatever notebook was last touched instead of "home".
 fn nb_ref(notebook: &str, nb_id: u64) -> String {
-    if notebook.is_empty() || notebook == "home" {
-        nb_id.to_string()
-    } else {
-        format!("{}:{}", notebook, nb_id)
-    }
+    let notebook = if notebook.is_empty() { "home" } else { notebook };
+    format!("{}:{}", notebook, nb_id)
 }
 
 fn nb_cmd(notebook: &str, subcmd: &str) -> String {
-    if notebook.is_empty() || notebook == "home" {
-        subcmd.to_string()
-    } else {
-        format!("{}:{}", notebook, subcmd)
-    }
+    let notebook = if notebook.is_empty() { "home" } else { notebook };
+    format!("{}:{}", notebook, subcmd)
 }
 
 fn system_time_to_local(t: std::io::Result<SystemTime>) -> DateTime<Local> {
@@ -52,14 +50,11 @@ fn system_time_to_local(t: std::io::Result<SystemTime>) -> DateTime<Local> {
         .unwrap_or_else(Local::now)
 }
 
-fn parse_note_file(path: &Path, nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
-    let raw = std::fs::read_to_string(path)?;
-    let meta = std::fs::metadata(path)?;
-
-    let created_at = system_time_to_local(meta.created());
-    let updated_at = system_time_to_local(meta.modified());
-
-    let mut lines = raw.lines().peekable();
+// Parses the default note body layout: `# Title`, optional `#tag1 #tag2`
+// line, blank line, then content. Shared by whole-file notes and by
+// individual entries inside a multi-entry daily log file.
+fn parse_body<'a>(lines: impl Iterator<Item = &'a str>) -> (String, Vec<String>, String) {
+    let mut lines = lines.peekable();
 
     // First non-empty line: `# Title`
     let title = loop {
@@ -94,6 +89,18 @@ fn parse_note_file(path: &Path, nb_id: u64, notebook: &str) -> NotesLibResult<No
     // Remaining lines: content
     let content: String = lines.collect::<Vec<_>>().join("\n").trim_end().to_string();
 
+    (title, tags, content)
+}
+
+fn parse_note_file(path: &Path, nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
+    let raw = std::fs::read_to_string(path)?;
+    let meta = std::fs::metadata(path)?;
+
+    let created_at = system_time_to_local(meta.created());
+    let updated_at = system_time_to_local(meta.modified());
+
+    let (title, tags, content) = parse_body(raw.lines());
+
     Ok(Note {
         nb_id,
         notebook: notebook.to_string(),
@@ -105,7 +112,41 @@ fn parse_note_file(path: &Path, nb_id: u64, notebook: &str) -> NotesLibResult<No
     })
 }
 
-fn write_note_file(path: &Path, title: &str, tags: &[String], content: &str) -> NotesLibResult<()> {
+// Splits a daily log file's raw text into its individual entries. Each entry
+// begins with the `## HH:MM:SS` heading nb's `daily` plugin auto-inserts,
+// followed by the title/tags/content layout `nb_daily` writes into it.
+fn parse_daily_entries(raw: &str, date: &str) -> Vec<crate::models::LogEntry> {
+    let mut lines = raw.lines().peekable();
+    let mut entries = Vec::new();
+
+    while let Some(line) = lines.next() {
+        let Some(time) = line.strip_prefix("## ") else { continue };
+        let time = time.trim().to_string();
+
+        let mut body_lines = Vec::new();
+        while let Some(&next) = lines.peek() {
+            if next.starts_with("## ") {
+                break;
+            }
+            body_lines.push(lines.next().unwrap());
+        }
+
+        let (title, tags, content) = parse_body(body_lines.into_iter());
+        entries.push(crate::models::LogEntry {
+            date: date.to_string(),
+            time,
+            title,
+            tags,
+            content,
+        });
+    }
+
+    entries
+}
+
+// `# {title}` heading, optional `#tag1 #tag2` line, blank line, then content —
+// the default layout nb uses for a note body.
+fn format_note_body(title: &str, tags: &[String], content: &str) -> String {
     let mut out = format!("# {}\n", title);
     if !tags.is_empty() {
         let tag_line: String = tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" ");
@@ -114,7 +155,12 @@ fn write_note_file(path: &Path, title: &str, tags: &[String], content: &str) -> 
         out.push('\n');
     }
     out.push('\n');
-    out.push_str(content.trim_end());
+    out.push_str(content.trim());
+    out
+}
+
+fn write_note_file(path: &Path, title: &str, tags: &[String], content: &str) -> NotesLibResult<()> {
+    let mut out = format_note_body(title, tags, content);
     out.push('\n');
     std::fs::write(path, out)?;
     Ok(())
@@ -147,7 +193,11 @@ async fn nb_path(notebook: &str, nb_id: u64) -> NotesLibResult<PathBuf> {
 
 pub async fn nb_add(notebook: &str, title: &str, content: &str, tags: &[String]) -> NotesLibResult<u64> {
     let cmd = nb_cmd(notebook, "add");
-    let mut args = vec![cmd.as_str(), "--title", title, "--content", content];
+    let mut args = vec![cmd.as_str(), "--content", content];
+
+    if !title.is_empty() {
+        args.extend_from_slice(&["--title", title]);
+    }
 
     let tags_str;
     if !tags.is_empty() {
@@ -169,6 +219,17 @@ pub async fn nb_add(notebook: &str, title: &str, content: &str, tags: &[String])
     id_str.trim().parse::<u64>().map_err(|_| {
         NotesLibError::Nb(format!("cannot parse id from nb add output: {}", out.trim()))
     })
+}
+
+// Appends a titled, tagged entry to today's daily log via nb's `daily`
+// plugin. Each entry lands under its own auto-generated `## HH:MM:SS`
+// heading in the day's file, followed by the same title/tags/content layout
+// a regular note uses.
+pub async fn nb_daily(notebook: &str, title: &str, tags: &[String], content: &str) -> NotesLibResult<()> {
+    let cmd = nb_cmd(notebook, "daily");
+    let entry = format_note_body(title, tags, content);
+    run(&[&cmd, &entry]).await?;
+    Ok(())
 }
 
 pub async fn nb_show(notebook: &str, nb_id: u64) -> NotesLibResult<Note> {
@@ -204,6 +265,39 @@ pub async fn nb_list(notebook: Option<&str>) -> NotesLibResult<Vec<Note>> {
         }
     }
     Ok(notes)
+}
+
+// Reads every daily log file in `notebook` dated within the last `days` days
+// (inclusive of today) and returns their individual entries, most recent
+// first.
+pub async fn nb_daily_entries(notebook: &str, days: i64) -> NotesLibResult<Vec<crate::models::LogEntry>> {
+    let cmd = nb_cmd(notebook, "list");
+    let out = match run(&[&cmd]).await {
+        Ok(o) => o,
+        Err(NotesLibError::Nb(_)) => return Ok(Vec::new()), // empty notebook
+        Err(e) => return Err(e),
+    };
+
+    let cutoff = Local::now().date_naive() - Duration::days(days.max(1) - 1);
+
+    let mut entries = Vec::new();
+    for line in out.lines() {
+        let Some((id, nb_name, _title)) = parse_list_line(line, notebook) else { continue };
+        let path = match nb_path(&nb_name, id).await {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        let Ok(date) = NaiveDate::parse_from_str(stem, "%Y%m%d") else { continue };
+        if date < cutoff {
+            continue;
+        }
+        let Ok(raw) = std::fs::read_to_string(&path) else { continue };
+        entries.extend(parse_daily_entries(&raw, &date.format("%Y-%m-%d").to_string()));
+    }
+
+    entries.sort_by(|a: &crate::models::LogEntry, b| (&b.date, &b.time).cmp(&(&a.date, &a.time)));
+    Ok(entries)
 }
 
 pub async fn nb_update(

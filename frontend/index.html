@@ -372,6 +372,41 @@
     .cat-menu-item:hover { background: var(--surface3, #333); }
     .cat-menu-item .menu-check { font-size: 0.75rem; color: var(--accent); margin-left: auto; }
 
+    /* ── Notebook autocomplete dropdown (custom — native <datalist> is unreliable on mobile) ── */
+    .suggestions-dropdown {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      max-height: 200px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+      z-index: 200;
+      margin-top: 2px;
+    }
+    .suggestions-dropdown.open { display: block; }
+    .suggestion-item {
+      display: block;
+      width: 100%;
+      padding: 11px 14px;
+      min-height: 44px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text);
+      font-size: 0.9rem;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .suggestion-item:hover { background: var(--surface3, #333); }
+
     .item-list {
       flex: 1;
       min-height: 0; /* allow flex shrink so the add-bar stays pinned at the bottom */
@@ -824,108 +859,114 @@
 
     /* ═══════════════════════════════════════════
        NARROW MOBILE  (closed fold / small phone, ≤ 480px)
-       Compact but still finger-friendly (48 px min tap targets).
+       Bigger text & touch targets — fast one-handed interaction matters
+       more here than information density.
     ═══════════════════════════════════════════ */
     @media (max-width: 480px) {
-      html, body { font-size: 13px; }
+      html, body { font-size: 16px; }
 
-      .app { grid-template-rows: 52px 1fr; }
+      .app { grid-template-rows: 58px 1fr; }
 
       header { padding: 0 12px; }
-      header h1 { font-size: 1rem; }
+      header h1 { font-size: 1.1rem; }
 
       /* Header buttons */
-      button { padding: 8px 12px; font-size: 0.88rem; }
-      .btn-sm { padding: 6px 10px; font-size: 0.82rem; }
+      button { padding: 12px 18px; font-size: 1rem; }
+      .btn-sm { padding: 10px 14px; font-size: 0.92rem; }
 
       /* Sidebar list items */
       .group-item {
-        min-height: 48px;
-        padding: 10px 12px;
-        font-size: 0.9rem;
+        min-height: 56px;
+        padding: 14px 14px;
+        font-size: 1rem;
       }
 
       .category-item {
-        min-height: 48px;
-        padding: 10px 12px;
-        font-size: 0.9rem;
+        min-height: 56px;
+        padding: 14px 14px;
+        font-size: 1rem;
       }
 
       .group-delete,
       .category-delete {
         opacity: 0.65;
-        min-width: 36px;
-        min-height: 36px;
-        font-size: 1.1rem;
+        min-width: 42px;
+        min-height: 42px;
+        font-size: 1.3rem;
       }
 
       .quick-add-item {
-        min-height: 48px;
-        padding: 9px 12px;
-        font-size: 0.88rem;
+        min-height: 56px;
+        padding: 14px 14px;
+        font-size: 1rem;
       }
 
       .quick-add-item-delete {
         opacity: 0.65;
-        min-width: 36px;
-        min-height: 36px;
-        font-size: 1.1rem;
+        min-width: 42px;
+        min-height: 42px;
+        font-size: 1.3rem;
       }
 
       .quick-add-section { max-height: none; }
       .group-list { max-height: none; }
 
       /* Panel header */
-      .panel-header { padding: 10px 12px; }
-      .panel-title  { font-size: 0.95rem; }
+      .panel-header { padding: 14px 14px; }
+      .panel-title  { font-size: 1.05rem; }
 
       /* Item list */
-      .item-list { padding: 6px 8px; }
+      .item-list { padding: 10px 12px; }
 
       .item-row {
-        padding: 8px 10px;
-        min-height: 44px;
-        gap: 8px;
-        font-size: 0.88rem;
+        padding: 12px 14px;
+        min-height: 52px;
+        gap: 10px;
+        font-size: 1rem;
       }
 
-      .item-label { font-size: 0.82rem; }
+      .item-label { font-size: 0.92rem; }
 
-      .item-check { width: 22px; height: 22px; }
+      .item-check { width: 28px; height: 28px; }
 
-      .item-qty { font-size: 0.7rem; padding: 1px 5px; }
+      .item-qty { font-size: 0.78rem; padding: 3px 7px; }
 
       .item-delete {
         opacity: 0.65;
-        min-width: 36px;
-        min-height: 36px;
-        font-size: 1.1rem;
+        min-width: 42px;
+        min-height: 42px;
+        font-size: 1.3rem;
       }
 
       /* Add-item form — 16 px minimum on inputs prevents iOS auto-zoom */
       input[type="text"] {
         font-size: 16px;
-        padding: 9px 10px;
+        padding: 12px 12px;
       }
 
       .add-item-form {
-        padding: 8px;
-        padding-bottom: max(8px, calc(6px + var(--safe-bottom)));
-        gap: 6px;
+        padding: 10px 12px;
+        padding-bottom: max(10px, calc(8px + var(--safe-bottom)));
+        gap: 10px;
       }
 
       .add-category-form {
-        padding: 6px 8px;
-        padding-bottom: max(6px, calc(4px + var(--safe-bottom)));
+        padding: 8px 10px;
+        padding-bottom: max(8px, calc(6px + var(--safe-bottom)));
       }
 
       /* Sidebar header labels */
-      .sidebar-header       { font-size: 0.65rem; padding: 10px 12px 6px; }
-      .group-section-header { font-size: 0.65rem; padding: 10px 12px 6px; }
+      .sidebar-header       { font-size: 0.72rem; padding: 12px 14px 8px; }
+      .group-section-header { font-size: 0.72rem; padding: 12px 14px 8px; }
+
+      /* Home tiles */
+      .home-tile { width: 150px; height: 150px; }
+      .home-tile-icon { font-size: 2.4rem; }
+      .home-tile-label { font-size: 1.1rem; }
     }
 
-    /* ── Notes overlay ── */
-    #notes-overlay {
+    /* ── Full-screen section overlays (Home / Lists / Notes / Log) ── */
+    .app-overlay {
       display: none;
       position: fixed;
       inset: 0;
@@ -933,17 +974,18 @@
       z-index: 100;
       flex-direction: column;
     }
-    #notes-overlay.active { display: flex; }
+    .app-overlay.active { display: flex; }
 
     .notes-nav {
       display: flex;
+      align-items: center;
       gap: 4px;
       padding: 10px 16px;
       border-bottom: 1px solid var(--border);
       background: var(--surface);
       flex-shrink: 0;
     }
-    .notes-tab {
+    .notes-tab, .log-tab {
       padding: 7px 16px;
       border-radius: 6px;
       background: transparent;
@@ -954,16 +996,48 @@
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
     }
-    .notes-tab.active {
+    .notes-tab.active, .log-tab.active {
       background: var(--accent-dim);
       color: var(--accent-cont);
       border-color: transparent;
       border-bottom: 2px solid var(--accent);
     }
-    .notes-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+    .notes-tab:hover:not(.active), .log-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
 
-    .notes-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
-    .notes-panel.active { display: flex; }
+    .notes-panel, .log-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+    .notes-panel.active, .log-panel.active { display: flex; }
+
+    /* ── Home landing page ── */
+    .home-hero {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 28px;
+      padding: 24px;
+    }
+    .home-title { font-size: 1.5rem; font-weight: 600; }
+    .home-tiles { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
+    .home-tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      width: 180px;
+      height: 180px;
+      border-radius: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
+    }
+    .home-tile:hover { background: var(--surface2); border-color: var(--accent-dim); }
+    .home-tile:active { transform: scale(0.97); }
+    .home-tile-icon { font-size: 2.8rem; }
+    .home-tile-label { font-size: 1.05rem; font-weight: 600; }
 
     /* Quick Add panel */
     .quick-note-form {
@@ -973,6 +1047,13 @@
       gap: 10px;
       padding: 16px;
       overflow-y: auto;
+      width: 100%;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    .quick-note-form input[type="text"],
+    .quick-note-form textarea {
+      width: 100%;
     }
     .quick-note-form textarea {
       flex: 1;
@@ -1069,34 +1150,18 @@
     .md-body th,.md-body td { padding: 8px 10px; border: 1px solid var(--border); }
     .md-body th { background: var(--surface2); }
 
-    /* Nav toggle in header */
-    .nav-toggle { display: flex; gap: 4px; }
-    .nav-btn {
-      padding: 5px 12px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      background: transparent;
-      color: var(--text-muted);
-      font-size: 0.82rem;
-      font-weight: 500;
-      cursor: pointer;
-    }
-    .nav-btn.active { background: var(--accent-dim); color: var(--accent-cont); border-color: var(--accent-dim); }
-    .nav-btn:hover:not(.active) { background: var(--surface2); color: var(--text); }
   </style>
 </head>
 <body>
+<div id="lists-overlay" class="app-overlay">
 <div class="app">
 
   <!-- Header -->
   <header>
     <div class="header-left">
+      <button id="btn-home" class="btn-ghost btn-sm" onclick="showHome()">&#8962; Home</button>
       <button id="btn-back" class="btn-ghost btn-sm" onclick="goBack()">&#8592; Lists</button>
       <h1 id="header-title"><span>&#9676;</span> Lists</h1>
-    </div>
-    <div class="nav-toggle" style="margin:0 8px;">
-      <button class="nav-btn active" id="nav-lists" onclick="switchView('lists')">Lists</button>
-      <button class="nav-btn" id="nav-notes" onclick="switchView('notes')">Notes</button>
     </div>
     <div class="header-actions">
       <button class="btn-ghost btn-sm" id="btn-clear" disabled onclick="clearChecked()">Clear checked</button>
@@ -1185,14 +1250,37 @@
 
   </div>
 </div>
+</div>
 
 <div id="toast"></div>
 
+<!-- Home overlay: landing page with a big button per section -->
+<div id="home-overlay" class="app-overlay active">
+  <div class="home-hero">
+    <div class="home-title"><span style="color:var(--accent)">&#9676;</span> Manage Dan</div>
+    <div class="home-tiles">
+      <button class="home-tile" onclick="showView('lists')">
+        <span class="home-tile-icon">&#128722;</span>
+        <span class="home-tile-label">Lists</span>
+      </button>
+      <button class="home-tile" onclick="showView('notes')">
+        <span class="home-tile-icon">&#128221;</span>
+        <span class="home-tile-label">Notes</span>
+      </button>
+      <button class="home-tile" onclick="showView('log')">
+        <span class="home-tile-icon">&#128220;</span>
+        <span class="home-tile-label">Log</span>
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Notes overlay -->
-<div id="notes-overlay">
+<div id="notes-overlay" class="app-overlay">
 
   <!-- Notes sub-nav -->
   <div class="notes-nav">
+    <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
     <button class="notes-tab active" id="ntab-add" onclick="notesShowTab('add')">&#43; Quick Add</button>
     <button class="notes-tab" id="ntab-browse" onclick="notesShowTab('browse')">Browse</button>
     <button class="notes-tab" id="ntab-search" onclick="notesShowTab('search')">Search</button>
@@ -1202,13 +1290,14 @@
   <div class="notes-panel active" id="npanel-add">
     <div class="quick-note-form">
       <div>
-        <div class="field-label">Title <span style="color:var(--text-dim)">(optional)</span></div>
-        <input type="text" id="note-title" placeholder="Leave blank to use first line" autocomplete="off" />
+        <div class="field-label">Title</div>
+        <input type="text" id="note-title" placeholder="Note title" autocomplete="off" required />
       </div>
-      <div>
+      <div style="position:relative;">
         <div class="field-label">Notebook <span style="color:var(--text-dim)">(optional)</span></div>
-        <input type="text" id="note-notebook" placeholder="e.g. work" list="notebook-suggestions" autocomplete="off" />
-        <datalist id="notebook-suggestions"></datalist>
+        <input type="text" id="note-notebook" placeholder="e.g. work" autocomplete="off"
+               onfocus="notebookShowSuggestions()" oninput="notebookFilterSuggestions()" />
+        <div class="suggestions-dropdown" id="notebook-suggestions-list"></div>
       </div>
       <div>
         <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
@@ -1254,6 +1343,7 @@
       <button class="btn-ghost btn-sm" onclick="notesPrint()">&#128438; Print</button>
       <button class="btn-ghost btn-sm" onclick="notesCloseViewer()">&#8592; Back</button>
       <button class="btn-ghost btn-sm" onclick="notesOpenEditMode()">Edit</button>
+      <button class="btn-danger btn-sm" onclick="notesDeleteNote()">Delete</button>
     </div>
   </div>
 
@@ -1264,7 +1354,7 @@
       <input type="hidden" id="edit-notebook" />
       <div>
         <div class="field-label">Title</div>
-        <input type="text" id="edit-title" placeholder="Note title" autocomplete="off" />
+        <input type="text" id="edit-title" placeholder="Note title" autocomplete="off" required />
       </div>
       <div>
         <div class="field-label">Tags</div>
@@ -1278,6 +1368,44 @@
         <button class="btn-primary btn-sm" style="flex:1;" onclick="notesSaveEdit()">Save</button>
         <button class="btn-ghost btn-sm" onclick="notesCancelEdit()">Cancel</button>
       </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Log overlay -->
+<div id="log-overlay" class="app-overlay">
+
+  <!-- Log sub-nav -->
+  <div class="notes-nav">
+    <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
+    <button class="log-tab active" id="ltab-add" onclick="logShowTab('add')">&#43; Add Entry</button>
+    <button class="log-tab" id="ltab-recent" onclick="logShowTab('recent')">Recent</button>
+  </div>
+
+  <!-- Add Entry panel: quick entries into today's daily log (nb daily plugin) -->
+  <div class="log-panel active" id="lpanel-add">
+    <div class="quick-note-form">
+      <div>
+        <div class="field-label">Title</div>
+        <input type="text" id="log-title" placeholder="Entry title" autocomplete="off" required />
+      </div>
+      <div>
+        <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
+        <input type="text" id="log-tags" placeholder="e.g. idea, work" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Description</div>
+        <textarea id="log-content" placeholder="What happened…" required></textarea>
+      </div>
+      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitLogEntry()">Save to Log</button>
+    </div>
+  </div>
+
+  <!-- Recent panel: read-only view of the last 7 days of daily log entries -->
+  <div class="log-panel" id="lpanel-recent">
+    <div class="notes-list" id="logs-list">
+      <div class="empty-state"><span class="icon">&#128220;</span><span>No log entries yet</span></div>
     </div>
   </div>
 
@@ -2107,6 +2235,24 @@
   init();
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // APP NAVIGATION (Home / Lists / Notes / Log — full-screen overlays)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const OVERLAY_IDS = { home: 'home-overlay', lists: 'lists-overlay', notes: 'notes-overlay', log: 'log-overlay' };
+  let currentView = 'home';
+
+  function showView(view) {
+    currentView = view;
+    Object.entries(OVERLAY_IDS).forEach(([v, id]) => {
+      document.getElementById(id).classList.toggle('active', v === view);
+    });
+    if (view === 'notes') notesOnOpen();
+    if (view === 'log') logOnOpen();
+  }
+
+  function showHome() { showView('home'); }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // NOTES
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -2117,22 +2263,6 @@
   let notesViewerFromTab = 'browse';
   let notesSearchTimer = null;
   let markedLoaded = false;
-
-  function switchView(view) {
-    const overlay = document.getElementById('notes-overlay');
-    const navLists = document.getElementById('nav-lists');
-    const navNotes = document.getElementById('nav-notes');
-    if (view === 'notes') {
-      overlay.classList.add('active');
-      navNotes.classList.add('active');
-      navLists.classList.remove('active');
-      notesOnOpen();
-    } else {
-      overlay.classList.remove('active');
-      navLists.classList.add('active');
-      navNotes.classList.remove('active');
-    }
-  }
 
   function notesOnOpen() {
     notesLoadNotebooks();
@@ -2149,17 +2279,108 @@
     if (tab === 'add') setTimeout(() => document.getElementById('note-content').focus(), 80);
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LOG
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let logCurrentTab = 'add';
+
+  function logOnOpen() {
+    if (logCurrentTab === 'recent') logLoadRecent();
+  }
+
+  function logShowTab(tab) {
+    logCurrentTab = tab;
+    document.querySelectorAll('.log-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('ltab-' + tab).classList.add('active');
+    document.querySelectorAll('.log-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('lpanel-' + tab).classList.add('active');
+    if (tab === 'recent') logLoadRecent();
+    if (tab === 'add') setTimeout(() => document.getElementById('log-title').focus(), 80);
+  }
+
+  async function logLoadRecent() {
+    try {
+      const r = await fetch(NOTES_API + '/daily?days=7');
+      const entries = await r.json();
+      renderLogList(entries);
+    } catch (_) {
+      document.getElementById('logs-list').innerHTML = '<div class="empty-state"><span>Failed to load log entries</span></div>';
+    }
+  }
+
+  function renderLogList(entries) {
+    const el = document.getElementById('logs-list');
+    if (!entries || entries.length === 0) {
+      el.innerHTML = '<div class="empty-state"><span class="icon">&#128220;</span><span>No log entries in the last 7 days</span></div>';
+      return;
+    }
+    let html = '';
+    let lastDate = null;
+    for (const e of entries) {
+      if (e.date !== lastDate) {
+        html += `<div style="padding:10px 16px 2px;font-size:0.75rem;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">${esc(e.date)}</div>`;
+        lastDate = e.date;
+      }
+      const tagsHtml = (e.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
+      html += `<div class="note-card" style="cursor:default;">
+        <div class="note-card-title">${esc(e.title || 'Untitled')}</div>
+        <div class="note-card-preview" style="white-space:pre-wrap;">${esc(e.content)}</div>
+        <div class="note-card-meta">
+          ${tagsHtml}
+          <span class="note-date">${esc(e.time)}</span>
+        </div>
+      </div>`;
+    }
+    el.innerHTML = html;
+  }
+
+  let notebookList = [];
+
   async function notesLoadNotebooks() {
     try {
       const r = await fetch(NOTES_API + '/folders');
-      const notebooks = await r.json();
-      const dl = document.getElementById('notebook-suggestions');
-      dl.innerHTML = notebooks.map(nb => `<option value="${esc(nb)}">`).join('');
+      notebookList = await r.json();
       const filtersEl = document.getElementById('notebook-filters');
       filtersEl.innerHTML = `<button class="filter-pill ${notesFilterNotebook === '' ? 'active' : ''}" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>` +
-        notebooks.map(nb => `<button class="filter-pill ${nb === notesFilterNotebook ? 'active' : ''}" data-notebook="${esc(nb)}" onclick="notesSetNotebook(this,'${esc(nb)}')">${esc(nb)}</button>`).join('');
+        notebookList.map(nb => `<button class="filter-pill ${nb === notesFilterNotebook ? 'active' : ''}" data-notebook="${esc(nb)}" onclick="notesSetNotebook(this,'${esc(nb)}')">${esc(nb)}</button>`).join('');
     } catch (_) {}
   }
+
+  // Custom notebook-name autocomplete for the Quick Add form. Native
+  // <input list> + <datalist> doesn't reliably show suggestions on mobile
+  // browsers (notably iOS Safari), so this builds the dropdown by hand.
+  function renderNotebookSuggestions(list) {
+    const el = document.getElementById('notebook-suggestions-list');
+    if (!list.length) {
+      el.classList.remove('open');
+      el.innerHTML = '';
+      return;
+    }
+    el.innerHTML = list.map(nb => `<button type="button" class="suggestion-item" onclick="notebookPick('${esc(nb)}')">${esc(nb)}</button>`).join('');
+    el.classList.add('open');
+  }
+
+  function notebookShowSuggestions() {
+    renderNotebookSuggestions(notebookList);
+  }
+
+  function notebookFilterSuggestions() {
+    const q = document.getElementById('note-notebook').value.trim().toLowerCase();
+    const filtered = q ? notebookList.filter(nb => nb.toLowerCase().includes(q)) : notebookList;
+    renderNotebookSuggestions(filtered);
+  }
+
+  function notebookPick(nb) {
+    document.getElementById('note-notebook').value = nb;
+    document.getElementById('notebook-suggestions-list').classList.remove('open');
+  }
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#note-notebook') && !e.target.closest('#notebook-suggestions-list')) {
+      document.getElementById('notebook-suggestions-list').classList.remove('open');
+    }
+  });
 
   async function notesLoadBrowse() {
     let url = NOTES_API + '?';
@@ -2294,8 +2515,10 @@
   async function notesSaveEdit() {
     const nbId = document.getElementById('edit-nb-id').value;
     const notebook = document.getElementById('edit-notebook').value;
+    const title = document.getElementById('edit-title').value.trim();
+    if (!title) { toast('Note title is required', true); return; }
     const body = {
-      title: document.getElementById('edit-title').value.trim() || null,
+      title,
       content: document.getElementById('edit-content').value,
       tags: document.getElementById('edit-tags').value.split(',').map(s => s.trim()).filter(Boolean),
     };
@@ -2325,10 +2548,48 @@
     }
   }
 
+  async function notesDeleteNote() {
+    if (!notesCurrentNote) return;
+    if (!confirm(`Delete "${notesCurrentNote.title || 'Untitled'}"? This cannot be undone.`)) return;
+    try {
+      const r = await fetch(NOTES_API + '/' + notesCurrentNote.nb_id + '?notebook=' + encodeURIComponent(notesCurrentNote.notebook), {method: 'DELETE'});
+      if (!r.ok) throw 0;
+      notesCurrentNote = null;
+      toast('Note deleted');
+      notesCloseViewer();
+    } catch (_) {
+      toast('Failed to delete note', true);
+    }
+  }
+
+  async function submitLogEntry() {
+    const title = document.getElementById('log-title').value.trim();
+    if (!title) { toast('Log title is required', true); return; }
+    const content = document.getElementById('log-content').value.trim();
+    if (!content) { toast('Log description is required', true); return; }
+    const tagsRaw = document.getElementById('log-tags').value;
+    const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    try {
+      const r = await fetch(NOTES_API + '/daily', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title, content, tags}),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('log-title').value = '';
+      document.getElementById('log-content').value = '';
+      document.getElementById('log-tags').value = '';
+      toast('Log entry saved');
+    } catch (_) {
+      toast('Failed to save log entry', true);
+    }
+  }
+
   async function submitQuickNote() {
     const content = document.getElementById('note-content').value.trim();
     if (!content) { toast('Note content is required', true); return; }
-    const title = document.getElementById('note-title').value.trim() || null;
+    const title = document.getElementById('note-title').value.trim();
+    if (!title) { toast('Note title is required', true); return; }
     const tagsRaw = document.getElementById('note-tags').value;
     const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
     const notebook = document.getElementById('note-notebook').value.trim() || null;

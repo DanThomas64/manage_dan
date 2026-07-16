@@ -10,6 +10,9 @@ pub enum NotesLibError {
     #[error("nb command failed: {0}")]
     Nb(String),
 
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+
     #[error("note not found: {0}")]
     NotFound(String),
 

@@ -21,6 +21,22 @@ pub struct CreateNoteRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CreateLogRequest {
+    pub title: String,
+    pub content: String,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogEntry {
+    pub date: String,
+    pub time: String,
+    pub title: String,
+    pub content: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct UpdateNoteRequest {
     pub title: Option<String>,
     pub content: Option<String>,
