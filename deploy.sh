@@ -1,61 +1,40 @@
 #!/usr/bin/env bash
-# Cross-compile app for linux/arm64 and deploy to homepi via systemd + nginx.
-# Run from the project root: ./deploy.sh
+# Build manage_dan and install it as a native systemd service + nginx
+# reverse proxy on this machine. Run from the project root: ./deploy.sh
 #
-# ── One-time dev machine setup ───────────────────────────────────────────────
-#   rustup target add aarch64-unknown-linux-gnu.2.41
-#   cargo install cargo-zigbuild
-#   yay -S zig                        # or: zigup install latest
-#
-#   # Sync Pi sysroot (re-run if Pi system packages update)
-#   mkdir -p ~/pi-sysroot
-#   rsync -a 10.0.0.221:/usr/include/                  ~/pi-sysroot/usr/include/
-#   rsync -a 10.0.0.221:/usr/lib/aarch64-linux-gnu/    ~/pi-sysroot/usr/lib/aarch64-linux-gnu/
-#   rsync -a 10.0.0.221:/lib/aarch64-linux-gnu/        ~/pi-sysroot/lib/aarch64-linux-gnu/
-#
-# ── One-time Pi setup ────────────────────────────────────────────────────────
+# ── One-time setup ────────────────────────────────────────────────────────────
 #   sudo apt-get install -y nginx libudev1
 #   bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
-#   sudo systemctl enable nginx
-#   sudo usermod -aG plugdev dan       # USB device access
+#   sudo usermod -aG plugdev "$USER"    # USB printer access
+#   sudo cp 99-printer.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
 set -euo pipefail
 
-REMOTE_HOST="homepi.timmins"
-REMOTE_DIR="/home/dan/manage_dan"
-SYSROOT="$HOME/pi-sysroot"
-BINARY="target/aarch64-unknown-linux-gnu/release/app"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BINARY="$PROJECT_DIR/target/release/app"
+RUN_USER="$(whoami)"
 
-# ── Cross-compile for linux/arm64 ────────────────────────────────────────────
-echo "Cross-compiling for linux/arm64..."
-PKG_CONFIG_SYSROOT_DIR="$SYSROOT" \
-PKG_CONFIG_PATH="$SYSROOT/usr/lib/aarch64-linux-gnu/pkgconfig" \
-PKG_CONFIG_ALLOW_CROSS=1 \
-CFLAGS_aarch64_unknown_linux_gnu="-I$SYSROOT/usr/include -I$SYSROOT/usr/include/aarch64-linux-gnu" \
-    cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.41 -p app
+# ── Build ──────────────────────────────────────────────────────────────────────
+echo "Building release binary..."
+cargo build --release -p app
 
-# ── Deploy binary ─────────────────────────────────────────────────────────────
-echo "Deploying binary..."
-ssh "$REMOTE_HOST" "mkdir -p $REMOTE_DIR/config $REMOTE_DIR/data/logs"
-scp "$BINARY" "$REMOTE_HOST:/tmp/manage_dan_new"
-ssh "$REMOTE_HOST" "sudo install -m 755 /tmp/manage_dan_new /usr/local/bin/manage_dan \
-    && rm /tmp/manage_dan_new"
+# ── Install binary ───────────────────────────────────────────────────────────
+echo "Installing binary..."
+mkdir -p "$PROJECT_DIR/data/logs"
+sudo install -m 755 "$BINARY" /usr/local/bin/manage_dan
 
 # ── Install systemd service (idempotent) ─────────────────────────────────────
 echo "Installing systemd service..."
-ssh "$REMOTE_HOST" "sudo tee /etc/systemd/system/manage_dan.service > /dev/null" << EOF
+sudo tee /etc/systemd/system/manage_dan.service > /dev/null << EOF
 [Unit]
 Description=manage_dan app
 After=network.target
 
 [Service]
 ExecStart=/usr/local/bin/manage_dan
-WorkingDirectory=$REMOTE_DIR/data
-User=dan
+WorkingDirectory=$PROJECT_DIR
+User=$RUN_USER
 SupplementaryGroups=plugdev
-Environment=APP_CONFIG_DIR=$REMOTE_DIR/config
-Environment=APP_LOGGING_FILE=$REMOTE_DIR/data/logs/app.log
 Environment=LOG_STDOUT=true
-Environment=TZ=America/Halifax
 Restart=on-failure
 RestartSec=5
 
@@ -65,12 +44,10 @@ EOF
 
 # ── Deploy frontend (static file + nginx config) ──────────────────────────────
 echo "Deploying frontend..."
-ssh "$REMOTE_HOST" "sudo mkdir -p /var/www/manage_dan"
-scp frontend/index.html "$REMOTE_HOST:/tmp/manage_dan_index.html"
-ssh "$REMOTE_HOST" "sudo install -m 644 /tmp/manage_dan_index.html \
-    /var/www/manage_dan/index.html && rm /tmp/manage_dan_index.html"
+sudo mkdir -p /var/www/manage_dan
+sudo install -m 644 "$PROJECT_DIR/frontend/index.html" /var/www/manage_dan/index.html
 
-ssh "$REMOTE_HOST" "sudo tee /etc/nginx/conf.d/manage_dan.conf > /dev/null" << 'EOF'
+sudo tee /etc/nginx/conf.d/manage_dan.conf > /dev/null << 'EOF'
 server {
     listen 80;
     server_name _;
@@ -103,12 +80,13 @@ server {
 EOF
 
 # ── Restart services ──────────────────────────────────────────────────────────
-echo "Restarting services on $REMOTE_HOST..."
-ssh "$REMOTE_HOST" "sudo systemctl daemon-reload \
-    && sudo systemctl enable manage_dan \
-    && sudo systemctl restart manage_dan \
-    && sudo rm -f /etc/nginx/sites-enabled/default \
-    && sudo nginx -t \
-    && sudo systemctl reload nginx"
+echo "Restarting services..."
+sudo systemctl daemon-reload
+sudo systemctl enable manage_dan
+sudo systemctl restart manage_dan
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+sudo systemctl enable nginx
+sudo systemctl reload nginx || sudo systemctl start nginx
 
-echo "Done. App running on homepi."
+echo "Done. App running natively on this machine."

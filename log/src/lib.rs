@@ -18,7 +18,7 @@
 //!
 //! * `logging.file` config key (or `APP_LOGGING_FILE` env var) — path to the
 //!   log file.  Relative paths are resolved from the process working directory.
-//! * `LOG_STDOUT=false` — suppress the stdout layer (useful in production / Docker)
+//! * `LOG_STDOUT=false` — suppress the stdout layer (useful in production)
 
 pub mod db_subscriber;
 pub mod log_error;
