@@ -2912,7 +2912,7 @@ impl Drop for Tui {
 ///
 /// Examples:
 ///   Running against local server:  (no env var needed)
-///   Running against Docker Compose: MANAGE_API_URL=http://localhost cargo run -p tui
+///   Running against deploy.sh (nginx on port 80): MANAGE_API_URL=http://localhost cargo run -p tui
 pub async fn run_tui() -> Result<()> {
     let mut tui = Tui::new()?;
     let api_url = std::env::var("MANAGE_API_URL")

@@ -38,8 +38,7 @@ completed_summary_hour = 20
 
 [logging]
 # Path to the log file (relative to the working directory, or absolute).
-# Native default: data/logs/app.log  (relative to project root)
-# Docker override: set APP_LOGGING_FILE=/data/logs/app.log
+# Default: data/logs/app.log  (relative to project root)
 file = "data/logs/app.log"
 
 [vikunja]

@@ -572,6 +572,11 @@ pub struct NoteIdQuery {
 #[derive(Deserialize)]
 pub struct NoteSearchQuery { pub q: Option<String> }
 
+#[derive(Deserialize)]
+pub struct DailyLogQuery {
+    pub days: Option<i64>,
+}
+
 /// GET /api/v1/notes?notebook=&tag=
 pub async fn list_notes_handler(q: NoteQuery) -> Result<impl Reply, Rejection> {
     match notes::list(q.notebook, q.tag).await {
@@ -587,8 +592,39 @@ pub async fn list_notes_handler(q: NoteQuery) -> Result<impl Reply, Rejection> {
 pub async fn create_note_handler(req: notes::CreateNoteRequest) -> Result<impl Reply, Rejection> {
     match notes::create(req).await {
         Ok(note) => Ok(warp::reply::with_status(warp::reply::json(&note), StatusCode::CREATED)),
+        Err(notes::notes_error::NotesLibError::InvalidInput(msg)) => {
+            Err(warp::reject::custom(ApiError::NotesInvalidInput(msg)))
+        }
         Err(e) => {
             error!("Failed to create note: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/notes/daily — appends a titled, tagged entry to today's
+/// daily log via nb's `daily` plugin, always in the "log" notebook.
+pub async fn create_log_handler(req: notes::CreateLogRequest) -> Result<impl Reply, Rejection> {
+    match notes::create_log(req).await {
+        Ok(()) => Ok(warp::reply::with_status("Log entry saved".to_string(), StatusCode::CREATED)),
+        Err(notes::notes_error::NotesLibError::InvalidInput(msg)) => {
+            Err(warp::reject::custom(ApiError::NotesInvalidInput(msg)))
+        }
+        Err(e) => {
+            error!("Failed to create log entry: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/notes/daily?days= — entries from the last N days (default 7)
+/// of the daily log, most recent first.
+pub async fn list_log_handler(q: DailyLogQuery) -> Result<impl Reply, Rejection> {
+    let days = q.days.unwrap_or(7);
+    match notes::recent_logs(days).await {
+        Ok(entries) => Ok(warp::reply::json(&entries)),
+        Err(e) => {
+            error!("Failed to list log entries: {}", e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
@@ -647,6 +683,9 @@ pub async fn update_note_handler(id: u64, q: NoteIdQuery, req: notes::UpdateNote
     match notes::update(id, notebook, req).await {
         Ok(note) => Ok(warp::reply::json(&note)),
         Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(notes::notes_error::NotesLibError::InvalidInput(msg)) => {
+            Err(warp::reject::custom(ApiError::NotesInvalidInput(msg)))
+        }
         Err(e) => {
             error!("Failed to update note {}:{}: {}", notebook, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
@@ -799,6 +838,7 @@ enum ApiError {
     LogOperationFailed,
     ListsOperationFailed,
     NotesOperationFailed,
+    NotesInvalidInput(String),
 }
 
 impl warp::reject::Reject for ApiError {}
@@ -806,15 +846,17 @@ impl warp::reject::Reject for ApiError {}
 /// Handles custom rejections and converts them into appropriate HTTP responses.
 async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
     if let Some(ApiError::TodoOperationFailed) = err.find() {
-        Ok(warp::reply::with_status("Todo operation failed", StatusCode::INTERNAL_SERVER_ERROR))
+        Ok(warp::reply::with_status("Todo operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
     } else if let Some(ApiError::MismatchedId) = err.find() {
-        Ok(warp::reply::with_status("ID in path does not match ID in body", StatusCode::BAD_REQUEST))
+        Ok(warp::reply::with_status("ID in path does not match ID in body".to_string(), StatusCode::BAD_REQUEST))
     } else if let Some(ApiError::LogOperationFailed) = err.find() {
-        Ok(warp::reply::with_status("Log operation failed", StatusCode::INTERNAL_SERVER_ERROR))
+        Ok(warp::reply::with_status("Log operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
     } else if let Some(ApiError::ListsOperationFailed) = err.find() {
-        Ok(warp::reply::with_status("Lists operation failed", StatusCode::INTERNAL_SERVER_ERROR))
+        Ok(warp::reply::with_status("Lists operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
     } else if let Some(ApiError::NotesOperationFailed) = err.find() {
-        Ok(warp::reply::with_status("Notes operation failed", StatusCode::INTERNAL_SERVER_ERROR))
+        Ok(warp::reply::with_status("Notes operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
+    } else if let Some(ApiError::NotesInvalidInput(msg)) = err.find() {
+        Ok(warp::reply::with_status(msg.clone(), StatusCode::BAD_REQUEST))
     } else {
         Err(err)
     }
@@ -1128,6 +1170,22 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(warp::body::json())
         .and_then(create_note_handler);
 
+    // POST /api/v1/notes/daily
+    let create_log = notes_seg
+        .and(warp::path("daily"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(create_log_handler);
+
+    // GET /api/v1/notes/daily?days=
+    let list_log = notes_seg
+        .and(warp::path("daily"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<DailyLogQuery>())
+        .and_then(list_log_handler);
+
     // GET /api/v1/notes/search?q=
     let search = notes_seg
         .and(warp::path("search"))
@@ -1184,7 +1242,7 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(query::<NoteIdQuery>())
         .and_then(|id, q| print_note_handler(id, q));
 
-    search.or(folders).or(tags).or(list).or(create).or(print).or(get_one).or(update).or(delete)
+    search.or(folders).or(tags).or(list).or(create).or(create_log).or(list_log).or(print).or(get_one).or(update).or(delete)
 }
 
 /// Defines routes related to logging.

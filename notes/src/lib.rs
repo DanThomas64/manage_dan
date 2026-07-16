@@ -5,7 +5,10 @@ pub mod notes_prelude;
 
 use crate::notes_prelude::*;
 
-pub use models::{CreateNoteRequest, Note, UpdateNoteRequest};
+pub use models::{CreateLogRequest, CreateNoteRequest, LogEntry, Note, UpdateNoteRequest};
+
+/// Notebook all daily log entries are written to, via nb's `daily` plugin.
+const LOG_NOTEBOOK: &str = "log";
 pub use notes_error::NotesLibError;
 
 pub fn init() -> NotesLibResult {
@@ -21,11 +24,27 @@ pub fn init() -> NotesLibResult {
 }
 
 pub async fn create(req: CreateNoteRequest) -> NotesLibResult<Note> {
+    let title = req.title.as_deref().unwrap_or("").trim();
+    if title.is_empty() {
+        return Err(NotesLibError::InvalidInput("title is required".to_string()));
+    }
     let notebook = req.notebook.as_deref().unwrap_or("home");
-    let title = req.title.as_deref().unwrap_or("");
     let tags = req.tags.unwrap_or_default();
     let nb_id = nb_client::nb_add(notebook, title, &req.content, &tags).await?;
     nb_client::nb_show(notebook, nb_id).await
+}
+
+pub async fn create_log(req: CreateLogRequest) -> NotesLibResult<()> {
+    let title = req.title.trim();
+    if title.is_empty() {
+        return Err(NotesLibError::InvalidInput("title is required".to_string()));
+    }
+    let content = req.content.trim();
+    if content.is_empty() {
+        return Err(NotesLibError::InvalidInput("description is required".to_string()));
+    }
+    let tags = req.tags.unwrap_or_default();
+    nb_client::nb_daily(LOG_NOTEBOOK, title, &tags, content).await
 }
 
 pub async fn get(nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
@@ -34,13 +53,25 @@ pub async fn get(nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
 
 pub async fn list(notebook: Option<String>, tag: Option<String>) -> NotesLibResult<Vec<Note>> {
     let mut notes = nb_client::nb_list(notebook.as_deref()).await?;
+    if notebook.is_none() {
+        notes.retain(|n| n.notebook != LOG_NOTEBOOK);
+    }
     if let Some(tag_filter) = tag {
         notes.retain(|n| n.tags.iter().any(|t| *t == tag_filter));
     }
     Ok(notes)
 }
 
+pub async fn recent_logs(days: i64) -> NotesLibResult<Vec<LogEntry>> {
+    nb_client::nb_daily_entries(LOG_NOTEBOOK, days).await
+}
+
 pub async fn update(nb_id: u64, notebook: &str, req: UpdateNoteRequest) -> NotesLibResult<Note> {
+    if let Some(title) = req.title.as_deref() {
+        if title.trim().is_empty() {
+            return Err(NotesLibError::InvalidInput("title is required".to_string()));
+        }
+    }
     nb_client::nb_update(
         notebook,
         nb_id,
@@ -56,11 +87,15 @@ pub async fn delete(nb_id: u64, notebook: &str) -> NotesLibResult {
 }
 
 pub async fn search(query: &str) -> NotesLibResult<Vec<Note>> {
-    nb_client::nb_search(query).await
+    let mut notes = nb_client::nb_search(query).await?;
+    notes.retain(|n| n.notebook != LOG_NOTEBOOK);
+    Ok(notes)
 }
 
 pub async fn folders() -> NotesLibResult<Vec<String>> {
-    nb_client::nb_notebooks().await
+    let mut notebooks = nb_client::nb_notebooks().await?;
+    notebooks.retain(|n| n != LOG_NOTEBOOK);
+    Ok(notebooks)
 }
 
 pub async fn tags() -> NotesLibResult<Vec<String>> {

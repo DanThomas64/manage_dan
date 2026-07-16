@@ -14,8 +14,9 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 | **End-of-day summary** | Prints tasks completed during the day at a configurable evening hour. |
 | **Recurring tasks** | Configurable recurring tasks printed automatically when due. |
 | **Shopping lists** | Category-based shopping lists with check-off, print support, and common-items templates. |
-| **Notes** | Markdown notes managed by [nb](https://xwmx.github.io/nb/) and stored as `.md` files. Full-text search via `nb search`. Printable. |
-| **Web frontend** | SPA served at `http://localhost` covering todos, shopping lists, and notes. |
+| **Notes** | Markdown notes managed by [nb](https://xwmx.github.io/nb/) and stored as `.md` files. Full-text search via `nb search`. Printable, editable, deletable from the web UI. |
+| **Log** | Quick timestamped daily-log entries (title + tags + description) via `nb`'s `daily` plugin. Browse the last 7 days of entries in one place. |
+| **Web frontend** | SPA served at `http://localhost`, split into four sections — Home, Lists, Notes, Log — each reachable from a Home landing page. |
 | **Android app** | Native Android client for quick capture and list management. |
 | **Terminal UI** | Full keyboard-driven TUI for todo, notes, shopping, and project management. |
 | **System health** | Monitors and reports the status of every subsystem at startup and continuously. |
@@ -27,138 +28,15 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 | Requirement | Notes |
 |---|---|
 | [Rust](https://rustup.rs) ≥ 1.87 | For building from source |
-| [Docker](https://docs.docker.com/get-docker/) + [Compose](https://docs.docker.com/compose/) | For the containerised setup |
 | A self-hosted [Vikunja](https://vikunja.io/docs/installing/) instance | For todo storage |
 | [nb](https://xwmx.github.io/nb/) | For notes — the `notes` subsystem will show `Nogo` without it |
+| nb's `daily` plugin | For the Log feature — install with `nb plugin install https://github.com/xwmx/nb/blob/master/plugins/daily.nb-plugin` |
 | A USB ESC/POS thermal printer | Optional — the app runs fine without one in `terminal` mode |
-
----
-
-## Quick start (Docker)
-
-This is the recommended way to run the application.
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/DanThomas64/manage_dan.git
-cd manage_dan
-```
-
-### 2. Create your local config
-
-Copy the example and fill in your Vikunja details:
-
-```bash
-cp config/default.toml config/local.toml
-```
-
-Edit `config/local.toml`:
-
-```toml
-[vikunja]
-base_url = "https://your-vikunja-instance.example.com"
-api_token = "your_api_token_here"
-project_id = 1
-```
-
-> **Getting a Vikunja API token:** Log in to your Vikunja instance → Settings → API Tokens → Create a token.
-
-You can also override any other setting from `config/default.toml` here. `config/local.toml` is gitignored and will never be committed.
-
-### 3. Start the stack
-
-```bash
-docker compose up -d
-```
-
-The first build compiles the entire Rust workspace and will take a few minutes. Subsequent starts use the Docker layer cache and are near-instant.
-
-| Service | URL |
-|---|---|
-| Web UI | http://localhost |
-| Raw API | http://localhost/api/v1/... |
-
-### 4. Stop the stack
-
-```bash
-docker compose down
-```
-
-Your data (SQLite database and notes files) is stored in a Docker named volume (`app_data`) and persists across restarts. To wipe it entirely:
-
-```bash
-docker compose down -v
-```
-
----
-
-## USB printing with Docker
-
-By default the app runs in `terminal` mode (output goes to stdout). To use a physical printer with the Docker stack you need to pass the host USB bus into the container.
-
-### 1. Install the udev rule on the host
-
-This sets the device permissions to world-readable/writable so the container can access it without running as root.
-
-```bash
-sudo cp 99-printer.rules /etc/udev/rules.d/
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
-
-### 2. Plug in your printer and confirm it is detected
-
-```bash
-lsusb
-# Look for a line like:
-# Bus 001 Device 003: ID 0fe6:811e ...
-```
-
-### 3. USB passthrough is enabled by default
-
-The `devices` block in `docker-compose.yml` is already active:
-
-```yaml
-    devices:
-      - /dev/bus/usb:/dev/bus/usb
-```
-
-This mounts the entire host USB bus into the container. The app will find the printer by its VID/PID configured in `config/local.toml`.
-
-### 4. Set printer mode to USB
-
-In `config/local.toml`:
-
-```toml
-[printer]
-mode = "usb"
-```
-
-Or via environment variable without editing the file:
-
-```bash
-APP_PRINTER_MODE=usb docker compose up -d
-```
-
-### 5. Verify the VID and PID match your printer
-
-The defaults are `0x0fe6` / `0x811e`. If your printer is different, find its IDs with `lsusb` and override them in `config/local.toml`:
-
-```toml
-[printer]
-mode = "usb"
-vendor_id  = 0x1234   # replace with your printer's VID
-product_id = 0x5678   # replace with your printer's PID
-```
-
-> **Note:** The printer must be plugged in before `docker compose up`. If you plug it in afterwards, restart the `app` container: `docker compose restart app`.
+| nginx | Only needed if deploying as a service (see [Deploy as a service](#deploy-as-a-service)) |
 
 ---
 
 ## Running from source
-
-Use this approach if you want to run the TUI or develop locally.
 
 ### 1. Install Rust
 
@@ -204,7 +82,7 @@ The TUI reads the API URL from the `MANAGE_API_URL` environment variable, defaul
 | Scenario | Command |
 |---|---|
 | Local `cargo run -p app` | `cargo run -p tui` |
-| Docker Compose (direct, port 8080) | `MANAGE_API_URL=http://localhost:8080 cargo run -p tui` |
+| Deployed via `deploy.sh` (behind nginx, port 80) | `MANAGE_API_URL=http://localhost cargo run -p tui` |
 
 ---
 
@@ -294,6 +172,35 @@ To enable USB printing, set `mode = "usb"` in `config/local.toml`.
 
 ---
 
+## Deploy as a service
+
+To run the app as an always-on native systemd service (auto-start on boot, restart on crash) fronted by nginx, rather than starting it by hand each time:
+
+```bash
+./deploy.sh
+```
+
+This builds a release binary, installs it to `/usr/local/bin/manage_dan`, installs a `manage_dan` systemd unit (`WorkingDirectory` is the project root, so it reads `config/local.toml` and writes `app.sqlite` / `data/logs/app.log` in place, same as `cargo run -p app`), and installs an nginx reverse proxy that serves `frontend/index.html` on port 80 and proxies `/api/` and `/todo/` to the app on `127.0.0.1:8080`.
+
+One-time setup before the first run — see the comment block at the top of `deploy.sh`:
+
+```bash
+sudo apt-get install -y nginx libudev1
+bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
+nb plugin install https://github.com/xwmx/nb/blob/master/plugins/daily.nb-plugin
+sudo usermod -aG plugdev "$USER"    # USB printer access
+```
+
+Re-run `./deploy.sh` any time you want to rebuild and redeploy after making changes; it's idempotent.
+
+```bash
+systemctl status manage_dan     # Check service status
+journalctl -u manage_dan -f     # Tail logs
+sudo systemctl restart manage_dan
+```
+
+---
+
 ## TUI reference
 
 Launch with `cargo run -p tui` (requires the backend server to be running).
@@ -371,7 +278,7 @@ Each section has its own colour theme: Dashboard (white), Tasks (blue), Notes (y
 
 ## API reference
 
-The backend exposes a REST API at `http://localhost:8080/api/v1` (or `http://localhost/api/v1` when running through Docker).
+The backend exposes a REST API at `http://localhost:8080/api/v1` (or `http://localhost/api/v1` when running behind nginx via `deploy.sh`).
 
 ### Status
 
@@ -406,6 +313,15 @@ PUT    /api/v1/notes/:id              Update note  (?notebook=work)
 DELETE /api/v1/notes/:id              Delete note  (?notebook=work)
 POST   /api/v1/notes/:id/print        Print note  (?notebook=work)
 GET    /notes/:id                     HTML viewer (markdown rendered in browser)  (?notebook=work)
+```
+
+### Log
+
+Backed by nb's `daily` plugin, writing into a dedicated `log` notebook (excluded from the Notes endpoints above).
+
+```
+POST   /api/v1/notes/daily            Add a log entry  { "title": "...", "content": "...", "tags": [...] }
+GET    /api/v1/notes/daily?days=7     List entries from the last N days (default 7), most recent first
 ```
 
 ### Lists
@@ -445,11 +361,10 @@ manage_dan/
 ├── notes/        Markdown notes — nb CLI backend, full-text search via nb, printing
 ├── project/      Project subsystem (stub)
 ├── tui/          Terminal UI client
-├── frontend/     Web UI (nginx + vanilla JS) — todos, lists, notes
+├── frontend/     Web UI (vanilla JS, served by nginx) — Home, Lists, Notes, Log
 ├── android/      Android client app
 ├── config/       Configuration files
-├── Dockerfile    Multi-stage Rust build
-└── docker-compose.yml
+└── deploy.sh     Build + install as a native systemd service + nginx reverse proxy
 ```
 
 ---
@@ -459,20 +374,14 @@ manage_dan/
 **The server starts but todos don't load**
 Check that your Vikunja `base_url` and `api_token` are correct in `config/local.toml`. The system status endpoint (`GET /api/v1/status`) will show `todo: Nogo` if initialisation failed.
 
-**USB printer not found (running from source)**
-Run `lsusb` to confirm the printer is detected. Check that the udev rule is installed and that your user is in the `lp` group. Verify the VID/PID in `config/local.toml` matches your printer.
-
-**USB printer not found (Docker)**
-Ensure the udev rule is installed on the host and `APP_PRINTER_MODE=usb` is set. The printer must be plugged in before the container starts — if you plugged it in afterwards, run `docker compose restart app`.
+**USB printer not found**
+Run `lsusb` to confirm the printer is detected. Check that the udev rule is installed and that your user is in the `lp` group (or `plugdev`, if running via `deploy.sh`). Verify the VID/PID in `config/local.toml` matches your printer.
 
 **Permission denied on USB device**
 The udev rule may not have been applied. Try unplugging and replugging the printer, or run `sudo udevadm trigger`. The rule sets `MODE="0666"` which allows access without root or group membership.
 
-**Docker build fails**
-Ensure Docker BuildKit is enabled (`DOCKER_BUILDKIT=1`) and that you have an internet connection for downloading crates during the first build.
-
 **TUI can't connect**
-The TUI defaults to `http://127.0.0.1:8080`. If running via Docker Compose with nginx, set `MANAGE_API_URL=http://localhost`. Make sure the server is running before launching the TUI.
+The TUI defaults to `http://127.0.0.1:8080`. If running via `deploy.sh` with nginx, set `MANAGE_API_URL=http://localhost`. Make sure the server is running before launching the TUI.
 
 **Notes not appearing**
 Notes are served live via `nb` on every request. If you edit files outside of `nb`, run `nb index reconcile` to resync the nb index.

@@ -66,9 +66,7 @@ impl AppConfig {
     /// Loads the configuration from environment variables and configuration files.
     ///
     /// Config files are loaded from the directory specified by `APP_CONFIG_DIR`
-    /// (default: `"config"`).  This lets Docker bind-mount the project's
-    /// `config/` directory at an absolute path without creating any structure
-    /// inside `./data/`.
+    /// (default: `"config"`, relative to the working directory).
     pub fn load() -> Result<AppConfig> {
         // Read config directory from env directly (bypasses the crate separator logic).
         let cfg_dir = std::env::var("APP_CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
