@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem, Note};
+use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem, Note, DailyLogEntry};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyModifiers},
@@ -27,6 +27,7 @@ pub enum Screen {
     Notes,
     Project,
     Lists,
+    Log,
     Quit,
 }
 
@@ -78,6 +79,21 @@ pub enum NotesCreateFocus {
     Title,
     Tags,
     Notebook,
+    Content,
+}
+
+/// Which sub-mode the Log screen is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogScreenMode {
+    List,
+    Create,
+}
+
+/// Which field is focused in the Log screen's new-entry form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogCreateFocus {
+    Title,
+    Tags,
     Content,
 }
 
@@ -136,6 +152,16 @@ pub struct App {
     pub notes_create_notebook: String,
     pub notes_create_content: String,
     pub notes_create_focus: NotesCreateFocus,
+
+    // Log state
+    pub daily_logs: Vec<DailyLogEntry>,
+    pub daily_log_state: ListState,
+    pub daily_log_mode: LogScreenMode,
+    pub daily_log_days: i64,
+    pub daily_log_create_title: String,
+    pub daily_log_create_tags: String,
+    pub daily_log_create_content: String,
+    pub daily_log_create_focus: LogCreateFocus,
 
     // Lists State
     pub list_groups: Vec<ListGroup>,
@@ -213,6 +239,15 @@ impl App {
             notes_create_notebook: String::new(),
             notes_create_content: String::new(),
             notes_create_focus: NotesCreateFocus::Content,
+
+            daily_logs: Vec::new(),
+            daily_log_state: ListState::default(),
+            daily_log_mode: LogScreenMode::List,
+            daily_log_days: 7,
+            daily_log_create_title: String::new(),
+            daily_log_create_tags: String::new(),
+            daily_log_create_content: String::new(),
+            daily_log_create_focus: LogCreateFocus::Content,
 
             list_groups: Vec::new(),
             list_categories: Vec::new(),
@@ -767,6 +802,67 @@ impl App {
         }
     }
 
+    // --- Log helpers ---
+
+    pub async fn fetch_daily_logs(&mut self) {
+        match self.api_client.fetch_daily_logs(self.daily_log_days).await {
+            Ok(entries) => {
+                self.daily_logs = entries;
+                if self.daily_logs.is_empty() {
+                    self.daily_log_state.select(None);
+                } else {
+                    let sel = self.daily_log_state.selected().unwrap_or(0)
+                        .min(self.daily_logs.len().saturating_sub(1));
+                    self.daily_log_state.select(Some(sel));
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Log error: {}", e)),
+        }
+    }
+
+    fn daily_log_move(&mut self, delta: i32) {
+        let len = self.daily_logs.len();
+        if len == 0 { return; }
+        let cur = self.daily_log_state.selected().unwrap_or(0) as i32;
+        let next = (cur + delta).rem_euclid(len as i32) as usize;
+        self.daily_log_state.select(Some(next));
+    }
+
+    /// Cycles the days-back filter through a fixed set of windows.
+    fn daily_log_cycle_days(&mut self) {
+        self.daily_log_days = match self.daily_log_days {
+            7 => 14,
+            14 => 30,
+            30 => 90,
+            _ => 7,
+        };
+    }
+
+    pub async fn daily_log_submit_create(&mut self) {
+        let content = self.daily_log_create_content.trim().to_string();
+        if content.is_empty() {
+            return;
+        }
+        let tags: Vec<String> = self.daily_log_create_tags
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        let title = self.daily_log_create_title.trim().to_string();
+        match self.api_client.create_daily_log(&title, &content, tags).await {
+            Ok(()) => {
+                self.daily_log_create_title.clear();
+                self.daily_log_create_tags.clear();
+                self.daily_log_create_content.clear();
+                self.daily_log_create_focus = LogCreateFocus::Content;
+                self.daily_log_mode = LogScreenMode::List;
+                self.fetch_daily_logs().await;
+            }
+            Err(e) => self.last_error = Some(format!("Create failed: {}", e)),
+        }
+    }
+
     /// Handles input events specific to the current screen.
     pub async fn handle_input(&mut self, event: CEvent) {
         let previous_screen = self.current_screen;
@@ -1131,9 +1227,88 @@ impl App {
                     }
                 }
             }
+            Screen::Log => {
+                if let CEvent::Key(key) = event {
+                    match self.daily_log_mode {
+                        LogScreenMode::List => match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                self.current_screen = Screen::Dashboard;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => self.daily_log_move(-1),
+                            KeyCode::Down | KeyCode::Char('j') => self.daily_log_move(1),
+                            KeyCode::Tab => {
+                                self.daily_log_cycle_days();
+                                self.fetch_daily_logs().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('r') => {
+                                self.fetch_daily_logs().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('n') => {
+                                self.daily_log_mode = LogScreenMode::Create;
+                            }
+                            _ => { self.handle_nav_key(key.code); }
+                        },
+                        LogScreenMode::Create => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.daily_log_mode = LogScreenMode::List;
+                                }
+                                KeyCode::Tab => {
+                                    self.daily_log_create_focus = match self.daily_log_create_focus {
+                                        LogCreateFocus::Title => LogCreateFocus::Tags,
+                                        LogCreateFocus::Tags => LogCreateFocus::Content,
+                                        LogCreateFocus::Content => LogCreateFocus::Title,
+                                    };
+                                }
+                                KeyCode::BackTab => {
+                                    self.daily_log_create_focus = match self.daily_log_create_focus {
+                                        LogCreateFocus::Title => LogCreateFocus::Content,
+                                        LogCreateFocus::Tags => LogCreateFocus::Title,
+                                        LogCreateFocus::Content => LogCreateFocus::Tags,
+                                    };
+                                }
+                                KeyCode::Char('s') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
+                                    self.daily_log_submit_create().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Enter => {
+                                    if self.daily_log_create_focus == LogCreateFocus::Content {
+                                        self.daily_log_create_content.push('\n');
+                                    } else {
+                                        self.daily_log_create_focus = match self.daily_log_create_focus {
+                                            LogCreateFocus::Title => LogCreateFocus::Tags,
+                                            LogCreateFocus::Tags => LogCreateFocus::Content,
+                                            LogCreateFocus::Content => LogCreateFocus::Content,
+                                        };
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    let buf = match self.daily_log_create_focus {
+                                        LogCreateFocus::Title => &mut self.daily_log_create_title,
+                                        LogCreateFocus::Tags => &mut self.daily_log_create_tags,
+                                        LogCreateFocus::Content => &mut self.daily_log_create_content,
+                                    };
+                                    buf.pop();
+                                }
+                                KeyCode::Char(c) => {
+                                    let buf = match self.daily_log_create_focus {
+                                        LogCreateFocus::Title => &mut self.daily_log_create_title,
+                                        LogCreateFocus::Tags => &mut self.daily_log_create_tags,
+                                        LogCreateFocus::Content => &mut self.daily_log_create_content,
+                                    };
+                                    buf.push(c);
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
-        
+
         // 1. Handle screen transition logic
         if previous_screen != self.current_screen {
             match self.current_screen {
@@ -1150,6 +1325,9 @@ impl App {
                 }
                 Screen::Notes => {
                     self.fetch_notes_filtered().await;
+                }
+                Screen::Log => {
+                    self.fetch_daily_logs().await;
                 }
                 _ => {}
             }
@@ -1177,6 +1355,7 @@ impl App {
             KeyCode::Char('2') => { self.current_screen = Screen::Notes; true }
             KeyCode::Char('3') => { self.current_screen = Screen::Project; true }
             KeyCode::Char('4') => { self.current_screen = Screen::Lists; true }
+            KeyCode::Char('5') => { self.current_screen = Screen::Log; true }
             _ => false,
         }
     }
@@ -1642,6 +1821,7 @@ impl Tui {
                 Screen::Notes => draw_notes_screen(frame, app, area),
                 Screen::Project => draw_project_placeholder(frame, area),
                 Screen::Lists => draw_lists_screen(frame, app, area),
+                Screen::Log => draw_log_screen(frame, app, area),
                 _ => {}
             }
         })?;
@@ -1835,7 +2015,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
 
 
     // Footer/Menu
-    let footer_text = "Q: Quit | 1: Tasks | 2: Notes | 3: Project | 4: Lists | R: Refresh";
+    let footer_text = "Q: Quit | 1: Tasks | 2: Notes | 3: Project | 4: Lists | 5: Log | R: Refresh";
     let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::White));
     frame.render_widget(footer, footer_area);
 }
@@ -2882,6 +3062,161 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             popup,
         );
     }
+}
+
+fn draw_log_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // title
+            Constraint::Length(3), // tags
+            Constraint::Min(5),    // content
+            Constraint::Length(1), // footer
+        ])
+        .split(area);
+
+    let focused_style = Style::default().fg(Color::Cyan);
+    let normal_style = Style::default().fg(Color::Rgb(110, 110, 110));
+
+    let field_style = |f: LogCreateFocus| {
+        if app.daily_log_create_focus == f { focused_style } else { normal_style }
+    };
+
+    // Title
+    let title_text = format!("{}_", app.daily_log_create_title);
+    frame.render_widget(
+        Paragraph::new(title_text)
+            .block(Block::default().borders(Borders::ALL).title(" Title (optional) ").border_style(field_style(LogCreateFocus::Title))),
+        chunks[0],
+    );
+
+    // Tags
+    let tags_text = format!("{}_", app.daily_log_create_tags);
+    frame.render_widget(
+        Paragraph::new(tags_text)
+            .block(Block::default().borders(Borders::ALL).title(" Tags (comma-separated, optional) ").border_style(field_style(LogCreateFocus::Tags))),
+        chunks[1],
+    );
+
+    // Content
+    let content_display = if app.daily_log_create_focus == LogCreateFocus::Content {
+        format!("{}_", app.daily_log_create_content)
+    } else {
+        app.daily_log_create_content.clone()
+    };
+    frame.render_widget(
+        Paragraph::new(content_display)
+            .block(Block::default().borders(Borders::ALL).title(" Content * ").border_style(field_style(LogCreateFocus::Content)))
+            .wrap(Wrap { trim: false }),
+        chunks[2],
+    );
+
+    // Footer
+    frame.render_widget(
+        Paragraph::new("Tab: next field  Ctrl+S: save  Esc: cancel")
+            .style(Style::default().fg(Color::Rgb(160, 160, 160))),
+        chunks[3],
+    );
+}
+
+fn draw_log_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    if app.daily_log_mode == LogScreenMode::Create {
+        return draw_log_create(frame, app, area);
+    }
+
+    let summary = format!("{} entries  (last {} days)", app.daily_logs.len(), app.daily_log_days);
+
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+    let (header_area, body) = (outer[0], outer[1]);
+    draw_section_header(frame, header_area, "LOG", &summary, Color::Cyan);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(body);
+    let (content_area, footer_area) = (chunks[0], chunks[1]);
+
+    // Content split: entry list (left) | viewer (right)
+    let content_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .split(content_area);
+    let (list_area, viewer_area) = (content_chunks[0], content_chunks[1]);
+
+    // Entry list
+    let list_items: Vec<ListItem> = app.daily_logs.iter().map(|entry| {
+        let title = if entry.title.is_empty() { "(untitled)" } else { &entry.title };
+        ListItem::new(Line::from(vec![
+            ratatui::text::Span::styled(
+                format!("{} {}  ", entry.date, entry.time),
+                Style::default().fg(Color::Cyan),
+            ),
+            ratatui::text::Span::raw(title.to_string()),
+        ]))
+    }).collect();
+
+    let list_title = format!(" Log ({}) ", app.daily_logs.len());
+    let list_block = Block::default()
+        .borders(Borders::ALL)
+        .title(list_title)
+        .border_style(Style::default().fg(Color::Cyan));
+    let list_widget = List::new(list_items)
+        .block(list_block)
+        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+    frame.render_stateful_widget(list_widget, list_area, &mut app.daily_log_state);
+
+    // Entry viewer
+    let selected_entry = app.daily_log_state.selected().and_then(|i| app.daily_logs.get(i));
+    let (viewer_title, viewer_content) = match selected_entry {
+        Some(entry) => {
+            let tags = if entry.tags.is_empty() {
+                String::new()
+            } else {
+                format!("  tags: {}", entry.tags.join(", "))
+            };
+            let header = format!(
+                "{} {}{}\n{}\n",
+                entry.date,
+                entry.time,
+                tags,
+                "─".repeat(viewer_area.width.saturating_sub(2) as usize),
+            );
+            let title = format!(" {} ", if entry.title.is_empty() { "Untitled" } else { &entry.title });
+            (title, format!("{}{}", header, entry.content))
+        }
+        None => {
+            let help = "  Select an entry to view its content.\n\n\
+                Navigation:\n\
+                \u{2022} j / k or arrows — move selection\n\
+                \u{2022} Tab            — cycle days filter (7/14/30/90)\n\
+                \u{2022} n              — new entry\n\
+                \u{2022} r              — refresh\n\
+                \u{2022} q              — back to dashboard".to_string();
+            (" Log ".to_string(), help)
+        }
+    };
+
+    let viewer_block = Block::default()
+        .borders(Borders::ALL)
+        .title(viewer_title)
+        .border_style(Style::default().fg(Color::Rgb(110, 110, 110)));
+    let viewer = Paragraph::new(viewer_content)
+        .block(viewer_block)
+        .wrap(Wrap { trim: false });
+    frame.render_widget(viewer, viewer_area);
+
+    // Footer
+    let footer_text = match app.daily_log_mode {
+        LogScreenMode::List => "j/k: move  Tab: days filter  n: new  r: refresh  q: back",
+        LogScreenMode::Create => "Tab: next field  Ctrl+S: save  Esc: cancel",
+    };
+    frame.render_widget(
+        Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan)),
+        footer_area,
+    );
 }
 
 fn draw_project_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
