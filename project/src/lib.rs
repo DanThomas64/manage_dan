@@ -42,7 +42,7 @@ fn expand_home(path: &str) -> String {
 }
 
 /// Lowercases, collapses runs of non-alphanumeric characters into a single
-/// `-`, and trims leading/trailing `-`. Used to derive a project's `slug`
+/// `_`, and trims leading/trailing `_`. Used to derive a project's `slug`
 /// (also its nb todo-folder name and filesystem directory name) from its
 /// display name.
 fn slugify(name: &str) -> String {
@@ -53,11 +53,11 @@ fn slugify(name: &str) -> String {
             slug.push(c.to_ascii_lowercase());
             last_was_dash = false;
         } else if !last_was_dash {
-            slug.push('-');
+            slug.push('_');
             last_was_dash = true;
         }
     }
-    slug.trim_matches('-').to_string()
+    slug.trim_matches('_').to_string()
 }
 
 fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
@@ -339,8 +339,8 @@ mod tests {
 
     #[test]
     fn slugify_basic() {
-        assert_eq!(slugify("Test Project"), "test-project");
-        assert_eq!(slugify("Q1 Planning / Ops"), "q1-planning-ops");
-        assert_eq!(slugify("  --weird__name!! "), "weird-name");
+        assert_eq!(slugify("Test Project"), "test_project");
+        assert_eq!(slugify("Q1 Planning / Ops"), "q1_planning_ops");
+        assert_eq!(slugify("  --weird__name!! "), "weird_name");
     }
 }

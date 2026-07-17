@@ -1212,7 +1212,7 @@
         </div>
         <div class="group-list" id="group-tabs"></div>
         <div class="add-group-form" id="add-group-form" style="display:none;">
-          <input type="text" id="new-group-input" placeholder="Group name…"
+          <input type="text" id="new-group-input" class="lc-first" placeholder="Group name…"
                  autocomplete="off" autocorrect="off" onkeydown="groupKeydown(event)" />
           <button class="btn-primary btn-sm" onclick="submitAddGroup()">Add</button>
           <button class="btn-ghost btn-sm" onclick="toggleAddGroupForm()">&#215;</button>
@@ -1225,7 +1225,7 @@
       </div>
       <div class="add-category-form">
         <div style="display:flex;gap:8px;">
-          <input type="text" id="new-cat-input" placeholder="New list name…"
+          <input type="text" id="new-cat-input" class="lc-first" placeholder="New list name…"
                  autocomplete="off" autocorrect="off" onkeydown="catKeydown(event)" />
           <button class="btn-primary btn-sm" onclick="addCategory()">+</button>
         </div>
@@ -1274,7 +1274,7 @@
       </div>
 
       <div class="add-item-form" id="add-item-form" style="display:none;">
-        <input type="text" id="new-item-name" placeholder="Item name…"
+        <input type="text" id="new-item-name" class="lc-first" placeholder="Item name…"
                autocomplete="off" autocorrect="off" onkeydown="itemKeydown(event)" />
         <input type="text" id="new-item-qty" placeholder="Qty" style="max-width:72px;"
                autocomplete="off" onkeydown="itemKeydown(event)" />
@@ -1333,17 +1333,23 @@
     <div class="quick-note-form">
       <div>
         <div class="field-label">Title</div>
-        <input type="text" id="note-title" placeholder="Note title" autocomplete="off" required />
+        <input type="text" id="note-title" class="lc-first" placeholder="Note title" autocomplete="off" required />
       </div>
       <div style="position:relative;">
         <div class="field-label">Notebook <span style="color:var(--text-dim)">(optional)</span></div>
-        <input type="text" id="note-notebook" placeholder="e.g. work" autocomplete="off"
+        <input type="text" id="note-notebook" class="lc-first" placeholder="e.g. work" autocomplete="off"
                onfocus="notebookShowSuggestions()" oninput="notebookFilterSuggestions()" />
         <div class="suggestions-dropdown" id="notebook-suggestions-list"></div>
       </div>
       <div>
         <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
         <input type="text" id="note-tags" placeholder="e.g. idea, work" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Project <span style="color:var(--text-dim)">(optional)</span></div>
+        <select id="note-project" style="width:100%;" onchange="noteProjectChanged()">
+          <option value="">No project</option>
+        </select>
       </div>
       <div>
         <div class="field-label">Content</div>
@@ -1399,7 +1405,7 @@
       <input type="hidden" id="edit-notebook" />
       <div>
         <div class="field-label">Title</div>
-        <input type="text" id="edit-title" placeholder="Note title" autocomplete="off" required />
+        <input type="text" id="edit-title" class="lc-first" placeholder="Note title" autocomplete="off" required />
       </div>
       <div>
         <div class="field-label">Tags</div>
@@ -1433,11 +1439,17 @@
     <div class="quick-note-form">
       <div>
         <div class="field-label">Title</div>
-        <input type="text" id="log-title" placeholder="Entry title" autocomplete="off" required />
+        <input type="text" id="log-title" class="lc-first" placeholder="Entry title" autocomplete="off" required />
       </div>
       <div>
         <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
         <input type="text" id="log-tags" placeholder="e.g. idea, work" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Project <span style="color:var(--text-dim)">(optional)</span></div>
+        <select id="log-project" style="width:100%;">
+          <option value="">No project</option>
+        </select>
       </div>
       <div>
         <div class="field-label">Description</div>
@@ -1474,7 +1486,7 @@
     <div class="quick-note-form">
       <div>
         <div class="field-label">Title</div>
-        <input type="text" id="todo-title" placeholder="Todo title" autocomplete="off" required />
+        <input type="text" id="todo-title" class="lc-first" placeholder="Todo title" autocomplete="off" required />
       </div>
       <div>
         <div class="field-label">Description <span style="color:var(--text-dim)">(optional)</span></div>
@@ -1504,6 +1516,12 @@
       <div>
         <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
         <input type="text" id="todo-tags" placeholder="e.g. work, urgent" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Project <span style="color:var(--text-dim)">(optional)</span></div>
+        <select id="todo-project" style="width:100%;">
+          <option value="">No project</option>
+        </select>
       </div>
       <div>
         <div class="field-label">Subtasks <span style="color:var(--text-dim)">(one per line — prefix "[x] " for already done)</span></div>
@@ -1536,13 +1554,13 @@
   <!-- Projects sub-nav -->
   <div class="notes-nav">
     <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
-    <button class="notes-tab active" id="ptab-list" onclick="projectsShowTab('list')">Projects</button>
+    <span class="notes-tab active">Projects</span>
   </div>
 
-  <!-- List panel: all projects + create form -->
+  <!-- All projects + create form -->
   <div class="notes-panel active" id="ppanel-list">
     <div class="quick-note-form" style="flex-direction:row;gap:8px;padding:12px 16px;">
-      <input type="text" id="project-name" placeholder="New project name…" autocomplete="off"
+      <input type="text" id="project-name" class="lc-first" placeholder="New project name…" autocomplete="off"
              onkeydown="if(event.key==='Enter') submitProject()" style="flex:1;" />
       <button class="btn-primary btn-sm" onclick="submitProject()">&#43; Create</button>
     </div>
@@ -1551,11 +1569,18 @@
     </div>
   </div>
 
-  <!-- Detail panel: one project's aggregated todos/notes/logs/lists -->
-  <div class="notes-panel" id="ppanel-detail">
+</div>
+
+<!-- Project detail overlay: one project's aggregated todos/notes/logs/lists,
+     its own top-level view (not a tab inside Projects) so back/swipe-back
+     navigation works like every other section. -->
+<div id="project-detail-overlay" class="app-overlay">
+  <div class="notes-nav">
+    <button class="btn-ghost btn-sm" onclick="history.back()" style="margin-right:8px;">&#8592; Back</button>
+  </div>
+  <div class="notes-panel active" id="ppanel-project-detail">
     <div id="project-detail-content" style="padding:12px 16px;"></div>
   </div>
-
 </div>
 
 <script>
@@ -2205,16 +2230,18 @@
     if (!selectedCategoryId) return;
     const cat = categories.find(c => c.id === selectedCategoryId);
     if (!cat) return;
-    const newName = prompt('Rename list:', cat.name);
-    if (!newName || !newName.trim() || newName.trim() === cat.name) return;
+    const promptResult = prompt('Rename list:', cat.name);
+    if (!promptResult || !promptResult.trim()) return;
+    const newName = lowercaseFirstChar(promptResult.trim());
+    if (newName === cat.name) return;
     try {
       const res = await fetch(`${API}/categories/${selectedCategoryId}/name`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newName.trim() }),
+        body: JSON.stringify({ name: newName }),
       });
       if (!res.ok) throw new Error(await res.text());
-      cat.name = newName.trim();
+      cat.name = newName;
       document.getElementById('panel-title').innerHTML =
         `${esc(cat.name)} <small id="item-count"></small>`;
       renderCategories();
@@ -2431,6 +2458,25 @@
 
   // ── Utilities ──────────────────────────────────────────────────────────────
 
+  // Forces the first character of "name"-like fields to lowercase, live as
+  // the user types (class="lc-first"). Only index 0 is ever rewritten, so
+  // the caret position itself never shifts — it just needs reapplying after
+  // the `.value` write, since browsers reset selection on assignment.
+  function lowercaseFirstChar(str) {
+    if (!str) return str;
+    const first = str[0].toLowerCase();
+    return first === str[0] ? str : first + str.slice(1);
+  }
+
+  document.addEventListener('input', (e) => {
+    if (!e.target.matches('.lc-first')) return;
+    const lowered = lowercaseFirstChar(e.target.value);
+    if (lowered === e.target.value) return;
+    const { selectionStart, selectionEnd } = e.target;
+    e.target.value = lowered;
+    e.target.setSelectionRange(selectionStart, selectionEnd);
+  });
+
   function esc(str) {
     return String(str)
       .replace(/&/g, '&amp;')
@@ -2455,10 +2501,10 @@
   // APP NAVIGATION (Home / Lists / Notes / Log — full-screen overlays)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const OVERLAY_IDS = { home: 'home-overlay', lists: 'lists-overlay', notes: 'notes-overlay', log: 'log-overlay', todo: 'todo-overlay', projects: 'projects-overlay' };
+  const OVERLAY_IDS = { home: 'home-overlay', lists: 'lists-overlay', notes: 'notes-overlay', log: 'log-overlay', todo: 'todo-overlay', projects: 'projects-overlay', 'project-detail': 'project-detail-overlay' };
   let currentView = 'home';
 
-  function showView(view, fromPopState) {
+  function showView(view, fromPopState, extra) {
     const changed = view !== currentView;
     currentView = view;
     Object.entries(OVERLAY_IDS).forEach(([v, id]) => {
@@ -2468,12 +2514,14 @@
     if (view === 'log') logOnOpen();
     if (view === 'todo') todoOnOpen();
     if (view === 'projects') projectsOnOpen();
+    if (view === 'project-detail') projectDetailOnOpen(extra && extra.projectId);
 
     // Push a history entry per view change so the mouse back/forward buttons
     // (and mobile swipe-back/forward gestures, which the browser maps to the
     // same history navigation) move between views instead of leaving the app.
     if (!fromPopState && changed) {
-      history.pushState({ view }, '', '#' + view);
+      const hash = '#' + view + (extra && extra.projectId ? '/' + extra.projectId : '');
+      history.pushState(Object.assign({ view }, extra), '', hash);
     }
   }
 
@@ -2481,7 +2529,7 @@
 
   window.addEventListener('popstate', (e) => {
     const state = e.state || { view: 'home' };
-    showView(state.view, true);
+    showView(state.view, true, state);
     if (state.view === 'lists' && isMobile()) {
       const inPanel = document.getElementById('main').classList.contains('show-panel');
       if (state.panel && state.categoryId) {
@@ -2509,7 +2557,21 @@
 
   function notesOnOpen() {
     notesLoadNotebooks();
+    if (pendingProjectContext !== null) {
+      const pid = pendingProjectContext; pendingProjectContext = null;
+      notesShowTab('add');
+      ensureProjectsLoaded().then(() => {
+        populateProjectSelect('note-project');
+        const project = projectsList.find(p => p.id === pid);
+        if (project) {
+          document.getElementById('note-project').value = project.slug;
+          noteProjectChanged();
+        }
+      });
+      return;
+    }
     if (notesCurrentTab === 'browse') notesLoadBrowse();
+    if (notesCurrentTab === 'add') ensureProjectsLoaded().then(() => populateProjectSelect('note-project'));
   }
 
   function notesShowTab(tab) {
@@ -2519,7 +2581,10 @@
     document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('npanel-' + tab).classList.add('active');
     if (tab === 'browse') notesLoadBrowse();
-    if (tab === 'add') setTimeout(() => document.getElementById('note-content').focus(), 80);
+    if (tab === 'add') {
+      setTimeout(() => document.getElementById('note-content').focus(), 80);
+      ensureProjectsLoaded().then(() => populateProjectSelect('note-project'));
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2529,7 +2594,18 @@
   let logCurrentTab = 'add';
 
   function logOnOpen() {
+    if (pendingProjectContext !== null) {
+      const pid = pendingProjectContext; pendingProjectContext = null;
+      logShowTab('add');
+      ensureProjectsLoaded().then(() => {
+        populateProjectSelect('log-project');
+        const project = projectsList.find(p => p.id === pid);
+        if (project) document.getElementById('log-project').value = project.slug;
+      });
+      return;
+    }
     if (logCurrentTab === 'recent') logLoadRecent();
+    if (logCurrentTab === 'add') ensureProjectsLoaded().then(() => populateProjectSelect('log-project'));
   }
 
   function logShowTab(tab) {
@@ -2539,7 +2615,10 @@
     document.querySelectorAll('.log-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('lpanel-' + tab).classList.add('active');
     if (tab === 'recent') logLoadRecent();
-    if (tab === 'add') setTimeout(() => document.getElementById('log-title').focus(), 80);
+    if (tab === 'add') {
+      setTimeout(() => document.getElementById('log-title').focus(), 80);
+      ensureProjectsLoaded().then(() => populateProjectSelect('log-project'));
+    }
   }
 
   async function logLoadRecent() {
@@ -2710,6 +2789,10 @@
 
   async function notesOpenNote(nbId, notebook, fromTab) {
     notesViewerFromTab = fromTab || 'browse';
+    // Switches to the Notes overlay itself (idempotent if already active) —
+    // needed when opening a note from outside Notes (e.g. project detail),
+    // since this function otherwise only toggles internal tab/panel classes.
+    showView('notes');
     try {
       const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook));
       if (!r.ok) throw 0;
@@ -2756,6 +2839,7 @@
   }
 
   function notesCloseViewer() {
+    if (notesViewerFromTab === 'project-detail') { history.back(); return; }
     notesShowTab(notesViewerFromTab === 'search' ? 'search' : 'browse');
   }
 
@@ -2837,6 +2921,11 @@
     if (!content) { toast('Log description is required', true); return; }
     const tagsRaw = document.getElementById('log-tags').value;
     const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    const projectSlug = document.getElementById('log-project').value;
+    if (projectSlug) {
+      const project = projectsList.find(p => p.slug === projectSlug);
+      if (project && !tags.includes(project.tag)) tags.push(project.tag);
+    }
     try {
       const r = await fetch(NOTES_API + '/daily', {
         method: 'POST',
@@ -2853,6 +2942,18 @@
     }
   }
 
+  // Auto-fills the notebook field with the project's dedicated notebook
+  // (created alongside the project, named by its slug) as a convenience
+  // default — left editable, since notebook isn't load-bearing for project
+  // association (only the tag is), so a note can legitimately be tagged to
+  // a project but filed elsewhere.
+  function noteProjectChanged() {
+    const projectSlug = document.getElementById('note-project').value;
+    if (!projectSlug) return;
+    const project = projectsList.find(p => p.slug === projectSlug);
+    if (project) document.getElementById('note-notebook').value = project.slug;
+  }
+
   async function submitQuickNote() {
     const content = document.getElementById('note-content').value.trim();
     if (!content) { toast('Note content is required', true); return; }
@@ -2861,6 +2962,11 @@
     const tagsRaw = document.getElementById('note-tags').value;
     const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
     const notebook = document.getElementById('note-notebook').value.trim() || null;
+    const projectSlug = document.getElementById('note-project').value;
+    if (projectSlug) {
+      const project = projectsList.find(p => p.slug === projectSlug);
+      if (project && !tags.includes(project.tag)) tags.push(project.tag);
+    }
     try {
       const r = await fetch(NOTES_API, {
         method: 'POST',
@@ -2888,7 +2994,18 @@
   let todoFilter = 'active';
 
   function todoOnOpen() {
+    if (pendingProjectContext !== null) {
+      const pid = pendingProjectContext; pendingProjectContext = null;
+      todoShowTab('add');
+      ensureProjectsLoaded().then(() => {
+        populateProjectSelect('todo-project');
+        const project = projectsList.find(p => p.id === pid);
+        if (project) document.getElementById('todo-project').value = project.slug;
+      });
+      return;
+    }
     if (todoCurrentTab === 'list') todoLoadList();
+    if (todoCurrentTab === 'add') ensureProjectsLoaded().then(() => populateProjectSelect('todo-project'));
   }
 
   function todoShowTab(tab) {
@@ -2898,7 +3015,10 @@
     document.querySelectorAll('.todo-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('tpanel-' + tab).classList.add('active');
     if (tab === 'list') todoLoadList();
-    if (tab === 'add') setTimeout(() => document.getElementById('todo-title').focus(), 80);
+    if (tab === 'add') {
+      setTimeout(() => document.getElementById('todo-title').focus(), 80);
+      ensureProjectsLoaded().then(() => populateProjectSelect('todo-project'));
+    }
   }
 
   // Parses one subtask per line; a "[x] " prefix marks it already done,
@@ -2944,7 +3064,7 @@
       archived: false,
       due_date,
       priority,
-      project_title: null,
+      project_title: document.getElementById('todo-project').value || null,
       labels,
       reminders: [],
     };
@@ -3095,17 +3215,44 @@
 
   const PROJECT_API = '/api/v1/project';
   let projectsList = [];
+  let projectsLoaded = false;
+
+  // Used by the project-select dropdowns in the Todo/Notes/Log Add forms —
+  // fetches the project list once and reuses it, rather than each dropdown
+  // re-fetching independently.
+  async function ensureProjectsLoaded() {
+    if (projectsLoaded) return;
+    await fetchProjects();
+  }
+
+  function populateProjectSelect(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    const current = select.value;
+    const options = projectsList.filter(p => !p.archived_at)
+      .map(p => `<option value="${esc(p.slug)}">${esc(p.name)}</option>`).join('');
+    select.innerHTML = '<option value="">No project</option>' + options;
+    select.value = current;
+  }
 
   function projectsOnOpen() {
-    projectsShowTab('list');
     fetchProjects();
   }
 
-  function projectsShowTab(tab) {
-    document.querySelectorAll('#projects-overlay .notes-tab').forEach(t => t.classList.remove('active'));
-    document.getElementById('ptab-' + tab).classList.add('active');
-    document.querySelectorAll('#projects-overlay .notes-panel').forEach(p => p.classList.remove('active'));
-    document.getElementById('ppanel-' + tab).classList.add('active');
+  // Pending project id set by an "+ Add" button on the project detail page
+  // before navigating to the Todo/Notes/Log overlay, so that overlay's
+  // onOpen handler can jump straight to its Add tab with the project
+  // pre-selected. Consumed (cleared) on read.
+  let pendingProjectContext = null;
+
+  function addTodoForProject(id) { pendingProjectContext = id; showView('todo'); }
+  function addNoteForProject(id) { pendingProjectContext = id; showView('notes'); }
+  function addLogForProject(id)  { pendingProjectContext = id; showView('log'); }
+
+  async function openProjectListCategory(groupId, categoryId) {
+    showView('lists');
+    await selectGroup(groupId);
+    selectCategory(categoryId);
   }
 
   async function fetchProjects() {
@@ -3113,6 +3260,7 @@
       const r = await fetch(PROJECT_API);
       if (!r.ok) throw 0;
       projectsList = await r.json();
+      projectsLoaded = true;
       renderProjectsList();
     } catch (_) {
       document.getElementById('projects-list').innerHTML = '<div class="empty-state"><span>Failed to load projects</span></div>';
@@ -3127,7 +3275,7 @@
     }
     el.innerHTML = projectsList.map(p => {
       const archivedHtml = p.archived_at ? '<span class="note-badge tag">Archived</span>' : '';
-      return `<div class="note-card" onclick="selectProject(${p.id})">
+      return `<div class="note-card" onclick="showView('project-detail', false, {projectId: ${p.id}})">
         <div class="note-card-title">${esc(p.name)}</div>
         <div class="note-card-meta">
           <span class="note-badge folder">&#128193; ${esc(p.slug)}</span>${archivedHtml}
@@ -3155,8 +3303,10 @@
     }
   }
 
-  async function selectProject(id) {
-    projectsShowTab('detail');
+  let currentProjectDetailId = null;
+
+  async function projectDetailOnOpen(id) {
+    currentProjectDetailId = id;
     const el = document.getElementById('project-detail-content');
     el.innerHTML = '<div class="empty-state"><span>Loading…</span></div>';
     try {
@@ -3179,7 +3329,6 @@
     const el = document.getElementById('project-detail-content');
     const archivedDate = new Date(p.archived_at).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
     el.innerHTML = `
-      <button class="btn-ghost btn-sm" onclick="projectsShowTab('list')" style="margin-bottom:12px;">&larr; Back</button>
       <div class="note-card" style="cursor:default;">
         <div class="note-card-title">${esc(p.name)} <span class="note-badge tag">Archived</span></div>
         <div class="note-card-meta">
@@ -3197,25 +3346,30 @@
       ? detail.todos.map(renderTodoCard).join('')
       : '<div class="empty-state"><span>No todos</span></div>';
     const listsHtml = detail.lists.length
-      ? detail.lists.map(c => `<div class="note-card" style="cursor:default;"><div class="note-card-title">${esc(c.name)}</div></div>`).join('')
+      ? detail.lists.map(c => `<div class="note-card" onclick="openProjectListCategory(${p.list_group_id}, ${c.id})"><div class="note-card-title">${esc(c.name)}</div></div>`).join('')
       : '<div class="empty-state"><span>No lists</span></div>';
 
     el.innerHTML = `
-      <button class="btn-ghost btn-sm" onclick="projectsShowTab('list')" style="margin-bottom:12px;">&larr; Back</button>
       <div class="note-card-title" style="font-size:1.2rem;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
         ${esc(p.name)}
         <button class="btn-danger btn-sm" onclick="archiveProject(${p.id})">Archive</button>
       </div>
-      <div class="sidebar-header">Todos</div>
+      <div class="sidebar-header" style="display:flex;justify-content:space-between;align-items:center;">
+        Todos <button class="btn-ghost btn-sm" onclick="addTodoForProject(${p.id})">&#43; Add Todo</button>
+      </div>
       <div class="notes-list">${todosHtml}</div>
-      <div class="sidebar-header">Notes</div>
+      <div class="sidebar-header" style="display:flex;justify-content:space-between;align-items:center;">
+        Notes <button class="btn-ghost btn-sm" onclick="addNoteForProject(${p.id})">&#43; Add Note</button>
+      </div>
       <div class="notes-list" id="project-notes-list"></div>
-      <div class="sidebar-header">Log</div>
+      <div class="sidebar-header" style="display:flex;justify-content:space-between;align-items:center;">
+        Log <button class="btn-ghost btn-sm" onclick="addLogForProject(${p.id})">&#43; Add Entry</button>
+      </div>
       <div class="notes-list" id="project-logs-list"></div>
       <div class="sidebar-header">Lists</div>
       <div class="notes-list">${listsHtml}</div>
     `;
-    renderNoteList(detail.notes, 'project-notes-list', 'browse');
+    renderNoteList(detail.notes, 'project-notes-list', 'project-detail');
     renderLogList(detail.logs, 'project-logs-list');
   }
 
@@ -3225,7 +3379,7 @@
       const r = await fetch(`${PROJECT_API}/${id}/archive`, { method: 'POST' });
       if (!r.ok) throw 0;
       toast('Project archived');
-      selectProject(id);
+      projectDetailOnOpen(id);
     } catch (_) {
       toast('Failed to archive project', true);
     }
