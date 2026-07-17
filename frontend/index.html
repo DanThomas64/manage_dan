@@ -7,47 +7,54 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#111318" />
+  <meta name="theme-color" content="#17140f" />
   <title>Lists</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      /* MD3 dark — background & surface elevation */
-      --bg:          #111318;
-      --surface:     #1f2227;
-      --surface2:    #22252b;
-      --surface3:    #262930;
-      --border:      #41474d;
+      color-scheme: dark;
 
-      /* MD3 primary (blue) */
-      --accent:      #a8c7fa;
-      --accent-dim:  #284777;
-      --accent-on:   #0a305f;
-      --accent-cont: #d6e3ff;
+      /* Dispatch Ticket — ink & paper, dark */
+      --bg:          #17140f;
+      --surface:     #211c15;
+      --surface2:    #2a2319;
+      --surface3:    #332b1e;
+      --border:      #4a4030;
 
-      /* MD3 secondary (muted blue-gray) */
-      --secondary:       #bec6dc;
-      --secondary-cont:  #3e4759;
-      --secondary-on:    #dae2f9;
+      /* Amber ink-stamp — primary */
+      --accent:      #e8a33d;
+      --accent-dim:  #4a3418;
+      --accent-on:   #2b1c05;
+      --accent-cont: #ffd899;
 
-      /* MD3 tertiary (green — success/done) */
-      --green:       #6dd58c;
-      --green-cont:  #005227;
-      --green-on:    #89f3a7;
+      /* Slate-olive — secondary (filter/facet state, distinct from primary) */
+      --secondary:       #c9bfa0;
+      --secondary-cont:  #3a3428;
+      --secondary-on:    #ded4b8;
 
-      /* MD3 error */
-      --red:         #ffb4ab;
-      --red-cont:    #93000a;
-      --red-on:      #ffdad6;
+      /* Stamp green — success/done */
+      --green:       #7fb069;
+      --green-cont:  #1f3016;
+      --green-on:    #b9dba0;
+
+      /* Void red — error/delete */
+      --red:         #e2795a;
+      --red-cont:    #3d1c10;
+      --red-on:      #f0b49a;
 
       /* Text */
-      --text:        #e2e2e6;
-      --text-muted:  #c1c7ce;
-      --checked-fg:  #6b7280;
+      --text:        #ede6d8;
+      --text-muted:  #a89e88;
+      --checked-fg:  #756b56;
+
+      /* Type */
+      --font-sans:  'Segoe UI', system-ui, sans-serif;
+      --font-mono:  ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
 
       /* Shape & shadow */
-      --radius:      12px;
+      --radius:      10px;
+      --radius-sm:   6px;
       --shadow:      0 2px 6px rgba(0,0,0,0.45);
 
       /* Safe areas */
@@ -58,7 +65,7 @@
 
     html, body {
       height: 100%;
-      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-family: var(--font-sans);
       background: var(--bg);
       color: var(--text);
       font-size: 15px;
@@ -81,7 +88,7 @@
       padding-left: max(20px, var(--safe-left));
       padding-right: max(20px, var(--safe-right));
       background: var(--surface3);
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px dashed var(--border);
       gap: 8px;
       flex-shrink: 0;
     }
@@ -95,9 +102,10 @@
     }
 
     header h1 {
-      font-size: 1.1rem;
-      font-weight: 500;
-      letter-spacing: 0.01em;
+      font-family: var(--font-mono);
+      font-size: 1.05rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -135,6 +143,7 @@
 
     .sidebar-header {
       padding: 14px 16px 10px;
+      font-family: var(--font-mono);
       font-size: 0.7rem;
       font-weight: 700;
       letter-spacing: 0.12em;
@@ -201,7 +210,7 @@
 
     .add-category-form {
       padding: 8px;
-      border-top: 1px solid var(--border);
+      border-top: 1px dashed var(--border);
       flex-shrink: 0;
     }
 
@@ -209,7 +218,7 @@
     .group-section {
       display: flex;
       flex-direction: column;
-      border-bottom: 2px solid var(--border);
+      border-bottom: 2px dashed var(--border);
       flex-shrink: 0;
     }
 
@@ -218,6 +227,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 10px 16px 6px;
+      font-family: var(--font-mono);
       font-size: 0.7rem;
       font-weight: 700;
       letter-spacing: 0.12em;
@@ -306,7 +316,7 @@
       align-items: center;
       gap: 6px;
       padding: 6px 8px;
-      border-top: 1px solid var(--border);
+      border-top: 1px dashed var(--border);
       background: var(--surface);
       flex-shrink: 0;
     }
@@ -325,7 +335,7 @@
       align-items: center;
       justify-content: space-between;
       padding: 14px 20px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px dashed var(--border);
       gap: 12px;
       flex-shrink: 0;
     }
@@ -336,8 +346,9 @@
     }
 
     .panel-title small {
+      font-family: var(--font-mono);
       font-weight: 400;
-      font-size: 0.8rem;
+      font-size: 0.78rem;
       color: var(--text-muted);
       margin-left: 8px;
     }
@@ -483,11 +494,12 @@
     }
 
     .item-qty {
-      font-size: 0.74rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
       color: var(--text-muted);
       background: var(--surface2);
       padding: 1px 6px;
-      border-radius: 12px;
+      border-radius: var(--radius-sm);
       flex-shrink: 0;
     }
 
@@ -534,7 +546,7 @@
 
     /* ── Quick-add (saved/common items) ── */
     .quick-add-section {
-      border-top: 2px solid var(--border);
+      border-top: 2px dashed var(--border);
       flex-shrink: 0;
       display: flex;
       flex-direction: column;
@@ -558,6 +570,7 @@
     .quick-add-header:hover { background: var(--surface2); }
     .quick-add-label {
       flex: 1;
+      font-family: var(--font-mono);
       font-size: 0.7rem;
       font-weight: 700;
       text-transform: uppercase;
@@ -636,7 +649,8 @@
 
     .items-divider {
       margin: 16px 0 8px;
-      font-size: 0.75rem;
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
       color: var(--text-muted);
       text-transform: uppercase;
       letter-spacing: .08em;
@@ -645,7 +659,7 @@
     .add-item-form {
       padding: 12px 20px;
       padding-bottom: max(12px, calc(10px + var(--safe-bottom)));
-      border-top: 1px solid var(--border);
+      border-top: 1px dashed var(--border);
       display: flex;
       gap: 8px;
       flex-shrink: 0;
@@ -685,10 +699,58 @@
     input[type="text"]:focus { border-bottom-color: var(--accent); }
     input[type="text"]::placeholder { color: var(--text-muted); }
 
+    /* Date/time/select share the text input's look — otherwise the browser's
+       native light-theme chrome breaks the dark ticket styling. */
+    input[type="date"],
+    input[type="time"],
+    select {
+      background: var(--surface2);
+      border: none;
+      border-bottom: 2px solid var(--border);
+      border-radius: 4px 4px 0 0;
+      padding: 9px 12px;
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 16px;
+      outline: none;
+      transition: border-color 0.15s;
+      min-width: 0;
+      cursor: pointer;
+    }
+
+    input[type="date"]:focus,
+    input[type="time"]:focus,
+    select:focus { border-bottom-color: var(--accent); }
+
+    /* Recolor the native calendar/clock glyph to match the light-on-dark text */
+    input[type="date"]::-webkit-calendar-picker-indicator,
+    input[type="time"]::-webkit-calendar-picker-indicator {
+      filter: invert(0.85);
+      cursor: pointer;
+    }
+
+    /* Swap the native select chevron for one drawn from theme tokens */
+    select {
+      appearance: none;
+      -webkit-appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+        linear-gradient(135deg, var(--text-muted) 50%, transparent 50%);
+      background-position: calc(100% - 18px) calc(50% - 3px), calc(100% - 13px) calc(50% - 3px);
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+      padding-right: 32px;
+    }
+
+    select option {
+      background: var(--surface2);
+      color: var(--text);
+    }
+
     button {
       border: none;
-      border-radius: 50px;
-      padding: 9px 20px;
+      border-radius: var(--radius-sm);
+      padding: 9px 18px;
       font-size: 0.875rem;
       font-weight: 500;
       cursor: pointer;
@@ -702,11 +764,16 @@
     button:active { filter: brightness(0.9); transform: scale(0.96); }
     button:disabled { opacity: 0.4; cursor: default; filter: none; transform: none; }
 
-    .btn-primary { background: var(--accent); color: var(--accent-on); }
-    .btn-ghost   { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+    .btn-primary { background: var(--accent); color: var(--accent-on); font-weight: 600; }
+    .btn-ghost   { background: transparent; color: var(--accent); border: 1px dashed var(--border); }
     .btn-danger  { background: var(--red-cont); color: var(--red-on); }
     .btn-success { background: var(--green-cont); color: var(--green-on); }
-    .btn-sm { padding: 6px 14px; font-size: 0.82rem; }
+    .btn-sm { padding: 6px 13px; font-size: 0.82rem; }
+
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
 
     /* ── Toast ── */
     #toast {
@@ -719,7 +786,7 @@
       border-left: 3px solid var(--accent);
       color: var(--text);
       padding: 10px 20px;
-      border-radius: 8px;
+      border-radius: var(--radius-sm);
       font-size: 0.85rem;
       transition: transform 0.25s ease;
       pointer-events: none;
@@ -985,18 +1052,21 @@
       align-items: center;
       gap: 4px;
       padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
+      border-bottom: 1px dashed var(--border);
       background: var(--surface);
       flex-shrink: 0;
     }
     .notes-tab, .log-tab, .todo-tab {
       padding: 7px 16px;
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
       background: transparent;
       color: var(--text-muted);
       border: 1px solid transparent;
-      font-size: 0.85rem;
-      font-weight: 500;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
     }
@@ -1021,7 +1091,7 @@
       gap: 28px;
       padding: 24px;
     }
-    .home-title { font-size: 1.5rem; font-weight: 600; }
+    .home-title { font-family: var(--font-mono); font-size: 1.3rem; font-weight: 700; letter-spacing: 0.02em; }
     .home-tiles { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
     .home-tile {
       display: flex;
@@ -1031,17 +1101,23 @@
       gap: 12px;
       width: 180px;
       height: 180px;
-      border-radius: 24px;
+      border-radius: 14px;
       background: var(--surface);
-      border: 1px solid var(--border);
+      border: 1px dashed var(--border);
       color: var(--text);
       cursor: pointer;
       transition: background 0.15s, border-color 0.15s, transform 0.1s;
     }
-    .home-tile:hover { background: var(--surface2); border-color: var(--accent-dim); }
+    .home-tile:hover { background: var(--surface2); border-color: var(--accent); }
     .home-tile:active { transform: scale(0.97); }
     .home-tile-icon { font-size: 2.8rem; }
-    .home-tile-label { font-size: 1.05rem; font-weight: 600; }
+    .home-tile-label {
+      font-family: var(--font-mono);
+      font-size: 0.95rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
 
     /* Quick Add panel */
     .quick-note-form {
@@ -1079,7 +1155,7 @@
       grid-template-columns: 1fr 1fr;
       gap: 8px;
     }
-    .field-label { font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+    .field-label { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
 
     /* Browse panel */
     .notes-filters {
@@ -1093,12 +1169,15 @@
     }
     .filter-pill {
       padding: 5px 12px;
-      border-radius: 20px;
-      font-size: 0.8rem;
-      font-weight: 500;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
       background: var(--surface2);
       color: var(--text-muted);
-      border: none;
+      border: 1px solid transparent;
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
     }
@@ -1113,23 +1192,32 @@
       padding: 12px 14px;
       background: var(--surface);
       border-radius: var(--radius);
-      border: 1px solid var(--border);
+      border: 1px dashed var(--border);
       cursor: pointer;
       margin-bottom: 8px;
       transition: border-color 0.15s;
     }
-    .note-card:hover { background: var(--surface2); border-color: var(--accent-dim); }
+    .note-card:hover { background: var(--surface2); border-color: var(--accent); }
     .note-card-title { font-weight: 600; font-size: 0.95rem; }
     .note-card-preview { color: var(--text-muted); font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .note-card-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-    .note-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+    .note-badge {
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-size: 0.68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      border: 1px solid transparent;
+    }
     .note-badge.raw     { background: var(--secondary-cont); color: var(--secondary-on); }
     .note-badge.note    { background: var(--accent-dim);     color: var(--accent-cont); }
     .note-badge.article { background: var(--green-cont);     color: var(--green-on); }
-    .note-badge.tag     { background: var(--surface2);       color: var(--text-muted); }
-    .note-badge.folder  { background: #2a2500;               color: #ffd54f; }
+    .note-badge.tag     { background: transparent;           color: var(--text-muted); border-color: var(--border); }
+    .note-badge.folder  { background: #3a2c0a;               color: #ffcf6b; }
     .note-badge.overdue { background: var(--red-cont);        color: var(--red-on); }
-    .note-date { font-size: 0.72rem; color: var(--text-muted); margin-left: auto; }
+    .note-date { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); margin-left: auto; }
 
     /* Todo cards */
     .todo-card {
@@ -1139,7 +1227,7 @@
       padding: 12px 14px;
       background: var(--surface);
       border-radius: var(--radius);
-      border: 1px solid var(--border);
+      border: 1px dashed var(--border);
       margin-bottom: 8px;
     }
     .todo-card.completed { opacity: 0.6; }
@@ -1148,7 +1236,7 @@
     .todo-card-title { font-weight: 600; font-size: 0.95rem; flex: 1; }
     .todo-card.completed .todo-card-title { text-decoration: line-through; color: var(--text-muted); }
     .todo-card-desc { color: var(--text-muted); font-size: 0.82rem; white-space: pre-wrap; }
-    .todo-priority-bar { font-size: 0.78rem; letter-spacing: 1px; color: var(--accent); }
+    .todo-priority-bar { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 1px; color: var(--accent); }
     .todo-subtasks { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; padding-left: 30px; }
     .todo-subtask-line { font-size: 0.8rem; color: var(--text-muted); }
     .todo-subtask-line.done { text-decoration: line-through; }
@@ -1158,7 +1246,7 @@
     .note-viewer { flex: 1; overflow-y: auto; padding: 16px; }
     .note-viewer-header { margin-bottom: 12px; }
     .note-viewer-title { font-size: 1.4rem; font-weight: 700; margin-bottom: 8px; }
-    .note-viewer-actions { display: flex; gap: 8px; margin-top: 12px; flex-shrink: 0; padding: 12px 16px; border-top: 1px solid var(--border); }
+    .note-viewer-actions { display: flex; gap: 8px; margin-top: 12px; flex-shrink: 0; padding: 12px 16px; border-top: 1px dashed var(--border); }
 
     /* Markdown rendered content */
     .md-body h1,.md-body h2,.md-body h3 { color: var(--text); margin: 1em 0 .5em; line-height: 1.3; }
@@ -1168,15 +1256,24 @@
     .md-body p { margin: .7em 0; line-height: 1.7; }
     .md-body ul,.md-body ol { padding-left: 1.5em; margin: .7em 0; }
     .md-body li { margin: .3em 0; line-height: 1.6; }
-    .md-body code { background: rgba(255,255,255,.1); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: .9em; }
-    .md-body pre { background: #0d1117; border-radius: 8px; padding: 14px; overflow-x: auto; margin: 1em 0; }
+    .md-body code { background: rgba(232,163,61,.14); padding: 2px 6px; border-radius: 4px; font-family: var(--font-mono); font-size: .9em; }
+    .md-body pre { background: #100d09; border-radius: 8px; padding: 14px; overflow-x: auto; margin: 1em 0; border: 1px dashed var(--border); }
     .md-body pre code { background: none; padding: 0; }
     .md-body blockquote { border-left: 3px solid var(--accent); padding-left: 1em; color: var(--text-muted); margin: 1em 0; }
-    .md-body a { color: #64b5f6; }
+    .md-body a { color: var(--accent); }
     .md-body hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
     .md-body table { width: 100%; border-collapse: collapse; margin: 1em 0; }
     .md-body th,.md-body td { padding: 8px 10px; border: 1px solid var(--border); }
     .md-body th { background: var(--surface2); }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
 
   </style>
 </head>
@@ -1391,7 +1488,7 @@
       <!-- filled dynamically -->
     </div>
     <div class="note-viewer-actions">
-      <button class="btn-ghost btn-sm" onclick="notesPrint()">&#128438; Print</button>
+      <button class="btn-ghost btn-sm" onclick="notesPrint()">&#128424; Print</button>
       <button class="btn-ghost btn-sm" onclick="notesCloseViewer()">&#8592; Back</button>
       <button class="btn-ghost btn-sm" onclick="notesOpenEditMode()">Edit</button>
       <button class="btn-danger btn-sm" onclick="notesDeleteNote()">Delete</button>
@@ -1477,7 +1574,7 @@
   <!-- Todo sub-nav -->
   <div class="notes-nav">
     <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
-    <button class="todo-tab" id="ttab-add" onclick="todoShowTab('add')">&#43; Add Todo</button>
+    <button class="todo-tab" id="ttab-add" onclick="todoResetForm(); todoShowTab('add')">&#43; Add Todo</button>
     <button class="todo-tab active" id="ttab-list" onclick="todoShowTab('list')">List</button>
   </div>
 
@@ -1527,7 +1624,10 @@
         <div class="field-label">Subtasks <span style="color:var(--text-dim)">(one per line — prefix "[x] " for already done)</span></div>
         <textarea id="todo-subtasks" placeholder="first step&#10;[x] already done step" style="min-height:80px;flex:none;"></textarea>
       </div>
-      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitTodo()">Save Todo</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary" id="btn-todo-submit" style="flex:1;padding:10px;" onclick="submitTodo()">Save Todo</button>
+        <button class="btn-ghost btn-sm" id="btn-todo-cancel-edit" style="display:none;" onclick="todoResetForm(); todoShowTab('list')">Cancel</button>
+      </div>
     </div>
   </div>
 
@@ -2677,10 +2777,23 @@
     try {
       const r = await fetch(NOTES_API + '/folders');
       notebookList = await r.json();
-      const filtersEl = document.getElementById('notebook-filters');
-      filtersEl.innerHTML = `<button class="filter-pill ${notesFilterNotebook === '' ? 'active' : ''}" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>` +
-        notebookList.map(nb => `<button class="filter-pill ${nb === notesFilterNotebook ? 'active' : ''}" data-notebook="${esc(nb)}" onclick="notesSetNotebook(this,'${esc(nb)}')">${esc(nb)}</button>`).join('');
+      renderNotebookFilters();
     } catch (_) {}
+  }
+
+  // Rebuilds the notebook filter pill row, dropping project notebooks
+  // (named exactly after their project's slug) while Hide Project Items is on.
+  function renderNotebookFilters() {
+    const filtersEl = document.getElementById('notebook-filters');
+    const projectSlugs = new Set(projectsList.map(p => p.slug));
+    const visible = notesHideProjectItems
+      ? notebookList.filter(nb => !projectSlugs.has(nb))
+      : notebookList;
+    if (notesHideProjectItems && projectSlugs.has(notesFilterNotebook)) {
+      notesFilterNotebook = '';
+    }
+    filtersEl.innerHTML = `<button class="filter-pill ${notesFilterNotebook === '' ? 'active' : ''}" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>` +
+      visible.map(nb => `<button class="filter-pill ${nb === notesFilterNotebook ? 'active' : ''}" data-notebook="${esc(nb)}" onclick="notesSetNotebook(this,'${esc(nb)}')">${esc(nb)}</button>`).join('');
   }
 
   // Custom notebook-name autocomplete for the Quick Add form. Native
@@ -2720,9 +2833,11 @@
 
   let notesHideProjectItems = false;
 
-  function notesToggleHideProject(btn) {
+  async function notesToggleHideProject(btn) {
     notesHideProjectItems = !notesHideProjectItems;
     btn.classList.toggle('active', notesHideProjectItems);
+    if (notesHideProjectItems) await ensureProjectsLoaded();
+    renderNotebookFilters();
     notesLoadBrowse();
   }
 
@@ -2992,10 +3107,12 @@
   let todoCurrentTab = 'list';
   let todoItems = [];
   let todoFilter = 'active';
+  let todoEditingId = null;
 
   function todoOnOpen() {
     if (pendingProjectContext !== null) {
       const pid = pendingProjectContext; pendingProjectContext = null;
+      todoResetForm();
       todoShowTab('add');
       ensureProjectsLoaded().then(() => {
         populateProjectSelect('todo-project');
@@ -3031,6 +3148,49 @@
     });
   }
 
+  // Resets the Add/Edit Todo form back to its "add" state — used both when
+  // starting a fresh add and when leaving edit mode (save or cancel).
+  function todoResetForm() {
+    todoEditingId = null;
+    document.getElementById('todo-title').value = '';
+    document.getElementById('todo-description').value = '';
+    document.getElementById('todo-due-date').value = '';
+    document.getElementById('todo-due-time').value = '';
+    document.getElementById('todo-priority').value = '0';
+    document.getElementById('todo-tags').value = '';
+    document.getElementById('todo-subtasks').value = '';
+    document.getElementById('btn-todo-submit').textContent = 'Save Todo';
+    document.getElementById('btn-todo-cancel-edit').style.display = 'none';
+  }
+
+  function todoEditTodo(id) {
+    const item = todoItems.find(t => t.id === id);
+    if (!item) return;
+    todoEditingId = id;
+    document.getElementById('todo-title').value = item.title || '';
+    document.getElementById('todo-description').value = item.description || '';
+    if (item.due_date) {
+      const d = new Date(item.due_date);
+      const pad = n => String(n).padStart(2, '0');
+      document.getElementById('todo-due-date').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      document.getElementById('todo-due-time').value = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    } else {
+      document.getElementById('todo-due-date').value = '';
+      document.getElementById('todo-due-time').value = '';
+    }
+    document.getElementById('todo-priority').value = String(item.priority || 0);
+    document.getElementById('todo-tags').value = (item.labels || []).join(', ');
+    document.getElementById('todo-subtasks').value = (item.subtasks || [])
+      .map(s => (s.done ? '[x] ' : '') + s.title).join('\n');
+    document.getElementById('btn-todo-submit').textContent = 'Save Changes';
+    document.getElementById('btn-todo-cancel-edit').style.display = '';
+    todoShowTab('add');
+    ensureProjectsLoaded().then(() => {
+      populateProjectSelect('todo-project');
+      document.getElementById('todo-project').value = item.project_title || '';
+    });
+  }
+
   async function submitTodo() {
     const title = document.getElementById('todo-title').value.trim();
     if (!title) { toast('Todo title is required', true); return; }
@@ -3046,12 +3206,31 @@
     }
 
     const priority = parseInt(document.getElementById('todo-priority').value, 10) || 0;
-
     const labels = document.getElementById('todo-tags').value.split(',').map(s => s.trim()).filter(Boolean);
     const subtasks = parseTodoSubtasks(document.getElementById('todo-subtasks').value);
+    const project_title = document.getElementById('todo-project').value || null;
 
+    const editing = todoEditingId !== null;
+    const original = editing ? todoItems.find(t => t.id === todoEditingId) : null;
     const now = new Date().toISOString();
-    const payload = {
+
+    const payload = editing && original ? {
+      id: original.id,
+      title,
+      description,
+      completed: original.completed,
+      created_at: original.created_at,
+      updated_at: now,
+      completed_at: original.completed_at,
+      printed_at: original.printed_at,
+      subtasks,
+      archived: original.archived,
+      due_date,
+      priority,
+      project_title,
+      labels,
+      reminders: original.reminders || [],
+    } : {
       id: null,
       title,
       description,
@@ -3064,28 +3243,25 @@
       archived: false,
       due_date,
       priority,
-      project_title: document.getElementById('todo-project').value || null,
+      project_title,
       labels,
       reminders: [],
     };
 
     try {
-      const r = await fetch(TODO_API, {
-        method: 'POST',
+      const url = editing ? `${TODO_API}/${todoEditingId}` : TODO_API;
+      const r = await fetch(url, {
+        method: editing ? 'PUT' : 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload),
       });
       if (!r.ok) throw 0;
-      document.getElementById('todo-title').value = '';
-      document.getElementById('todo-description').value = '';
-      document.getElementById('todo-due-date').value = '';
-      document.getElementById('todo-due-time').value = '';
-      document.getElementById('todo-priority').value = '0';
-      document.getElementById('todo-tags').value = '';
-      document.getElementById('todo-subtasks').value = '';
-      toast('Todo saved');
+      toast(editing ? 'Todo updated' : 'Todo saved');
+      const wasEditing = editing;
+      todoResetForm();
+      if (wasEditing) todoShowTab('list');
     } catch (_) {
-      toast('Failed to save todo', true);
+      toast(editing ? 'Failed to update todo' : 'Failed to save todo', true);
     }
   }
 
@@ -3109,7 +3285,8 @@
 
   // Builds one todo card's HTML — shared by the main Todo screen list and
   // the Project detail panel's scoped todo list.
-  function renderTodoCard(i) {
+  function renderTodoCard(i, opts) {
+    const editable = !opts || opts.editable !== false;
     const filled = Math.min(i.priority || 0, 5);
     const bar = '#'.repeat(filled) + '.'.repeat(5 - filled);
     const now = Date.now();
@@ -3135,7 +3312,8 @@
       </div>
       ${subtasksHtml}
       <div class="todo-actions">
-        <button class="btn-ghost btn-sm" onclick="todoPrint(${i.id})">&#128438; Print</button>
+        ${editable ? `<button class="btn-ghost btn-sm" onclick="todoEditTodo(${i.id})">Edit</button>` : ''}
+        <button class="btn-ghost btn-sm" onclick="todoPrint(${i.id})">&#128424; Print</button>
         <button class="btn-danger btn-sm" onclick="todoDelete(${i.id})">Delete</button>
       </div>
     </div>`;
@@ -3348,8 +3526,9 @@
   function renderProjectDetail(detail) {
     const p = detail.project;
     const el = document.getElementById('project-detail-content');
-    const todosHtml = detail.todos.length
-      ? detail.todos.map(renderTodoCard).join('')
+    const activeTodos = detail.todos.filter(t => !t.completed);
+    const todosHtml = activeTodos.length
+      ? activeTodos.map(t => renderTodoCard(t, {editable: false})).join('')
       : '<div class="empty-state"><span>No todos</span></div>';
     const listsHtml = detail.lists.length
       ? detail.lists.map(c => `<div class="note-card" onclick="openProjectListCategory(${p.list_group_id}, ${c.id})"><div class="note-card-title">${esc(c.name)}</div></div>`).join('')
