@@ -601,6 +601,27 @@ pub async fn archive_project_todos(notebook: &str, project_slug: &str) -> TodoLi
     Ok(())
 }
 
+/// Moves every todo item back from `archive:<project_slug>/todo/` into
+/// `notebook:<project_slug>/` — the reverse of `archive_project_todos`, as
+/// part of un-archiving (restoring) a project.
+pub async fn restore_project_todos(notebook: &str, project_slug: &str) -> TodoLibResult {
+    let archive_folder = format!("{}/todo", project_slug);
+    let entries = match list_paths_in_folder("archive", &archive_folder).await {
+        Ok(e) => e,
+        Err(_) => return Ok(()), // nothing was ever archived for this project
+    };
+    for (local_id, _path) in entries {
+        run(&[
+            "archive:move".to_string(),
+            selector(&archive_folder, local_id),
+            format!("{}:{}/", notebook, project_slug),
+            "--force".to_string(),
+        ])
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn delete_item(notebook: &str, id: i64) -> TodoLibResult {
     info!("Deleting nb todo item ID: {}", id);
     let (folder, local_id) = db::todo_nb_index_resolve(id)

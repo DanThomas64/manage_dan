@@ -912,6 +912,31 @@ pub async fn archive_project_handler(id: i64) -> Result<impl Reply, Rejection> {
     }
 }
 
+/// POST /api/v1/project/:id/restore - un-archives a project (reverse of archive)
+pub async fn restore_project_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match project::restore_project(id).await {
+        Ok(p) => Ok(warp::reply::json(&p)),
+        Err(ProjectLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to restore project {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/project/:id - permanently deletes an archived project
+pub async fn delete_project_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match project::delete_project(id).await {
+        Ok(()) => Ok(warp::reply::with_status(warp::reply(), StatusCode::NO_CONTENT)),
+        Err(ProjectLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(ProjectLibError::InvalidInput(msg)) => Err(warp::reject::custom(ApiError::ProjectInvalidInput(msg))),
+        Err(e) => {
+            error!("Failed to delete project {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
 /// GET /api/v1/project/:id/todos - todos scoped to the project
 pub async fn project_todos_handler(id: i64) -> Result<impl Reply, Rejection> {
     let p = match project::get_project(id).await {
@@ -1451,6 +1476,8 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
 ///   /api/v1/project/:id            — metadata only
 ///   /api/v1/project/:id/detail     — aggregated todos+notes+logs+lists
 ///   /api/v1/project/:id/archive    — archive (never deletes)
+///   /api/v1/project/:id/restore    — un-archive (reverse of archive)
+///   /api/v1/project/:id            — DELETE permanently deletes (archived projects only)
 ///   /api/v1/project/:id/todos      — scoped todos, GET + POST
 ///   /api/v1/project/:id/notes      — scoped notes
 ///   /api/v1/project/:id/logs       — scoped log entries, ?days=
@@ -1486,6 +1513,21 @@ fn project_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Cl
         .and(warp::path::end())
         .and(warp::post())
         .and_then(archive_project_handler);
+
+    // POST /api/v1/project/:id/restore
+    let restore = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("restore"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and_then(restore_project_handler);
+
+    // DELETE /api/v1/project/:id
+    let delete_one = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_project_handler);
 
     // GET /api/v1/project/:id/todos
     let todos = project_seg
@@ -1539,6 +1581,8 @@ fn project_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Cl
     list.or(create)
         .or(detail)
         .or(archive)
+        .or(restore)
+        .or(delete_one)
         .or(todos)
         .or(create_todo)
         .or(notes)

@@ -267,6 +267,39 @@ pub async fn nb_list(notebook: Option<&str>) -> NotesLibResult<Vec<Note>> {
     Ok(notes)
 }
 
+/// Moves every note directly inside `folder` within `notebook` to
+/// `dest_notebook`'s root (keyed by title, one at a time — the same
+/// rename-target style `nb_move`/`archive_note` already use). Returns the
+/// number moved. Used to restore a project's archived notes: they're
+/// addressed as `folder/id` while nested (confirmed against a real `nb`
+/// install — a bare id fails with "Not found" once a note has been moved
+/// into a subfolder), so this parses and moves in one pass rather than
+/// going through `nb_show`/`nb_move`'s bare-id-only addressing.
+pub async fn nb_restore_folder(notebook: &str, folder: &str, dest_notebook: &str) -> NotesLibResult<usize> {
+    let cmd = nb_cmd(notebook, "list");
+    let target = format!("{}/", folder);
+    let out = match run(&[&cmd, &target]).await {
+        Ok(o) => o,
+        Err(NotesLibError::Nb(_)) => return Ok(0), // empty/missing folder
+        Err(e) => return Err(e),
+    };
+
+    let mut moved = 0;
+    for line in out.lines() {
+        if line.contains('\u{1F4C2}') {
+            continue; // 📂 nested subfolder entry, not a note
+        }
+        let Some(rest) = line.trim().strip_prefix('[') else { continue };
+        let Some((ref_part, title)) = rest.split_once("] ") else { continue };
+        let path_part = ref_part.rsplit_once(':').map(|(_, p)| p).unwrap_or(ref_part);
+        let selector = format!("{}:{}", notebook, path_part);
+        let dest = format!("{}:{}", dest_notebook, title.trim());
+        run(&["move", &selector, &dest, "--force"]).await?;
+        moved += 1;
+    }
+    Ok(moved)
+}
+
 // Reads every daily log file in `notebook` dated within the last `days` days
 // (inclusive of today) and returns their individual entries, most recent
 // first. When `tag` is set, only entries carrying that tag are returned.
@@ -344,6 +377,25 @@ pub async fn nb_ensure_notebook(name: &str) -> NotesLibResult<()> {
 pub async fn nb_move(src_notebook: &str, nb_id: u64, dest: &str) -> NotesLibResult<()> {
     let ref_str = nb_ref(src_notebook, nb_id);
     run(&["move", &ref_str, dest, "--force"]).await?;
+    Ok(())
+}
+
+/// Deletes `folder` and everything in it, recursively, from `notebook` — one
+/// call (confirmed against a real `nb` install: `<notebook>:delete <folder>/`
+/// removes the whole subtree, not just direct children). Used when
+/// permanently deleting an archived project's remnants from the shared
+/// `archive` notebook.
+pub async fn nb_delete_folder(notebook: &str, folder: &str) -> NotesLibResult<()> {
+    let cmd = nb_cmd(notebook, "delete");
+    let target = format!("{}/", folder);
+    run(&[&cmd, &target, "--force"]).await?;
+    Ok(())
+}
+
+/// Permanently deletes an entire notebook — used when permanently deleting a
+/// project's own dedicated notebook.
+pub async fn nb_delete_notebook(name: &str) -> NotesLibResult<()> {
+    run(&["notebooks", "delete", name, "--force"]).await?;
     Ok(())
 }
 

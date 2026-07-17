@@ -298,7 +298,12 @@ pub async fn archive_project(id: i64) -> ProjectLibResult<Project> {
     let base = base.trim_end_matches('/');
     let archive_dir = format!("{}/.archive", base);
     std::fs::create_dir_all(&archive_dir)?;
-    let zip_path = format!("{}/{}.zip", archive_dir, project.slug);
+    // Canonicalize the output path — `.current_dir(base)` below changes the
+    // zip subprocess's cwd (needed so `<slug>` alone resolves to the source
+    // directory and gets recorded inside the zip without the full `base`
+    // prefix), so a merely `base`-relative zip_path would otherwise resolve
+    // against the wrong (already-changed) cwd when `base` itself is relative.
+    let zip_path = std::fs::canonicalize(&archive_dir)?.join(format!("{}.zip", project.slug));
 
     let status = tokio::process::Command::new("zip")
         .arg("-r")
@@ -331,6 +336,93 @@ pub async fn archive_project(id: i64) -> ProjectLibResult<Project> {
         archived_at: Some(now),
         ..project
     })
+}
+
+/// Restores an archived project: the reverse of `archive_project`. Moves
+/// its notes and nb todos back out of the shared `archive` notebook (notes
+/// via `notes::restore_archived_notes`, todos by folder), unzips the
+/// filesystem folder back into place and removes the zip, then clears
+/// `archived_at`. Idempotent — restoring an already-live project just
+/// returns it unchanged.
+pub async fn restore_project(id: i64) -> ProjectLibResult<Project> {
+    let project = get_project(id).await?;
+    if project.archived_at.is_none() {
+        return Ok(project);
+    }
+
+    notes::restore_archived_notes(&project.slug, &project.slug).await?;
+    todo::restore_project_todos(&project.slug).await?;
+
+    let base = expand_home(base_dir());
+    let base = base.trim_end_matches('/');
+    let zip_path = format!("{}/.archive/{}.zip", base, project.slug);
+    if std::path::Path::new(&zip_path).exists() {
+        let status = tokio::process::Command::new("unzip")
+            .arg("-o")
+            .arg(&zip_path)
+            .arg("-d")
+            .arg(base)
+            .status()
+            .await?;
+        if !status.success() {
+            return Err(ProjectLibError::ArchiveFailed(format!(
+                "unzip exited with status {}",
+                status
+            )));
+        }
+        std::fs::remove_file(&zip_path)?;
+    }
+
+    db::execute_async(move |conn| {
+        conn.execute("UPDATE projects SET archived_at = NULL WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(ProjectLibError::Db)?;
+
+    Ok(Project {
+        archived_at: None,
+        ..project
+    })
+}
+
+/// Permanently deletes an archived project: destroys its archived notes and
+/// todos (the whole `archive:<slug>/` folder — todos live nested at
+/// `archive:<slug>/todo/`, so deleting the parent removes both in one call),
+/// its own now-empty nb notebook, its archive zip, its `lists` group, and
+/// the `projects` row itself. Irreversible, and only allowed on a project
+/// that's already archived — a live project can't be nuked without
+/// archiving it first.
+pub async fn delete_project(id: i64) -> ProjectLibResult<()> {
+    let project = get_project(id).await?;
+    if project.archived_at.is_none() {
+        return Err(ProjectLibError::InvalidInput(
+            "project must be archived before it can be permanently deleted".to_string(),
+        ));
+    }
+
+    notes::delete_archived_folder(&project.slug).await?;
+    notes::delete_notebook(&project.slug).await?;
+
+    let base = expand_home(base_dir());
+    let base = base.trim_end_matches('/');
+    let zip_path = format!("{}/.archive/{}.zip", base, project.slug);
+    std::fs::remove_file(&zip_path).ok();
+
+    // The `projects` row must go before its `lists` group — `list_group_id`
+    // is a foreign key into `shopping_list_groups`, so deleting the group
+    // first while this row still references it violates the constraint.
+    let group_id = project.list_group_id;
+    db::execute_async(move |conn| {
+        conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(ProjectLibError::Db)?;
+
+    lists::delete_group(group_id).await?;
+
+    Ok(())
 }
 
 #[cfg(test)]
