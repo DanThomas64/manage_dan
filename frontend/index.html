@@ -1207,6 +1207,9 @@
           <span>Groups</span>
           <button class="btn-icon" onclick="toggleAddGroupForm()" title="New group">+</button>
         </div>
+        <div class="notes-filters" style="padding:0 4px 8px;">
+          <button class="filter-pill" id="lists-hide-project-toggle" onclick="listsToggleHideProject(this)">Hide Project Lists</button>
+        </div>
         <div class="group-list" id="group-tabs"></div>
         <div class="add-group-form" id="add-group-form" style="display:none;">
           <input type="text" id="new-group-input" placeholder="Group name…"
@@ -1306,6 +1309,10 @@
         <span class="home-tile-icon">&#9989;</span>
         <span class="home-tile-label">Todo</span>
       </button>
+      <button class="home-tile" onclick="showView('projects')">
+        <span class="home-tile-icon">&#128193;</span>
+        <span class="home-tile-label">Projects</span>
+      </button>
     </div>
   </div>
 </div>
@@ -1350,6 +1357,9 @@
   <div class="notes-panel" id="npanel-browse">
     <div class="notes-filters" id="notebook-filters">
       <button class="filter-pill active" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>
+    </div>
+    <div class="notes-filters">
+      <button class="filter-pill" id="notes-hide-project-toggle" onclick="notesToggleHideProject(this)">Hide Project Items</button>
     </div>
     <div class="notes-list" id="notes-list">
       <div class="empty-state"><span class="icon">&#128221;</span><span>No notes yet</span></div>
@@ -1439,6 +1449,9 @@
 
   <!-- Recent panel: read-only view of the last 7 days of daily log entries -->
   <div class="log-panel" id="lpanel-recent">
+    <div class="notes-filters">
+      <button class="filter-pill" id="log-hide-project-toggle" onclick="logToggleHideProject(this)">Hide Project Items</button>
+    </div>
     <div class="notes-list" id="logs-list">
       <div class="empty-state"><span class="icon">&#128220;</span><span>No log entries yet</span></div>
     </div>
@@ -1507,9 +1520,40 @@
       <button class="filter-pill" data-filter="completed" onclick="todoSetFilter(this,'completed')">Completed</button>
       <button class="filter-pill" data-filter="all" onclick="todoSetFilter(this,'all')">All</button>
     </div>
+    <div class="notes-filters">
+      <button class="filter-pill" id="todo-hide-project-toggle" onclick="todoToggleHideProject(this)">Hide Project Items</button>
+    </div>
     <div class="notes-list" id="todo-list">
       <div class="empty-state"><span class="icon">&#9989;</span><span>No todos yet</span></div>
     </div>
+  </div>
+
+</div>
+
+<!-- Projects overlay -->
+<div id="projects-overlay" class="app-overlay">
+
+  <!-- Projects sub-nav -->
+  <div class="notes-nav">
+    <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
+    <button class="notes-tab active" id="ptab-list" onclick="projectsShowTab('list')">Projects</button>
+  </div>
+
+  <!-- List panel: all projects + create form -->
+  <div class="notes-panel active" id="ppanel-list">
+    <div class="quick-note-form" style="flex-direction:row;gap:8px;padding:12px 16px;">
+      <input type="text" id="project-name" placeholder="New project name…" autocomplete="off"
+             onkeydown="if(event.key==='Enter') submitProject()" style="flex:1;" />
+      <button class="btn-primary btn-sm" onclick="submitProject()">&#43; Create</button>
+    </div>
+    <div class="notes-list" id="projects-list">
+      <div class="empty-state"><span class="icon">&#128193;</span><span>No projects yet</span></div>
+    </div>
+  </div>
+
+  <!-- Detail panel: one project's aggregated todos/notes/logs/lists -->
+  <div class="notes-panel" id="ppanel-detail">
+    <div id="project-detail-content" style="padding:12px 16px;"></div>
   </div>
 
 </div>
@@ -1595,13 +1639,34 @@
     }
   }
 
+  let listsHideProjectItems = false;
+  let projectListGroupIds = new Set();
+
+  async function loadProjectListGroupIds() {
+    try {
+      const r = await fetch(PROJECT_API);
+      const projects = await r.json();
+      projectListGroupIds = new Set(projects.map(p => p.list_group_id));
+    } catch (_) {}
+  }
+
+  async function listsToggleHideProject(btn) {
+    listsHideProjectItems = !listsHideProjectItems;
+    btn.classList.toggle('active', listsHideProjectItems);
+    if (listsHideProjectItems) await loadProjectListGroupIds();
+    renderGroupTabs();
+  }
+
   function renderGroupTabs() {
     const el = document.getElementById('group-tabs');
-    if (!groups.length) {
+    const visibleGroups = listsHideProjectItems
+      ? groups.filter(g => !projectListGroupIds.has(g.id))
+      : groups;
+    if (!visibleGroups.length) {
       el.innerHTML = '<div class="empty-state" style="padding:12px 8px;font-size:0.85rem;">No groups yet</div>';
       return;
     }
-    el.innerHTML = groups.map(g => `
+    el.innerHTML = visibleGroups.map(g => `
       <div class="group-item${g.id === selectedGroupId ? ' active' : ''}"
            onclick="selectGroup(${g.id})">
         <span class="group-item-name">${esc(g.name)}</span>
@@ -2390,7 +2455,7 @@
   // APP NAVIGATION (Home / Lists / Notes / Log — full-screen overlays)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const OVERLAY_IDS = { home: 'home-overlay', lists: 'lists-overlay', notes: 'notes-overlay', log: 'log-overlay', todo: 'todo-overlay' };
+  const OVERLAY_IDS = { home: 'home-overlay', lists: 'lists-overlay', notes: 'notes-overlay', log: 'log-overlay', todo: 'todo-overlay', projects: 'projects-overlay' };
   let currentView = 'home';
 
   function showView(view, fromPopState) {
@@ -2402,6 +2467,7 @@
     if (view === 'notes') notesOnOpen();
     if (view === 'log') logOnOpen();
     if (view === 'todo') todoOnOpen();
+    if (view === 'projects') projectsOnOpen();
 
     // Push a history entry per view change so the mouse back/forward buttons
     // (and mobile swipe-back/forward gestures, which the browser maps to the
@@ -2479,15 +2545,29 @@
   async function logLoadRecent() {
     try {
       const r = await fetch(NOTES_API + '/daily?days=7');
-      const entries = await r.json();
+      let entries = await r.json();
+      if (logHideProjectItems) {
+        entries = entries.filter(e => !(e.tags || []).some(t => t.startsWith('project-')));
+      }
       renderLogList(entries);
     } catch (_) {
       document.getElementById('logs-list').innerHTML = '<div class="empty-state"><span>Failed to load log entries</span></div>';
     }
   }
 
-  function renderLogList(entries) {
-    const el = document.getElementById('logs-list');
+  let logHideProjectItems = false;
+
+  function logToggleHideProject(btn) {
+    logHideProjectItems = !logHideProjectItems;
+    btn.classList.toggle('active', logHideProjectItems);
+    logLoadRecent();
+  }
+
+  // `containerId` defaults to the main Log screen's list; the Project detail
+  // panel passes its own container id and is never subject to the main
+  // screen's "hide project items" toggle (it's already scoped to one project).
+  function renderLogList(entries, containerId) {
+    const el = document.getElementById(containerId || 'logs-list');
     if (!entries || entries.length === 0) {
       el.innerHTML = '<div class="empty-state"><span class="icon">&#128220;</span><span>No log entries in the last 7 days</span></div>';
       return;
@@ -2559,12 +2639,23 @@
     }
   });
 
+  let notesHideProjectItems = false;
+
+  function notesToggleHideProject(btn) {
+    notesHideProjectItems = !notesHideProjectItems;
+    btn.classList.toggle('active', notesHideProjectItems);
+    notesLoadBrowse();
+  }
+
   async function notesLoadBrowse() {
     let url = NOTES_API + '?';
     if (notesFilterNotebook) url += 'notebook=' + encodeURIComponent(notesFilterNotebook);
     try {
       const r = await fetch(url);
-      const notes = await r.json();
+      let notes = await r.json();
+      if (notesHideProjectItems) {
+        notes = notes.filter(n => !(n.tags || []).some(t => t.startsWith('project-')));
+      }
       renderNoteList(notes, 'notes-list', 'browse');
     } catch (_) {
       document.getElementById('notes-list').innerHTML = '<div class="empty-state"><span>Failed to load notes</span></div>';
@@ -2896,11 +2987,54 @@
     renderTodoList();
   }
 
+  // Builds one todo card's HTML — shared by the main Todo screen list and
+  // the Project detail panel's scoped todo list.
+  function renderTodoCard(i) {
+    const filled = Math.min(i.priority || 0, 5);
+    const bar = '#'.repeat(filled) + '.'.repeat(5 - filled);
+    const now = Date.now();
+    const isOverdue = i.due_date && !i.completed && new Date(i.due_date).getTime() < now;
+    const dueStr = i.due_date ? new Date(i.due_date).toLocaleDateString('en-GB', {day:'numeric',month:'short'}) : null;
+    const dueHtml = dueStr ? `<span class="note-badge ${isOverdue ? 'overdue' : 'tag'}">&#128197; ${esc(dueStr)}</span>` : '';
+    const projectHtml = i.project_title ? `<span class="note-badge folder">&#128193; ${esc(i.project_title)}</span>` : '';
+    const tagsHtml = (i.labels || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
+    const subtasksHtml = (i.subtasks || []).length
+      ? `<div class="todo-subtasks">${i.subtasks.map(s => `<div class="todo-subtask-line ${s.done ? 'done' : ''}">${s.done ? '&#9745;' : '&#9744;'} ${esc(s.title)}</div>`).join('')}</div>`
+      : '';
+    return `<div class="todo-card ${i.completed ? 'completed' : ''}">
+      <div class="todo-card-top">
+        <input type="checkbox" class="todo-checkbox" ${i.completed ? 'checked' : ''} onchange="todoToggleDone(${i.id}, this.checked)" />
+        <div style="flex:1;">
+          <div class="todo-card-title">${esc(i.title)}</div>
+          ${i.description ? `<div class="todo-card-desc">${esc(i.description)}</div>` : ''}
+        </div>
+      </div>
+      <div class="note-card-meta" style="padding-left:30px;">
+        <span class="todo-priority-bar">[${bar}]</span>
+        ${dueHtml}${projectHtml}${tagsHtml}
+      </div>
+      ${subtasksHtml}
+      <div class="todo-actions">
+        <button class="btn-ghost btn-sm" onclick="todoPrint(${i.id})">&#128438; Print</button>
+        <button class="btn-danger btn-sm" onclick="todoDelete(${i.id})">Delete</button>
+      </div>
+    </div>`;
+  }
+
+  let todoHideProjectItems = false;
+
+  function todoToggleHideProject(btn) {
+    todoHideProjectItems = !todoHideProjectItems;
+    btn.classList.toggle('active', todoHideProjectItems);
+    renderTodoList();
+  }
+
   function renderTodoList() {
     const el = document.getElementById('todo-list');
     let items = todoItems;
     if (todoFilter === 'active') items = items.filter(i => !i.completed);
     else if (todoFilter === 'completed') items = items.filter(i => i.completed);
+    if (todoHideProjectItems) items = items.filter(i => !i.project_title);
 
     if (!items || items.length === 0) {
       el.innerHTML = '<div class="empty-state"><span class="icon">&#9989;</span><span>No todos found</span></div>';
@@ -2915,37 +3049,7 @@
       return (b.priority || 0) - (a.priority || 0);
     });
 
-    const now = Date.now();
-    el.innerHTML = items.map(i => {
-      const filled = Math.min(i.priority || 0, 5);
-      const bar = '#'.repeat(filled) + '.'.repeat(5 - filled);
-      const isOverdue = i.due_date && !i.completed && new Date(i.due_date).getTime() < now;
-      const dueStr = i.due_date ? new Date(i.due_date).toLocaleDateString('en-GB', {day:'numeric',month:'short'}) : null;
-      const dueHtml = dueStr ? `<span class="note-badge ${isOverdue ? 'overdue' : 'tag'}">&#128197; ${esc(dueStr)}</span>` : '';
-      const projectHtml = i.project_title ? `<span class="note-badge folder">&#128193; ${esc(i.project_title)}</span>` : '';
-      const tagsHtml = (i.labels || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
-      const subtasksHtml = (i.subtasks || []).length
-        ? `<div class="todo-subtasks">${i.subtasks.map(s => `<div class="todo-subtask-line ${s.done ? 'done' : ''}">${s.done ? '&#9745;' : '&#9744;'} ${esc(s.title)}</div>`).join('')}</div>`
-        : '';
-      return `<div class="todo-card ${i.completed ? 'completed' : ''}">
-        <div class="todo-card-top">
-          <input type="checkbox" class="todo-checkbox" ${i.completed ? 'checked' : ''} onchange="todoToggleDone(${i.id}, this.checked)" />
-          <div style="flex:1;">
-            <div class="todo-card-title">${esc(i.title)}</div>
-            ${i.description ? `<div class="todo-card-desc">${esc(i.description)}</div>` : ''}
-          </div>
-        </div>
-        <div class="note-card-meta" style="padding-left:30px;">
-          <span class="todo-priority-bar">[${bar}]</span>
-          ${dueHtml}${projectHtml}${tagsHtml}
-        </div>
-        ${subtasksHtml}
-        <div class="todo-actions">
-          <button class="btn-ghost btn-sm" onclick="todoPrint(${i.id})">&#128438; Print</button>
-          <button class="btn-danger btn-sm" onclick="todoDelete(${i.id})">Delete</button>
-        </div>
-      </div>`;
-    }).join('');
+    el.innerHTML = items.map(renderTodoCard).join('');
   }
 
   async function todoToggleDone(id, done) {
@@ -2982,6 +3086,148 @@
       todoLoadList();
     } catch (_) {
       toast('Failed to delete todo', true);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PROJECTS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const PROJECT_API = '/api/v1/project';
+  let projectsList = [];
+
+  function projectsOnOpen() {
+    projectsShowTab('list');
+    fetchProjects();
+  }
+
+  function projectsShowTab(tab) {
+    document.querySelectorAll('#projects-overlay .notes-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('ptab-' + tab).classList.add('active');
+    document.querySelectorAll('#projects-overlay .notes-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('ppanel-' + tab).classList.add('active');
+  }
+
+  async function fetchProjects() {
+    try {
+      const r = await fetch(PROJECT_API);
+      if (!r.ok) throw 0;
+      projectsList = await r.json();
+      renderProjectsList();
+    } catch (_) {
+      document.getElementById('projects-list').innerHTML = '<div class="empty-state"><span>Failed to load projects</span></div>';
+    }
+  }
+
+  function renderProjectsList() {
+    const el = document.getElementById('projects-list');
+    if (!projectsList.length) {
+      el.innerHTML = '<div class="empty-state"><span class="icon">&#128193;</span><span>No projects yet</span></div>';
+      return;
+    }
+    el.innerHTML = projectsList.map(p => {
+      const archivedHtml = p.archived_at ? '<span class="note-badge tag">Archived</span>' : '';
+      return `<div class="note-card" onclick="selectProject(${p.id})">
+        <div class="note-card-title">${esc(p.name)}</div>
+        <div class="note-card-meta">
+          <span class="note-badge folder">&#128193; ${esc(p.slug)}</span>${archivedHtml}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  async function submitProject() {
+    const input = document.getElementById('project-name');
+    const name = input.value.trim();
+    if (!name) { toast('Project name is required', true); return; }
+    try {
+      const r = await fetch(PROJECT_API, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ name }),
+      });
+      if (!r.ok) { const msg = await r.text(); throw new Error(msg); }
+      input.value = '';
+      toast('Project created');
+      await fetchProjects();
+    } catch (e) {
+      toast('Failed to create project: ' + (e.message || ''), true);
+    }
+  }
+
+  async function selectProject(id) {
+    projectsShowTab('detail');
+    const el = document.getElementById('project-detail-content');
+    el.innerHTML = '<div class="empty-state"><span>Loading…</span></div>';
+    try {
+      const p = await (await fetch(PROJECT_API + '/' + id)).json();
+      if (p.archived_at) {
+        renderArchivedProjectDetail(p);
+        return;
+      }
+      const r = await fetch(PROJECT_API + '/' + id + '/detail');
+      if (!r.ok) throw 0;
+      renderProjectDetail(await r.json());
+    } catch (_) {
+      el.innerHTML = '<div class="empty-state"><span>Failed to load project</span></div>';
+    }
+  }
+
+  // Archived projects show static metadata only — no live re-fetch of moved
+  // notes/todos, which by now live in the shared `archive` notebook / zip.
+  function renderArchivedProjectDetail(p) {
+    const el = document.getElementById('project-detail-content');
+    const archivedDate = new Date(p.archived_at).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
+    el.innerHTML = `
+      <button class="btn-ghost btn-sm" onclick="projectsShowTab('list')" style="margin-bottom:12px;">&larr; Back</button>
+      <div class="note-card" style="cursor:default;">
+        <div class="note-card-title">${esc(p.name)} <span class="note-badge tag">Archived</span></div>
+        <div class="note-card-meta">
+          <span class="note-badge folder">&#128193; ${esc(p.slug)}</span>
+          <span class="note-date">Archived ${archivedDate}</span>
+        </div>
+        <div class="note-card-preview">Notes/todos moved to the "archive" notebook. Folder zipped at: ${esc(p.fs_path)}.zip (under .archive/)</div>
+      </div>`;
+  }
+
+  function renderProjectDetail(detail) {
+    const p = detail.project;
+    const el = document.getElementById('project-detail-content');
+    const todosHtml = detail.todos.length
+      ? detail.todos.map(renderTodoCard).join('')
+      : '<div class="empty-state"><span>No todos</span></div>';
+    const listsHtml = detail.lists.length
+      ? detail.lists.map(c => `<div class="note-card" style="cursor:default;"><div class="note-card-title">${esc(c.name)}</div></div>`).join('')
+      : '<div class="empty-state"><span>No lists</span></div>';
+
+    el.innerHTML = `
+      <button class="btn-ghost btn-sm" onclick="projectsShowTab('list')" style="margin-bottom:12px;">&larr; Back</button>
+      <div class="note-card-title" style="font-size:1.2rem;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+        ${esc(p.name)}
+        <button class="btn-danger btn-sm" onclick="archiveProject(${p.id})">Archive</button>
+      </div>
+      <div class="sidebar-header">Todos</div>
+      <div class="notes-list">${todosHtml}</div>
+      <div class="sidebar-header">Notes</div>
+      <div class="notes-list" id="project-notes-list"></div>
+      <div class="sidebar-header">Log</div>
+      <div class="notes-list" id="project-logs-list"></div>
+      <div class="sidebar-header">Lists</div>
+      <div class="notes-list">${listsHtml}</div>
+    `;
+    renderNoteList(detail.notes, 'project-notes-list', 'browse');
+    renderLogList(detail.logs, 'project-logs-list');
+  }
+
+  async function archiveProject(id) {
+    if (!confirm('Archive this project? Its notes and todos move to the archive notebook and its folder is zipped. This cannot be easily undone.')) return;
+    try {
+      const r = await fetch(`${PROJECT_API}/${id}/archive`, { method: 'POST' });
+      if (!r.ok) throw 0;
+      toast('Project archived');
+      selectProject(id);
+    } catch (_) {
+      toast('Failed to archive project', true);
     }
   }
 </script>

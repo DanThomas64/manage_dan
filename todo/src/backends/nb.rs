@@ -574,6 +574,33 @@ pub async fn archive_item(notebook: &str, id: i64) -> TodoLibResult {
     delete_item(notebook, id).await
 }
 
+/// Moves every todo item under `project_slug`'s folder into the shared
+/// `archive` notebook (`archive:<project_slug>/todo/...`), as part of
+/// project archiving. Leaves the (now empty) project folder behind — nb has
+/// no explicit "delete empty folder" operation. Stale `todo_nb_index` rows
+/// for the moved items are harmless: their folder no longer appears in
+/// `list_folders`, so `read_items` never resolves them again.
+pub async fn archive_project_todos(notebook: &str, project_slug: &str) -> TodoLibResult {
+    let entries = match list_paths_in_folder(notebook, project_slug).await {
+        Ok(e) => e,
+        Err(_) => return Ok(()), // no todos were ever created for this project
+    };
+    for (local_id, _path) in entries {
+        run(&[
+            format!("{}:move", notebook),
+            selector(project_slug, local_id),
+            // Trailing slash is required — without it `nb move` treats the
+            // destination as a rename target (a single file), so a second
+            // todo would silently overwrite the first instead of landing
+            // alongside it in a `todo/` subfolder.
+            format!("archive:{}/todo/", project_slug),
+            "--force".to_string(),
+        ])
+        .await?;
+    }
+    Ok(())
+}
+
 pub async fn delete_item(notebook: &str, id: i64) -> TodoLibResult {
     info!("Deleting nb todo item ID: {}", id);
     let (folder, local_id) = db::todo_nb_index_resolve(id)

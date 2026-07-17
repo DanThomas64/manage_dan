@@ -1,4 +1,4 @@
-use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem, Note, DailyLogEntry};
+use crate::api::{ApiClient, Status, StatusResponse, TodoItem, Subtask, LogEntry, ListGroup, ListCategory, ListItem as ApiListItem, CommonItem, Note, DailyLogEntry, Project, ProjectDetail};
 use anyhow::Result;
 use crossterm::{
     event::{self, Event as CEvent, KeyCode, KeyModifiers},
@@ -64,6 +64,13 @@ pub enum ListsInputMode {
     QuickAdd,
 }
 
+/// Input mode for the Project screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectInputMode {
+    Normal,
+    AddingProject,
+}
+
 /// Which sub-mode the Notes screen is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotesMode {
@@ -126,7 +133,8 @@ pub struct App {
     pub todo_list_state: ListState,
     pub todo_edit_mode: TodoEditMode, // Renamed from todo_input_mode
     pub todo_hide_completed: bool,
-    
+    pub todo_hide_project_items: bool,
+
     // Add Form State
     pub input_mode: InputMode,
     pub todo_input_focus: TodoInputFocus,
@@ -142,6 +150,11 @@ pub struct App {
 
     // Notes state
     pub notes: Vec<Note>,
+    /// Unfiltered cache underlying `notes` — re-filtered in place whenever
+    /// `notes_hide_project_items` is toggled, so selection stays index-aligned
+    /// with what's currently rendered instead of needing a re-fetch.
+    pub notes_all: Vec<Note>,
+    pub notes_hide_project_items: bool,
     pub notes_list_state: ListState,
     pub notes_view_note: Option<Note>,
     pub notes_mode: NotesMode,
@@ -157,6 +170,9 @@ pub struct App {
 
     // Log state
     pub daily_logs: Vec<DailyLogEntry>,
+    /// Unfiltered cache underlying `daily_logs` — see `notes_all`.
+    pub daily_logs_all: Vec<DailyLogEntry>,
+    pub log_hide_project_items: bool,
     pub daily_log_state: ListState,
     pub daily_log_mode: LogScreenMode,
     pub daily_log_days: i64,
@@ -167,6 +183,9 @@ pub struct App {
 
     // Lists State
     pub list_groups: Vec<ListGroup>,
+    /// Unfiltered cache underlying `list_groups` — see `notes_all`.
+    pub list_groups_all: Vec<ListGroup>,
+    pub lists_hide_project_items: bool,
     pub list_categories: Vec<ListCategory>,
     pub list_items: Vec<ApiListItem>,
     pub list_group_state: ListState,
@@ -177,6 +196,18 @@ pub struct App {
     pub lists_input_buffer: String,
     pub common_items: Vec<CommonItem>,
     pub common_item_state: ListState,
+
+    // Project state
+    pub projects: Vec<Project>,
+    pub project_list_state: ListState,
+    pub selected_project_detail: Option<ProjectDetail>,
+    pub project_input_mode: ProjectInputMode,
+    pub project_input_buffer: String,
+    /// `list_group_id`s belonging to a project — populated whenever projects
+    /// are fetched, and consulted by the Lists screen's "hide project lists"
+    /// toggle (each project owns one whole top-level list group, so hiding
+    /// project lists just means hiding those groups from the sidebar).
+    pub project_list_group_ids: std::collections::HashSet<i64>,
 }
 
 /// Parses the multiline subtasks input buffer into a `Vec<Subtask>`.
@@ -226,7 +257,8 @@ impl App {
             todo_list_state: ListState::default(),
             todo_edit_mode: TodoEditMode::Normal,
             todo_hide_completed: false,
-            
+            todo_hide_project_items: false,
+
             input_mode: InputMode::Normal,
             todo_input_focus: TodoInputFocus::Title,
             title_buffer: String::new(),
@@ -240,6 +272,8 @@ impl App {
             tags_buffer: String::new(),
 
             notes: Vec::new(),
+            notes_all: Vec::new(),
+            notes_hide_project_items: false,
             notes_list_state: ListState::default(),
             notes_view_note: None,
             notes_mode: NotesMode::List,
@@ -254,6 +288,8 @@ impl App {
             notes_create_focus: NotesCreateFocus::Content,
 
             daily_logs: Vec::new(),
+            daily_logs_all: Vec::new(),
+            log_hide_project_items: false,
             daily_log_state: ListState::default(),
             daily_log_mode: LogScreenMode::List,
             daily_log_days: 7,
@@ -263,6 +299,8 @@ impl App {
             daily_log_create_focus: LogCreateFocus::Content,
 
             list_groups: Vec::new(),
+            list_groups_all: Vec::new(),
+            lists_hide_project_items: false,
             list_categories: Vec::new(),
             list_items: Vec::new(),
             list_group_state: ListState::default(),
@@ -273,6 +311,13 @@ impl App {
             lists_input_buffer: String::new(),
             common_items: Vec::new(),
             common_item_state: ListState::default(),
+
+            projects: Vec::new(),
+            project_list_state: ListState::default(),
+            selected_project_detail: None,
+            project_input_mode: ProjectInputMode::Normal,
+            project_input_buffer: String::new(),
+            project_list_group_ids: std::collections::HashSet::new(),
         }
     }
 
@@ -339,7 +384,8 @@ impl App {
     pub async fn fetch_list_groups(&mut self) {
         match self.api_client.fetch_list_groups().await {
             Ok(groups) => {
-                self.list_groups = groups;
+                self.list_groups_all = groups;
+                self.apply_list_groups_project_filter();
                 self.list_categories.clear();
                 self.list_category_state.select(None);
                 self.list_items.clear();
@@ -356,6 +402,21 @@ impl App {
             }
             Err(e) => self.last_error = Some(format!("Lists API error: {}", e)),
         }
+    }
+
+    /// Recomputes the displayed `list_groups` from the unfiltered
+    /// `list_groups_all` cache — see `apply_notes_project_filter`. Each
+    /// project owns one whole top-level list group, so "hide project lists"
+    /// just hides those groups rather than filtering individual categories.
+    fn apply_list_groups_project_filter(&mut self) {
+        self.list_groups = if self.lists_hide_project_items {
+            self.list_groups_all.iter()
+                .filter(|g| !self.project_list_group_ids.contains(&g.id))
+                .cloned()
+                .collect()
+        } else {
+            self.list_groups_all.clone()
+        };
     }
 
     pub async fn fetch_list_categories_for_selected_group(&mut self) {
@@ -635,7 +696,8 @@ impl App {
         let notebook = self.notes_filter_notebook.as_deref();
         match self.api_client.fetch_notes(notebook, None).await {
             Ok(notes) => {
-                self.notes = notes;
+                self.notes_all = notes;
+                self.apply_notes_project_filter();
                 let sel = self.notes_list_state.selected().unwrap_or(0)
                     .min(self.notes.len().saturating_sub(1));
                 if self.notes.is_empty() {
@@ -651,6 +713,20 @@ impl App {
             Ok(notebooks) => self.notes_notebooks = notebooks,
             Err(_) => {}
         }
+    }
+
+    /// Recomputes the displayed `notes` from the unfiltered `notes_all`
+    /// cache. Called after fetching and whenever `notes_hide_project_items`
+    /// is toggled, so selection stays index-aligned with what's rendered.
+    fn apply_notes_project_filter(&mut self) {
+        self.notes = if self.notes_hide_project_items {
+            self.notes_all.iter()
+                .filter(|n| !n.tags.iter().any(|t| t.starts_with("project-")))
+                .cloned()
+                .collect()
+        } else {
+            self.notes_all.clone()
+        };
     }
 
     fn notes_move(&mut self, delta: i32) {
@@ -820,7 +896,8 @@ impl App {
     pub async fn fetch_daily_logs(&mut self) {
         match self.api_client.fetch_daily_logs(self.daily_log_days).await {
             Ok(entries) => {
-                self.daily_logs = entries;
+                self.daily_logs_all = entries;
+                self.apply_daily_logs_project_filter();
                 if self.daily_logs.is_empty() {
                     self.daily_log_state.select(None);
                 } else {
@@ -832,6 +909,19 @@ impl App {
             }
             Err(e) => self.last_error = Some(format!("Log error: {}", e)),
         }
+    }
+
+    /// Recomputes the displayed `daily_logs` from the unfiltered
+    /// `daily_logs_all` cache — see `apply_notes_project_filter`.
+    fn apply_daily_logs_project_filter(&mut self) {
+        self.daily_logs = if self.log_hide_project_items {
+            self.daily_logs_all.iter()
+                .filter(|e| !e.tags.iter().any(|t| t.starts_with("project-")))
+                .cloned()
+                .collect()
+        } else {
+            self.daily_logs_all.clone()
+        };
     }
 
     fn daily_log_move(&mut self, delta: i32) {
@@ -876,6 +966,84 @@ impl App {
         }
     }
 
+    // --- Project helpers ---
+
+    /// Fetches all projects (including archived) and the set of list-group
+    /// ids they own (consulted by the Lists screen's hide-toggle).
+    pub async fn fetch_projects(&mut self) {
+        match self.api_client.fetch_projects().await {
+            Ok(projects) => {
+                self.project_list_group_ids = projects.iter().map(|p| p.list_group_id).collect();
+                self.projects = projects;
+                if self.projects.is_empty() {
+                    self.project_list_state.select(None);
+                } else {
+                    let sel = self.project_list_state.selected().unwrap_or(0)
+                        .min(self.projects.len().saturating_sub(1));
+                    self.project_list_state.select(Some(sel));
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Failed to fetch projects: {}", e)),
+        }
+    }
+
+    fn project_move_selection(&mut self, delta: i32) {
+        let len = self.projects.len();
+        if len == 0 { return; }
+        let cur = self.project_list_state.selected().unwrap_or(0) as i32;
+        let next = (cur + delta).rem_euclid(len as i32) as usize;
+        self.project_list_state.select(Some(next));
+    }
+
+    /// Fetches the aggregated detail for the currently-selected project.
+    /// Archived projects get their metadata only, matching the server's
+    /// own metadata-only behavior for `/detail` on an archived project.
+    pub async fn project_load_selected_detail(&mut self) {
+        let Some(p) = self.project_list_state.selected().and_then(|i| self.projects.get(i)).cloned() else {
+            self.selected_project_detail = None;
+            return;
+        };
+        match self.api_client.fetch_project_detail(p.id).await {
+            Ok(detail) => {
+                self.selected_project_detail = Some(detail);
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Failed to load project: {}", e)),
+        }
+    }
+
+    pub async fn project_submit_create(&mut self) {
+        let name = self.project_input_buffer.trim().to_string();
+        if name.is_empty() {
+            return;
+        }
+        match self.api_client.create_project(&name).await {
+            Ok(_) => {
+                self.project_input_buffer.clear();
+                self.project_input_mode = ProjectInputMode::Normal;
+                self.fetch_projects().await;
+                self.project_load_selected_detail().await;
+            }
+            Err(e) => self.last_error = Some(format!("Create project failed: {}", e)),
+        }
+    }
+
+    /// Archives the currently-selected project. Never deletes anything —
+    /// see `project::archive_project` server-side for the full sequence.
+    pub async fn project_archive_selected(&mut self) {
+        let Some(p) = self.project_list_state.selected().and_then(|i| self.projects.get(i)).cloned() else {
+            return;
+        };
+        match self.api_client.archive_project(p.id).await {
+            Ok(_) => {
+                self.fetch_projects().await;
+                self.project_load_selected_detail().await;
+            }
+            Err(e) => self.last_error = Some(format!("Archive failed: {}", e)),
+        }
+    }
+
     /// Handles input events specific to the current screen.
     pub async fn handle_input(&mut self, event: CEvent) {
         let previous_screen = self.current_screen;
@@ -901,6 +1069,19 @@ impl App {
                                 KeyCode::Char('f') => {
                                     self.todo_hide_completed = !self.todo_hide_completed;
                                     // Clamp selection to the new visible range
+                                    let visible_count = self.visible_todo_indices().len();
+                                    match self.todo_list_state.selected() {
+                                        Some(i) if i >= visible_count => {
+                                            self.todo_list_state.select(Some(visible_count.saturating_sub(1)));
+                                        }
+                                        None if visible_count > 0 => {
+                                            self.todo_list_state.select(Some(0));
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                                KeyCode::Char('P') => {
+                                    self.todo_hide_project_items = !self.todo_hide_project_items;
                                     let visible_count = self.visible_todo_indices().len();
                                     match self.todo_list_state.selected() {
                                         Some(i) if i >= visible_count => {
@@ -963,6 +1144,13 @@ impl App {
                             }
                             KeyCode::Char('n') => {
                                 self.notes_mode = NotesMode::Create;
+                            }
+                            KeyCode::Char('P') => {
+                                self.notes_hide_project_items = !self.notes_hide_project_items;
+                                self.apply_notes_project_filter();
+                                let len = self.notes.len();
+                                let sel = self.notes_list_state.selected().unwrap_or(0).min(len.saturating_sub(1));
+                                if len == 0 { self.notes_list_state.select(None); } else { self.notes_list_state.select(Some(sel)); }
                             }
                             _ => { self.handle_nav_key(key.code); }
                         },
@@ -1084,9 +1272,53 @@ impl App {
             }
             Screen::Project => {
                 if let CEvent::Key(key) = event {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => self.current_screen = Screen::Dashboard,
-                        _ => { self.handle_nav_key(key.code); }
+                    match self.project_input_mode {
+                        ProjectInputMode::Normal => {
+                            match key.code {
+                                KeyCode::Char('q') | KeyCode::Esc => {
+                                    self.current_screen = Screen::Dashboard;
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    self.project_move_selection(-1);
+                                    self.project_load_selected_detail().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    self.project_move_selection(1);
+                                    self.project_load_selected_detail().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Char('a') => {
+                                    self.project_input_mode = ProjectInputMode::AddingProject;
+                                    self.project_input_buffer.clear();
+                                }
+                                KeyCode::Char('x') => {
+                                    self.project_archive_selected().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Char('r') => {
+                                    self.fetch_projects().await;
+                                    self.project_load_selected_detail().await;
+                                    action_taken = true;
+                                }
+                                _ => { self.handle_nav_key(key.code); }
+                            }
+                        }
+                        ProjectInputMode::AddingProject => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.project_input_mode = ProjectInputMode::Normal;
+                                    self.project_input_buffer.clear();
+                                }
+                                KeyCode::Enter => {
+                                    self.project_submit_create().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Backspace => { self.project_input_buffer.pop(); }
+                                KeyCode::Char(c) => self.project_input_buffer.push(c),
+                                _ => {}
+                            }
+                        }
                     }
                 }
             }
@@ -1184,6 +1416,18 @@ impl App {
                                     self.fetch_list_groups().await;
                                     action_taken = true;
                                 }
+                                KeyCode::Char('P') => {
+                                    if self.project_list_group_ids.is_empty() {
+                                        self.fetch_projects().await;
+                                    }
+                                    self.lists_hide_project_items = !self.lists_hide_project_items;
+                                    self.apply_list_groups_project_filter();
+                                    let len = self.list_groups.len();
+                                    let sel = self.list_group_state.selected().unwrap_or(0).min(len.saturating_sub(1));
+                                    if len == 0 { self.list_group_state.select(None); } else { self.list_group_state.select(Some(sel)); }
+                                    self.fetch_list_categories_for_selected_group().await;
+                                    action_taken = true;
+                                }
                                 _ => { self.handle_nav_key(key.code); }
                             }
                         }
@@ -1260,6 +1504,13 @@ impl App {
                             }
                             KeyCode::Char('n') => {
                                 self.daily_log_mode = LogScreenMode::Create;
+                            }
+                            KeyCode::Char('P') => {
+                                self.log_hide_project_items = !self.log_hide_project_items;
+                                self.apply_daily_logs_project_filter();
+                                let len = self.daily_logs.len();
+                                let sel = self.daily_log_state.selected().unwrap_or(0).min(len.saturating_sub(1));
+                                if len == 0 { self.daily_log_state.select(None); } else { self.daily_log_state.select(Some(sel)); }
                             }
                             _ => { self.handle_nav_key(key.code); }
                         },
@@ -1341,6 +1592,10 @@ impl App {
                 }
                 Screen::Log => {
                     self.fetch_daily_logs().await;
+                }
+                Screen::Project => {
+                    self.fetch_projects().await;
+                    self.project_load_selected_detail().await;
                 }
                 _ => {}
             }
@@ -1717,6 +1972,7 @@ impl App {
             .iter()
             .enumerate()
             .filter(|(_, item)| !(self.todo_hide_completed && item.completed))
+            .filter(|(_, item)| !(self.todo_hide_project_items && item.project_title.is_some()))
             .map(|(i, _)| i)
             .collect()
     }
@@ -1838,7 +2094,7 @@ impl Tui {
                 Screen::Dashboard => draw_dashboard(frame, app, area),
                 Screen::Todo => draw_todo_screen(frame, app, area),
                 Screen::Notes => draw_notes_screen(frame, app, area),
-                Screen::Project => draw_project_placeholder(frame, area),
+                Screen::Project => draw_project_screen(frame, app, area),
                 Screen::Lists => draw_lists_screen(frame, app, area),
                 Screen::Log => draw_log_screen(frame, app, area),
                 _ => {}
@@ -3270,15 +3526,104 @@ fn draw_log_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     );
 }
 
-fn draw_project_placeholder(frame: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let summary = format!("{} projects", app.projects.len());
+
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
         .split(area);
-    draw_section_header(frame, outer[0], "PROJECT", "Coming soon", Color::Magenta);
-    let text = Paragraph::new("\nPress Q or Esc to go back")
-        .block(Block::default().borders(Borders::ALL).border_style(Style::default().fg(Color::Magenta)));
-    frame.render_widget(text, outer[1]);
+    let (header_area, body, footer_area) = (outer[0], outer[1], outer[2]);
+    draw_section_header(frame, header_area, "PROJECT", &summary, Color::Magenta);
+
+    let content_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .split(body);
+    let (list_area, detail_area) = (content_chunks[0], content_chunks[1]);
+
+    // Project list
+    let list_items: Vec<ListItem> = app.projects.iter().map(|p| {
+        let label = if p.archived_at.is_some() {
+            format!("{} (archived)", p.name)
+        } else {
+            p.name.clone()
+        };
+        ListItem::new(label)
+    }).collect();
+
+    let list_title = format!(" Projects ({}) ", app.projects.len());
+    let list_widget = List::new(list_items)
+        .block(Block::default().borders(Borders::ALL).title(list_title)
+            .border_style(Style::default().fg(Color::Magenta)))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Magenta))
+        .highlight_symbol("> ");
+    frame.render_stateful_widget(list_widget, list_area, &mut app.project_list_state);
+
+    // Detail pane
+    let (detail_title, detail_content) = match &app.selected_project_detail {
+        Some(detail) if detail.project.archived_at.is_some() => {
+            let archived = detail.project.archived_at
+                .map(|d| d.format("%d %b %Y").to_string())
+                .unwrap_or_default();
+            let body = format!(
+                "Archived {}\n\nSlug: {}\nFolder: {} (zipped under .archive/)\n\n\
+                Notes/todos moved to the shared \"archive\" notebook.\n\
+                No live content shown for archived projects.",
+                archived, detail.project.slug, detail.project.fs_path,
+            );
+            (format!(" {} ", detail.project.name), body)
+        }
+        Some(detail) => {
+            let mut body = format!(
+                "Slug: {}\nFolder: {}\n\n\
+                Todos ({}):\n",
+                detail.project.slug, detail.project.fs_path, detail.todos.len(),
+            );
+            for t in detail.todos.iter().take(8) {
+                body.push_str(&format!("  {} {}\n", if t.completed { "[x]" } else { "[ ]" }, t.title));
+            }
+            body.push_str(&format!("\nNotes ({}):\n", detail.notes.len()));
+            for n in detail.notes.iter().take(8) {
+                body.push_str(&format!("  {}\n", if n.title.is_empty() { "(untitled)" } else { &n.title }));
+            }
+            body.push_str(&format!("\nLog entries ({}):\n", detail.logs.len()));
+            for l in detail.logs.iter().take(8) {
+                body.push_str(&format!("  {} {} {}\n", l.date, l.time, l.title));
+            }
+            body.push_str(&format!("\nLists ({}):\n", detail.lists.len()));
+            for c in detail.lists.iter().take(8) {
+                body.push_str(&format!("  {}\n", c.name));
+            }
+            (format!(" {} ", detail.project.name), body)
+        }
+        None => {
+            let help = "  Select a project to view its aggregated todos/notes/log/lists.\n\n\
+                Navigation:\n\
+                \u{2022} j / k or arrows — move selection\n\
+                \u{2022} a              — new project\n\
+                \u{2022} x              — archive selected (never deletes)\n\
+                \u{2022} r              — refresh\n\
+                \u{2022} q              — back to dashboard".to_string();
+            (" Project ".to_string(), help)
+        }
+    };
+
+    let detail_widget = Paragraph::new(detail_content)
+        .block(Block::default().borders(Borders::ALL).title(detail_title)
+            .border_style(Style::default().fg(Color::Rgb(110, 110, 110))))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(detail_widget, detail_area);
+
+    // Footer
+    let footer_text = match app.project_input_mode {
+        ProjectInputMode::Normal => "j/k: move  a: new  x: archive  P: (other screens) hide project items  r: refresh  q: back".to_string(),
+        ProjectInputMode::AddingProject => format!("New project name: {}_  (Enter: create, Esc: cancel)", app.project_input_buffer),
+    };
+    frame.render_widget(
+        Paragraph::new(footer_text).style(Style::default().fg(Color::Magenta)),
+        footer_area,
+    );
 }
 
 // ---------------------------------------------------------------------------------

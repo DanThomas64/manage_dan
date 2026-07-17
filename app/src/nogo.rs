@@ -138,7 +138,7 @@ impl SystemsStatus {
             false => self.update("notes", Status::Nogo),
         };
         // initialize project
-        match project::init()
+        match project::init(&AppConfig::get().project.base_dir)
             .map_err(|e| AppError::Project(e).print())
             .is_ok()
         {

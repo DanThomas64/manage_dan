@@ -842,6 +842,174 @@ pub async fn read_logs_handler(query: LogQuery) -> Result<impl Reply, Rejection>
     }
 }
 
+// --- Project Endpoints ---
+
+#[derive(Deserialize)]
+pub struct CreateProjectRequest {
+    pub name: String,
+}
+
+/// GET /api/v1/project - list all projects (including archived)
+pub async fn list_projects_handler() -> Result<impl Reply, Rejection> {
+    match project::list_projects().await {
+        Ok(projects) => Ok(warp::reply::json(&projects)),
+        Err(e) => {
+            error!("Failed to list projects: {}", e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/project - create a new project
+pub async fn create_project_handler(body: CreateProjectRequest) -> Result<impl Reply, Rejection> {
+    match project::create_project(&body.name).await {
+        Ok(p) => Ok(warp::reply::with_status(warp::reply::json(&p), StatusCode::CREATED)),
+        Err(ProjectLibError::InvalidInput(msg)) => Err(warp::reject::custom(ApiError::ProjectInvalidInput(msg))),
+        Err(ProjectLibError::DuplicateName(name)) => Err(warp::reject::custom(ApiError::ProjectInvalidInput(
+            format!("a project named '{}' already exists", name),
+        ))),
+        Err(e) => {
+            error!("Failed to create project: {}", e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/project/:id - project metadata only
+pub async fn get_project_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match project::get_project(id).await {
+        Ok(p) => Ok(warp::reply::json(&p)),
+        Err(ProjectLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to get project {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/project/:id/detail - aggregated todos+notes+logs+lists
+/// (metadata-only once the project is archived)
+pub async fn project_detail_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match project::project_detail(id).await {
+        Ok(detail) => Ok(warp::reply::json(&detail)),
+        Err(ProjectLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to get project detail {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/project/:id/archive - archives a project (never deletes)
+pub async fn archive_project_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match project::archive_project(id).await {
+        Ok(p) => Ok(warp::reply::json(&p)),
+        Err(ProjectLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to archive project {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/project/:id/todos - todos scoped to the project
+pub async fn project_todos_handler(id: i64) -> Result<impl Reply, Rejection> {
+    let p = match project::get_project(id).await {
+        Ok(p) => p,
+        Err(ProjectLibError::NotFound(_)) => return Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to get project {}: {}", id, e);
+            return Err(warp::reject::custom(ApiError::ProjectOperationFailed));
+        }
+    };
+    match project::project_todos(&p).await {
+        Ok(items) => Ok(warp::reply::json(&items)),
+        Err(e) => {
+            error!("Failed to list project {} todos: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/project/:id/todos - creates a todo scoped to the project
+pub async fn create_project_todo_handler(id: i64, mut item: TodoItem) -> Result<impl Reply, Rejection> {
+    let p = match project::get_project(id).await {
+        Ok(p) => p,
+        Err(ProjectLibError::NotFound(_)) => return Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to get project {}: {}", id, e);
+            return Err(warp::reject::custom(ApiError::ProjectOperationFailed));
+        }
+    };
+    item.project_title = Some(p.slug);
+    match todo::create_item(item).await {
+        Ok(new_item) => Ok(warp::reply::with_status(warp::reply::json(&new_item), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to create project todo: {}", e);
+            Err(warp::reject::custom(ApiError::TodoOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/project/:id/notes - notes scoped to the project
+pub async fn project_notes_handler(id: i64) -> Result<impl Reply, Rejection> {
+    let p = match project::get_project(id).await {
+        Ok(p) => p,
+        Err(ProjectLibError::NotFound(_)) => return Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to get project {}: {}", id, e);
+            return Err(warp::reject::custom(ApiError::ProjectOperationFailed));
+        }
+    };
+    match project::project_notes(&p).await {
+        Ok(notes) => Ok(warp::reply::json(&notes)),
+        Err(e) => {
+            error!("Failed to list project {} notes: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/project/:id/logs?days= - log entries scoped to the project
+/// (default 30 days)
+pub async fn project_logs_handler(id: i64, q: DailyLogQuery) -> Result<impl Reply, Rejection> {
+    let days = q.days.unwrap_or(30);
+    let p = match project::get_project(id).await {
+        Ok(p) => p,
+        Err(ProjectLibError::NotFound(_)) => return Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to get project {}: {}", id, e);
+            return Err(warp::reject::custom(ApiError::ProjectOperationFailed));
+        }
+    };
+    match project::project_logs(&p, days).await {
+        Ok(logs) => Ok(warp::reply::json(&logs)),
+        Err(e) => {
+            error!("Failed to list project {} logs: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/project/:id/lists - list categories scoped to the project
+pub async fn project_lists_handler(id: i64) -> Result<impl Reply, Rejection> {
+    let p = match project::get_project(id).await {
+        Ok(p) => p,
+        Err(ProjectLibError::NotFound(_)) => return Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to get project {}: {}", id, e);
+            return Err(warp::reject::custom(ApiError::ProjectOperationFailed));
+        }
+    };
+    match project::project_lists(&p).await {
+        Ok(lists) => Ok(warp::reply::json(&lists)),
+        Err(e) => {
+            error!("Failed to list project {} lists: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
 // --- Error Handling ---
 
 /// Custom API errors used for rejection handling.
@@ -853,6 +1021,8 @@ enum ApiError {
     ListsOperationFailed,
     NotesOperationFailed,
     NotesInvalidInput(String),
+    ProjectOperationFailed,
+    ProjectInvalidInput(String),
 }
 
 impl warp::reject::Reject for ApiError {}
@@ -870,6 +1040,10 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
     } else if let Some(ApiError::NotesOperationFailed) = err.find() {
         Ok(warp::reply::with_status("Notes operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
     } else if let Some(ApiError::NotesInvalidInput(msg)) = err.find() {
+        Ok(warp::reply::with_status(msg.clone(), StatusCode::BAD_REQUEST))
+    } else if let Some(ApiError::ProjectOperationFailed) = err.find() {
+        Ok(warp::reply::with_status("Project operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
+    } else if let Some(ApiError::ProjectInvalidInput(msg)) = err.find() {
         Ok(warp::reply::with_status(msg.clone(), StatusCode::BAD_REQUEST))
     } else {
         Err(err)
@@ -1270,6 +1444,109 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
     search.or(folders).or(tags).or(list).or(create).or(create_log).or(list_log).or(print).or(get_one).or(update).or(delete)
 }
 
+/// Defines routes for the project subsystem.
+///
+/// URL structure:
+///   /api/v1/project                — list/create
+///   /api/v1/project/:id            — metadata only
+///   /api/v1/project/:id/detail     — aggregated todos+notes+logs+lists
+///   /api/v1/project/:id/archive    — archive (never deletes)
+///   /api/v1/project/:id/todos      — scoped todos, GET + POST
+///   /api/v1/project/:id/notes      — scoped notes
+///   /api/v1/project/:id/logs       — scoped log entries, ?days=
+///   /api/v1/project/:id/lists      — scoped list categories
+fn project_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    let project_seg = warp::path("project");
+
+    // GET /api/v1/project
+    let list = project_seg
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_projects_handler);
+
+    // POST /api/v1/project
+    let create = project_seg
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(create_project_handler);
+
+    // GET /api/v1/project/:id/detail
+    let detail = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("detail"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(project_detail_handler);
+
+    // POST /api/v1/project/:id/archive
+    let archive = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("archive"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and_then(archive_project_handler);
+
+    // GET /api/v1/project/:id/todos
+    let todos = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("todos"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(project_todos_handler);
+
+    // POST /api/v1/project/:id/todos
+    let create_todo = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("todos"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(|id, item| create_project_todo_handler(id, item));
+
+    // GET /api/v1/project/:id/notes
+    let notes = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("notes"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(project_notes_handler);
+
+    // GET /api/v1/project/:id/logs?days=
+    let logs = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("logs"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<DailyLogQuery>())
+        .and_then(|id, q| project_logs_handler(id, q));
+
+    // GET /api/v1/project/:id/lists
+    let lists = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("lists"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(project_lists_handler);
+
+    // GET /api/v1/project/:id
+    let get_one = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(get_project_handler);
+
+    list.or(create)
+        .or(detail)
+        .or(archive)
+        .or(todos)
+        .or(create_todo)
+        .or(notes)
+        .or(logs)
+        .or(lists)
+        .or(get_one)
+}
+
 /// Defines routes related to logging.
 fn log_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     warp::path("logs")
@@ -1308,6 +1585,7 @@ pub fn routes(
             .or(log_routes())
             .or(list_routes())
             .or(notes_routes())
+            .or(project_routes())
         )
     )
     .recover(handle_rejection)
