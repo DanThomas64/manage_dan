@@ -3,22 +3,6 @@
 # Application environment (used for environment-specific config loading)
 environment = "development"
 
-[printer]
-# Vendor ID (VID) for the USB ESC/POS printer
-# Default: 0x0fe6
-vendor_id = 4070
-
-# Product ID (PID) for the USB ESC/POS printer
-# Default: 0x811e
-product_id = 33054
-
-# Printer backend: "usb" for physical thermal printer, "terminal" for stdout rendering
-mode = "terminal"
-
-# Characters per line of the physical receipt.  Common values: 42 (ESC/POS default) or 48.
-# Check your printer's spec sheet and set this in config/local.toml if needed.
-characters_per_line = 42
-
 # How often the print monitor polls Vikunja for "print"-labelled tasks (seconds).
 monitor_interval_secs = 30
 
@@ -35,6 +19,22 @@ completed_summary_enabled = true
 
 # Local hour (0-23) at which the completed-task summary is printed.
 completed_summary_hour = 20
+
+[printer]
+# Vendor ID (VID) for the USB ESC/POS printer
+# Default: 0x0fe6
+vendor_id = 4070
+
+# Product ID (PID) for the USB ESC/POS printer
+# Default: 0x811e
+product_id = 33054
+
+# Printer backend: "usb" for physical thermal printer, "terminal" for stdout rendering
+mode = "terminal"
+
+# Characters per line of the physical receipt.  Common values: 42 (ESC/POS default) or 48.
+# Check your printer's spec sheet and set this in config/local.toml if needed.
+characters_per_line = 42
 
 [logging]
 # Path to the log file (relative to the working directory, or absolute).
