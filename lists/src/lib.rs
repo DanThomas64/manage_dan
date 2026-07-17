@@ -41,7 +41,8 @@ pub fn init() -> ListsLibResult {
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             group_id       INTEGER REFERENCES shopping_list_groups(id) ON DELETE CASCADE,
             name           TEXT NOT NULL,
-            has_checkboxes INTEGER NOT NULL DEFAULT 1
+            has_checkboxes INTEGER NOT NULL DEFAULT 1,
+            has_quick_add  INTEGER NOT NULL DEFAULT 1
         );
 
         CREATE TABLE IF NOT EXISTS shopping_items (
@@ -106,6 +107,23 @@ pub fn init() -> ListsLibResult {
     if !has_checkboxes_exists {
         conn.execute_batch(
             "ALTER TABLE shopping_categories ADD COLUMN has_checkboxes INTEGER NOT NULL DEFAULT 1",
+        )
+        .map_err(|e| DbLibError::Sqlite(e))?;
+    }
+
+    // ── Migration: add has_quick_add to shopping_categories ──────────────
+    let has_quick_add_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('shopping_categories') WHERE name = 'has_quick_add'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        != 0;
+
+    if !has_quick_add_exists {
+        conn.execute_batch(
+            "ALTER TABLE shopping_categories ADD COLUMN has_quick_add INTEGER NOT NULL DEFAULT 1",
         )
         .map_err(|e| DbLibError::Sqlite(e))?;
     }
@@ -254,18 +272,20 @@ pub async fn delete_group(id: i64) -> ListsLibResult {
 pub async fn list_categories(group_id: i64) -> ListsLibResult<Vec<ListCategory>> {
     db::execute_async(move |conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, group_id, name, has_checkboxes FROM shopping_categories
+            "SELECT id, group_id, name, has_checkboxes, has_quick_add FROM shopping_categories
              WHERE group_id = ?1
              ORDER BY name",
         )?;
         let rows: rusqlite::Result<Vec<ListCategory>> = stmt
             .query_map(params![group_id], |row| {
                 let has_checkboxes: i64 = row.get(3)?;
+                let has_quick_add: i64 = row.get(4)?;
                 Ok(ListCategory {
                     id: row.get(0)?,
                     group_id: row.get(1)?,
                     name: row.get(2)?,
                     has_checkboxes: has_checkboxes != 0,
+                    has_quick_add: has_quick_add != 0,
                 })
             })?
             .collect();
@@ -288,7 +308,7 @@ pub async fn add_category(group_id: i64, name: &str) -> ListsLibResult<ListCateg
     })
     .await
     .map_err(ListsLibError::Db)?;
-    Ok(ListCategory { id, group_id, name, has_checkboxes: true })
+    Ok(ListCategory { id, group_id, name, has_checkboxes: true, has_quick_add: true })
 }
 
 /// Deletes a category and all its items.
@@ -408,6 +428,20 @@ pub async fn set_checkboxes(category_id: i64, has_checkboxes: bool) -> ListsLibR
     db::execute_async(move |conn| {
         conn.execute(
             "UPDATE shopping_categories SET has_checkboxes = ?1 WHERE id = ?2",
+            params![val, category_id],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| ListsLibError::Db(e))
+}
+
+/// Sets whether a category shows its "Quick Add" pane of saved common items.
+pub async fn set_quick_add(category_id: i64, has_quick_add: bool) -> ListsLibResult {
+    let val: i64 = if has_quick_add { 1 } else { 0 };
+    db::execute_async(move |conn| {
+        conn.execute(
+            "UPDATE shopping_categories SET has_quick_add = ?1 WHERE id = ?2",
             params![val, category_id],
         )?;
         Ok(())

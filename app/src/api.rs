@@ -471,6 +471,20 @@ pub async fn set_checkboxes_handler(id: i64, body: SetCheckboxesBody) -> Result<
     }
 }
 
+/// PATCH /api/v1/lists/categories/:id/quick-add
+#[derive(Deserialize)]
+pub struct SetQuickAddBody { pub has_quick_add: bool }
+
+pub async fn set_quick_add_handler(id: i64, body: SetQuickAddBody) -> Result<impl Reply, Rejection> {
+    match lists::set_quick_add(id, body.has_quick_add).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to set quick-add for category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
 /// POST /api/v1/lists/categories/:id/reorder
 #[derive(Deserialize)]
 pub struct ReorderItemsBody { pub ids: Vec<i64> }
@@ -1065,6 +1079,16 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::body::json())
         .and_then(|id, body| set_checkboxes_handler(id, body));
 
+    // PATCH /api/v1/lists/categories/:id/quick-add
+    let set_quick_add = lists
+        .and(categories)
+        .and(warp::path::param::<i64>())
+        .and(warp::path("quick-add"))
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(|id, body| set_quick_add_handler(id, body));
+
     // POST /api/v1/lists/categories/:id/reorder
     let reorder = lists
         .and(categories)
@@ -1143,6 +1167,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .or(delete_item)
         .or(rename_cat)
         .or(set_checkboxes)
+        .or(set_quick_add)
         .or(reorder)
         .or(clear)
         .or(print)

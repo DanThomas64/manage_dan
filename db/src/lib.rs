@@ -83,6 +83,16 @@ pub fn init() -> DbLibResult {
         [],
     )?;
 
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS todo_nb_index (
+            id       INTEGER PRIMARY KEY AUTOINCREMENT,
+            folder   TEXT NOT NULL,
+            local_id INTEGER NOT NULL,
+            UNIQUE(folder, local_id)
+        )",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -222,6 +232,32 @@ pub async fn printed_record_set(
     .map_err(|e| DbLibError::Internal(format!("DB error setting printed record: {}", e)))
 }
 
+/// Atomically claims the right to print a task with the given content hash.
+///
+/// Returns `true` if the caller won the claim (no row existed yet, or the
+/// stored hash differs) and should proceed to print; `false` if another
+/// caller already recorded this exact hash. Both the creation path and the
+/// background print monitor can observe a brand-new task at nearly the same
+/// time — this single atomic `INSERT ... ON CONFLICT ... WHERE` statement is
+/// what guarantees only one of them actually prints it.
+pub async fn printed_claim(task_id: i64, content_hash: String) -> DbLibResult<bool> {
+    let ts = Local::now().to_rfc3339();
+    execute_async(move |conn| {
+        let changed = conn.execute(
+            "INSERT INTO printed_tasks (vikunja_task_id, printed_at, content_hash)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(vikunja_task_id) DO UPDATE SET
+               printed_at   = excluded.printed_at,
+               content_hash = excluded.content_hash
+             WHERE printed_tasks.content_hash IS NOT excluded.content_hash",
+            params![task_id, ts, content_hash],
+        )?;
+        Ok(changed > 0)
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error claiming print: {}", e)))
+}
+
 /// Removes the printed_at record for a Vikunja task (e.g. when the task is deleted).
 pub async fn printed_at_delete(task_id: i64) -> DbLibResult {
     execute_async(move |conn| {
@@ -292,6 +328,71 @@ pub async fn recurring_printed_record(date: String, task_title: String) -> DbLib
     })
     .await
     .map_err(|e| DbLibError::Internal(format!("DB error recording recurring_printed: {}", e)))
+}
+
+// --- todo_nb_index ---
+//
+// The `nb` CLI assigns todo item IDs per-folder, not notebook-wide (two
+// different project folders can each have a local id `1`). This table maps
+// each `(folder, local_id)` pair to a stable, globally unique synthetic id
+// so the nb-backed todo backend can hand out a plain `i64` like the Vikunja
+// backend does.
+
+/// Returns the synthetic id for `(folder, local_id)`, creating one if it
+/// doesn't exist yet. Stable across restarts.
+pub async fn todo_nb_index_get_or_create(folder: String, local_id: i64) -> DbLibResult<i64> {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT OR IGNORE INTO todo_nb_index (folder, local_id) VALUES (?1, ?2)",
+            params![folder, local_id],
+        )?;
+        conn.query_row(
+            "SELECT id FROM todo_nb_index WHERE folder = ?1 AND local_id = ?2",
+            params![folder, local_id],
+            |row| row.get(0),
+        )
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error resolving todo_nb_index: {}", e)))
+}
+
+/// Resolves a synthetic id back to its `(folder, local_id)` pair.
+pub async fn todo_nb_index_resolve(id: i64) -> DbLibResult<Option<(String, i64)>> {
+    execute_async(move |conn| {
+        conn.query_row(
+            "SELECT folder, local_id FROM todo_nb_index WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading todo_nb_index: {}", e)))
+}
+
+/// Repoints an existing synthetic id at a new `(folder, local_id)` pair —
+/// used when an nb-backed todo item is deleted-and-recreated on update, so
+/// the external-facing id stays stable across the operation.
+pub async fn todo_nb_index_update(id: i64, folder: String, local_id: i64) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "UPDATE todo_nb_index SET folder = ?1, local_id = ?2 WHERE id = ?3",
+            params![folder, local_id, id],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error updating todo_nb_index: {}", e)))
+}
+
+/// Removes the index entry for a deleted todo item.
+pub async fn todo_nb_index_delete(id: i64) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute("DELETE FROM todo_nb_index WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting todo_nb_index: {}", e)))
 }
 
 // --- Generic helper ---

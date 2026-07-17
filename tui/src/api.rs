@@ -62,7 +62,8 @@ pub struct LogEntry {
 
 // --- Todo Data Structures (mirrors todo::models) ---
 
-/// A single subtask, backed by a Vikunja child task.
+/// A single subtask (backed by a Vikunja child task or an nb task line,
+/// depending on the configured todo backend).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subtask {
     pub id: Option<i64>,
@@ -81,12 +82,15 @@ pub struct TodoItem {
     pub updated_at: DateTime<Local>,
     pub completed_at: Option<DateTime<Local>>,
     pub printed_at: Option<DateTime<Local>>,
-    /// Subtasks backed by Vikunja child tasks linked via a `subtask` relation.
+    /// Subtasks — backed by Vikunja child tasks or nb task lines, depending
+    /// on the configured todo backend.
     pub subtasks: Vec<Subtask>,
     pub archived: bool,
     pub due_date: Option<DateTime<Local>>,
     pub priority: u8,
     pub project_title: Option<String>,
+    #[serde(default)]
+    pub labels: Vec<String>,
 }
 
 impl TodoItem {
@@ -106,6 +110,7 @@ impl TodoItem {
             due_date: None,
             priority: 0,
             project_title: None,
+            labels: Vec::new(),
         }
     }
 }

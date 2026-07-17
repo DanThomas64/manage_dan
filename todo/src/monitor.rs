@@ -1,12 +1,12 @@
 //! Background print monitor.
 //!
-//! Polls all accessible Vikunja projects on a configurable interval.  Every
-//! top-level task is printed by default.  Adding a `"Don't Print"` label to a
-//! task suppresses ticket printing for that task entirely.
+//! Polls the active backend on a configurable interval. Every top-level
+//! item is printed by default. Adding a `"Don't Print"` label to an item
+//! suppresses ticket printing for that item entirely.
 //!
-//! A content hash of the task's meaningful fields is stored in the local
-//! `printed_tasks` table; a task is only reprinted when that hash changes,
-//! preventing duplicate tickets for unchanged tasks.
+//! A content hash of the item's meaningful fields is stored in the local
+//! `printed_tasks` table; an item is only reprinted when that hash changes,
+//! preventing duplicate tickets for unchanged items.
 //!
 //! ## Reprint triggers
 //! The following changes cause a reprint:
@@ -15,39 +15,31 @@
 //! - Any subtask added, removed, renamed, or its done-status toggled
 //!
 //! Changes that do NOT trigger a reprint:
-//! - Completion status (`done`) — completed tasks are never printed
+//! - Completion status (`done`) — completed items are never printed
 //! - Labels added/removed (would create a feedback loop)
 //! - Assignees, comments, position, or other metadata
 
-use chrono::Local;
 use tracing::{info, warn};
 use tokio::time::{sleep, Duration};
 
-use vikunja::VikunjaClient;
-use vikunja::models::VikunjaTask;
-
-use crate::from_vikunja_task;
+use crate::models::TodoItem;
 use crate::print_ticket;
 
 const NO_PRINT_LABEL: &str = "don't print";
 
-/// Returns true if the task has a "Don't Print" label (case-insensitive).
-fn has_no_print_label(task: &VikunjaTask) -> bool {
-    task.labels
+/// Returns true if the item has a "Don't Print" label (case-insensitive).
+fn has_no_print_label(item: &TodoItem) -> bool {
+    item.labels
         .iter()
-        .any(|l| l.title.to_ascii_lowercase() == NO_PRINT_LABEL)
+        .any(|l| l.to_ascii_lowercase() == NO_PRINT_LABEL)
 }
 
 /// Produces a deterministic string that captures every field visible on a
-/// printed ticket.  If this string changes between polls, the ticket is
+/// printed ticket. If this string changes between polls, the ticket is
 /// reprinted.
-pub(crate) fn content_hash(task: &VikunjaTask) -> String {
-    // Sort subtasks by ID so the hash is stable regardless of API return order.
-    let mut subtasks: Vec<&VikunjaTask> = task
-        .related_tasks
-        .get("subtask")
-        .map(|v| v.iter().collect())
-        .unwrap_or_default();
+pub(crate) fn content_hash(item: &TodoItem) -> String {
+    // Sort subtasks by id so the hash is stable regardless of listing order.
+    let mut subtasks = item.subtasks.clone();
     subtasks.sort_by_key(|s| s.id);
 
     let subtasks_str = subtasks
@@ -58,90 +50,68 @@ pub(crate) fn content_hash(task: &VikunjaTask) -> String {
 
     format!(
         "title={};desc={};done={};due={};pri={};subs={}",
-        task.title,
-        task.description.as_deref().unwrap_or(""),
-        task.done,
+        item.title,
+        item.description,
+        item.completed,
         // Use epoch seconds so the hash is locale/format independent.
-        task.due_date.map(|d| d.timestamp()).unwrap_or(0),
-        task.priority,
+        item.due_date.map(|d| d.timestamp()).unwrap_or(0),
+        item.priority,
         subtasks_str,
     )
 }
 
-/// Checks all print-labelled tasks once and prints any that are new or changed.
+/// Checks all print-labelled items once and prints any that are new or changed.
 async fn poll() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let client = VikunjaClient::get()?;
-    let (all_tasks, projects) = tokio::join!(client.list_all_tasks(), client.list_projects());
-    let all_tasks = all_tasks?;
+    let items = crate::read_items().await?;
 
-    let project_map: std::collections::HashMap<i64, String> = match projects {
-        Ok(list) => list.into_iter().map(|p| (p.id, p.title)).collect(),
-        Err(e) => {
-            warn!("monitor poll: list_projects failed, project titles will be missing: {}", e);
-            std::collections::HashMap::new()
-        }
-    };
-
-    // Collect subtask IDs so we never try to print a subtask as a top-level ticket.
-    let subtask_ids: std::collections::HashSet<i64> = all_tasks
-        .iter()
-        .flat_map(|t| {
-            t.related_tasks
-                .get("subtask")
-                .into_iter()
-                .flat_map(|subs| subs.iter().map(|s| s.id))
-        })
-        .collect();
-
-    for task in all_tasks
-        .iter()
-        .filter(|t| !subtask_ids.contains(&t.id) && !has_no_print_label(t))
-    {
-        let hash = content_hash(task);
-        let stored = db::printed_hash_get(task.id).await.unwrap_or(None);
+    for item in items.iter().filter(|i| !has_no_print_label(i)) {
+        let id = item.id.unwrap_or(0);
+        let hash = content_hash(item);
+        let stored = db::printed_hash_get(id).await.unwrap_or(None);
 
         if stored.as_deref() == Some(hash.as_str()) {
             // Nothing has changed — skip.
             continue;
         }
 
-        // Don't print a ticket when the task has been completed; just record
+        // Don't print a ticket when the item has been completed; just record
         // the new hash so the next poll doesn't trigger again.
-        if task.done {
+        if item.completed {
             info!(
-                "Task {} \"{}\" marked completed — updating hash, skipping print",
-                task.id, task.title
+                "Todo {} \"{}\" marked completed — updating hash, skipping print",
+                id, item.title
             );
-            let now = Local::now();
-            if let Err(e) = db::printed_record_set(task.id, now, hash).await {
-                warn!("Failed to persist print record for task {}: {}", task.id, e);
-            }
+            let _ = db::printed_claim(id, hash).await;
             continue;
         }
 
+        // Claim the print atomically before doing it. The creation path can
+        // be mid-flight on the very same task at this instant (e.g. `nb`
+        // shelling out takes long enough for this poll to land in between) —
+        // whichever of the two claims the hash first is the one that prints.
+        match db::printed_claim(id, hash).await {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(e) => {
+                warn!("Failed to claim print for todo {} \"{}\": {}", id, item.title, e);
+                continue;
+            }
+        }
+
         let reason = if stored.is_none() { "first print" } else { "content changed" };
-        info!(
-            "Printing task {} \"{}\" ({})",
-            task.id, task.title, reason
-        );
+        info!("Printing todo {} \"{}\" ({})", id, item.title, reason);
 
-        let printed_at_stored = db::printed_at_get(task.id).await.unwrap_or(None);
-        let project_title = project_map.get(&task.project_id).cloned();
-        let item = from_vikunja_task(task.clone(), printed_at_stored, project_title);
-
-        match print_ticket(&item).await {
+        match print_ticket(item).await {
             Ok(()) => {
-                let now = Local::now();
-                if let Err(e) = db::printed_record_set(task.id, now, hash).await {
-                    warn!("Failed to persist print record for task {}: {}", task.id, e);
-                }
-                info!("Ticket printed for task {} \"{}\"", task.id, task.title);
+                info!("Ticket printed for todo {} \"{}\"", id, item.title);
             }
             Err(e) => {
-                warn!(
-                    "Failed to print task {} \"{}\": {}",
-                    task.id, task.title, e
-                );
+                warn!("Failed to print todo {} \"{}\": {}", id, item.title, e);
+                // Undo the claim so the next poll retries instead of silently
+                // treating this task as already printed.
+                if let Err(e2) = db::printed_at_delete(id).await {
+                    warn!("Failed to revert print claim for todo {}: {}", id, e2);
+                }
             }
         }
     }

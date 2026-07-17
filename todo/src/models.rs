@@ -32,7 +32,7 @@ pub struct TodoItem {
     /// compatibility only and is always `false` on items returned by the app.
     pub archived: bool,
     pub due_date: Option<DateTime<Local>>,
-    /// Priority 0–10 (0 = no priority). Stored as-is in Vikunja.
+    /// Priority 0–5 (0=Unset, 1=Low, 2=Medium, 3=High, 4=Urgent, 5=Do Now), matching Vikunja's scale.
     pub priority: u8,
     /// Name of the Vikunja project this task belongs to.
     #[serde(default)]

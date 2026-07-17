@@ -9,7 +9,9 @@ app.sqlite-journal
 # Local config overrides — never commit these
 config/local.toml
 config/local.*.toml
+config/local.toml_bak
 config/recurring.toml
+config/reminders.toml
 
 # Runtime data (SQLite DB, log files)
 /data/
