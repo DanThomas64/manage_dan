@@ -142,8 +142,9 @@ pub async fn get_project(id: i64) -> ProjectLibResult<Project> {
     .ok_or(ProjectLibError::NotFound(id))
 }
 
-/// Creates a new project: a lists group, a filesystem directory, and the
-/// project's own DB row.
+/// Creates a new project: a lists group (with a default "General" category),
+/// a dedicated nb notebook, a filesystem directory, and the project's own
+/// DB row.
 pub async fn create_project(name: &str) -> ProjectLibResult<Project> {
     let name = name.trim();
     if name.is_empty() {
@@ -163,6 +164,8 @@ pub async fn create_project(name: &str) -> ProjectLibResult<Project> {
 
     let tag = format!("project-{}", slug);
     let group = lists::add_group(name).await?;
+    lists::add_category(group.id, "General").await?;
+    notes::ensure_notebook(&slug).await?;
 
     let fs_path = format!("{}/{}", expand_home(base_dir()).trim_end_matches('/'), slug);
     std::fs::create_dir_all(&fs_path)?;
