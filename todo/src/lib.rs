@@ -279,10 +279,55 @@ pub async fn update_item(item: TodoItem) -> TodoLibResult {
 }
 
 /// Marks a task as completed or pending without touching any other fields.
+/// Marking it *completed* (not un-completing an already-done item) also logs
+/// a daily-log entry — see [`log_completion`].
 pub async fn complete_item(id: i64, completed: bool) -> TodoLibResult {
+    let was_completed = get_item(id).await.map(|i| i.completed).unwrap_or(false);
+
     match backend() {
         BackendKind::Vikunja => backends::vikunja::complete_item(id, completed).await,
         BackendKind::Nb { notebook } => backends::nb::complete_item(notebook, id, completed).await,
+    }?;
+
+    if completed && !was_completed {
+        log_completion(id).await;
+    }
+
+    Ok(())
+}
+
+/// Logs a todo's completion as a daily-log entry (the same `nb log`
+/// notebook the app's Log feature writes to), tagged `todo-complete` and,
+/// if the todo belongs to a project, also `project-<slug>` so it shows up
+/// in that project's Log section. Best-effort: a logging failure is warned
+/// about, not propagated — completing a todo shouldn't fail just because
+/// the log write did.
+async fn log_completion(id: i64) {
+    let item = match get_item(id).await {
+        Ok(item) => item,
+        Err(e) => {
+            warn!("complete_item: couldn't fetch item {} for completion log: {}", id, e);
+            return;
+        }
+    };
+
+    let mut tags = vec!["todo-complete".to_string()];
+    if let Some(slug) = &item.project_title {
+        tags.push(format!("project-{}", slug));
+    }
+
+    let req = notes::CreateLogRequest {
+        title: format!("Completed: {}", item.title),
+        content: if item.description.trim().is_empty() {
+            "(no description)".to_string()
+        } else {
+            item.description.clone()
+        },
+        tags: Some(tags),
+    };
+
+    if let Err(e) = notes::create_log(req).await {
+        warn!("complete_item: failed to log completion for todo {}: {}", id, e);
     }
 }
 
