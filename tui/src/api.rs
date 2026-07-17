@@ -178,6 +178,32 @@ pub struct Note {
     pub updated_at: DateTime<Local>,
 }
 
+// --- Project Data Structures (mirrors project::models) ---
+
+/// A named project (mirrors project::models::Project).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Project {
+    pub id: i64,
+    pub name: String,
+    pub slug: String,
+    pub tag: String,
+    pub list_group_id: i64,
+    pub fs_path: String,
+    pub archived_at: Option<DateTime<Local>>,
+    pub created_at: DateTime<Local>,
+}
+
+/// Aggregated view of one project's todos/notes/logs/lists (mirrors
+/// project::models::ProjectDetail). Deserialize-only client-side DTO.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectDetail {
+    pub project: Project,
+    pub todos: Vec<TodoItem>,
+    pub notes: Vec<Note>,
+    pub logs: Vec<DailyLogEntry>,
+    pub lists: Vec<ListCategory>,
+}
+
 // ---------------------------------------------------
 
 /// Client for making HTTP requests to the application API.
@@ -436,5 +462,29 @@ impl ApiClient {
         let body = serde_json::json!({ "title": title, "content": content, "tags": tags });
         self.client.post(&url).json(&body).send().await?.error_for_status()?;
         Ok(())
+    }
+
+    // --- Project Methods ---
+
+    pub async fn fetch_projects(&self) -> Result<Vec<Project>> {
+        let url = format!("{}/api/v1/project", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn create_project(&self, name: &str) -> Result<Project> {
+        let url = format!("{}/api/v1/project", self.base_url);
+        Ok(self.client.post(&url)
+            .json(&serde_json::json!({ "name": name }))
+            .send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn fetch_project_detail(&self, id: i64) -> Result<ProjectDetail> {
+        let url = format!("{}/api/v1/project/{}/detail", self.base_url, id);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn archive_project(&self, id: i64) -> Result<Project> {
+        let url = format!("{}/api/v1/project/{}/archive", self.base_url, id);
+        Ok(self.client.post(&url).send().await?.error_for_status()?.json().await?)
     }
 }

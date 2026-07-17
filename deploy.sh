@@ -3,7 +3,7 @@
 # reverse proxy on this machine. Run from the project root: ./deploy.sh
 #
 # ── One-time setup ────────────────────────────────────────────────────────────
-#   sudo apt-get install -y nginx libudev1
+#   sudo apt-get install -y nginx libudev1 zip
 #   bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
 #   sudo usermod -aG plugdev "$USER"    # USB printer access
 #   sudo cp 99-printer.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules

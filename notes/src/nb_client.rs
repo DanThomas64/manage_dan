@@ -269,8 +269,8 @@ pub async fn nb_list(notebook: Option<&str>) -> NotesLibResult<Vec<Note>> {
 
 // Reads every daily log file in `notebook` dated within the last `days` days
 // (inclusive of today) and returns their individual entries, most recent
-// first.
-pub async fn nb_daily_entries(notebook: &str, days: i64) -> NotesLibResult<Vec<crate::models::LogEntry>> {
+// first. When `tag` is set, only entries carrying that tag are returned.
+pub async fn nb_daily_entries(notebook: &str, days: i64, tag: Option<&str>) -> NotesLibResult<Vec<crate::models::LogEntry>> {
     let cmd = nb_cmd(notebook, "list");
     let out = match run(&[&cmd]).await {
         Ok(o) => o,
@@ -297,6 +297,9 @@ pub async fn nb_daily_entries(notebook: &str, days: i64) -> NotesLibResult<Vec<c
     }
 
     entries.sort_by(|a: &crate::models::LogEntry, b| (&b.date, &b.time).cmp(&(&a.date, &a.time)));
+    if let Some(tag) = tag {
+        entries.retain(|e| e.tags.iter().any(|t| t == tag));
+    }
     Ok(entries)
 }
 
@@ -323,6 +326,24 @@ pub async fn nb_update(
 pub async fn nb_delete(notebook: &str, nb_id: u64) -> NotesLibResult<()> {
     let ref_str = nb_ref(notebook, nb_id);
     run(&["delete", &ref_str, "--force"]).await?;
+    Ok(())
+}
+
+/// Ensures a notebook exists — `nb move` requires its destination notebook
+/// to already exist (confirmed against a real `nb` install: moving into a
+/// nonexistent notebook fails with "Target notebook not found"), unlike
+/// `nb add`/`nb daily`, which create the notebook implicitly. Best-effort:
+/// ignores the error when it already exists.
+pub async fn nb_ensure_notebook(name: &str) -> NotesLibResult<()> {
+    let _ = run(&["notebooks", "add", name]).await;
+    Ok(())
+}
+
+/// Moves a note into `dest` (a `notebook:path` destination, e.g.
+/// `archive:test-project/note-title`) — used by project archiving.
+pub async fn nb_move(src_notebook: &str, nb_id: u64, dest: &str) -> NotesLibResult<()> {
+    let ref_str = nb_ref(src_notebook, nb_id);
+    run(&["move", &ref_str, dest, "--force"]).await?;
     Ok(())
 }
 

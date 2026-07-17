@@ -59,3 +59,8 @@ backend = "vikunja"
 # nb notebook name used when backend = "nb". Vikunja "projects" are
 # approximated as subfolders inside this notebook (e.g. "work/", "personal/").
 nb_notebook = "todo"
+
+[project]
+# Base directory project folders are created under. Supports a leading "~/"
+# for the user's home directory.
+base_dir = "~/projects"

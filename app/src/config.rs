@@ -40,6 +40,14 @@ pub struct TodoConfig {
     pub nb_notebook: String,
 }
 
+/// Configuration for the project subsystem.
+#[derive(Debug, Deserialize, Clone)]
+pub struct ProjectConfig {
+    /// Base directory project folders are created under. Supports a leading
+    /// `~/` for the user's home directory.
+    pub base_dir: String,
+}
+
 /// File logging configuration.
 ///
 /// Override with `APP_LOGGING_FILE=/path/to/app.log` env var, or set
@@ -58,6 +66,7 @@ pub struct AppConfig {
     pub printer: PrinterConfig,
     pub vikunja: VikunjaConfig,
     pub todo: TodoConfig,
+    pub project: ProjectConfig,
     /// How often the print monitor polls Vikunja for labelled tasks (seconds).
     pub monitor_interval_secs: u64,
     /// Local hour (0–23) at which the daily summary is printed.
@@ -96,6 +105,7 @@ impl AppConfig {
             .set_default("vikunja.project_id", 1i64)?
             .set_default("todo.backend", "vikunja")?
             .set_default("todo.nb_notebook", "todo")?
+            .set_default("project.base_dir", "~/projects")?
             .set_default("monitor_interval_secs", 30u64)?
             .set_default("summary_hour", 8u64)?
             .set_default("summary_level", "full")?

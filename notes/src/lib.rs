@@ -67,7 +67,13 @@ pub async fn list(notebook: Option<String>, tag: Option<String>) -> NotesLibResu
 }
 
 pub async fn recent_logs(days: i64) -> NotesLibResult<Vec<LogEntry>> {
-    nb_client::nb_daily_entries(LOG_NOTEBOOK, days).await
+    nb_client::nb_daily_entries(LOG_NOTEBOOK, days, None).await
+}
+
+/// Like [`recent_logs`], but only returns entries carrying `tag` — used to
+/// scope the shared `log` notebook to a single project.
+pub async fn recent_logs_tagged(days: i64, tag: &str) -> NotesLibResult<Vec<LogEntry>> {
+    nb_client::nb_daily_entries(LOG_NOTEBOOK, days, Some(tag)).await
 }
 
 pub async fn update(nb_id: u64, notebook: &str, req: UpdateNoteRequest) -> NotesLibResult<Note> {
@@ -88,6 +94,19 @@ pub async fn update(nb_id: u64, notebook: &str, req: UpdateNoteRequest) -> Notes
 
 pub async fn delete(nb_id: u64, notebook: &str) -> NotesLibResult {
     nb_client::nb_delete(notebook, nb_id).await
+}
+
+/// Moves a note into the shared `archive` notebook at `dest_path` — used by
+/// project archiving. Non-destructive: the note's content is preserved, just
+/// relocated out of normal browsing.
+pub async fn archive_note(note: &Note, dest_path: &str) -> NotesLibResult {
+    nb_client::nb_move(&note.notebook, note.nb_id, &format!("archive:{}", dest_path)).await
+}
+
+/// Ensures the shared `archive` notebook exists — call before any
+/// `nb move ... archive:...` (see `nb_client::nb_ensure_notebook`).
+pub async fn ensure_archive_notebook() -> NotesLibResult<()> {
+    nb_client::nb_ensure_notebook("archive").await
 }
 
 pub async fn search(query: &str) -> NotesLibResult<Vec<Note>> {
