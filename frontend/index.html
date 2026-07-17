@@ -124,8 +124,29 @@
     .header-actions {
       display: flex;
       gap: 8px;
-      flex-shrink: 0;
+      flex-shrink: 1;
+      min-width: 0;
     }
+
+    /* Horizontally-scrolling inner row for a bar's buttons — kept separate
+       from any "☰" menu trigger in the same bar, since a menu's dropdown is
+       absolutely positioned and gets clipped by whichever ancestor actually
+       has overflow-x set, not just hidden behind z-index. The trigger itself
+       must live outside this element so its popover is never a descendant
+       of an overflow:auto box. */
+    .hbar-scroll {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+      -webkit-overflow-scrolling: touch;
+    }
+    .hbar-scroll::-webkit-scrollbar { display: none; }
+    .hbar-scroll > * { flex-shrink: 0; }
 
     .main {
       display: grid;
@@ -356,7 +377,7 @@
     .panel-actions { display: flex; gap: 8px; }
 
     /* ── Category hamburger menu ── */
-    .cat-menu-wrap { position: relative; }
+    .cat-menu-wrap { position: relative; flex-shrink: 0; }
     .cat-menu-btn  { background: none; border: none; cursor: pointer; font-size: 1.1rem;
                      padding: 2px 6px; color: var(--text-muted); line-height: 1; }
     .cat-menu-btn:hover { color: var(--text); }
@@ -373,6 +394,7 @@
       z-index: 200;
     }
     .cat-menu-dropdown.open { display: block; }
+    .cat-menu-dropdown.align-right { left: auto; right: 0; }
     .cat-menu-item {
       display: flex; align-items: center; gap: 8px;
       width: 100%; padding: 10px 14px;
@@ -1289,8 +1311,18 @@
       <h1 id="header-title"><span>&#9676;</span> Lists</h1>
     </div>
     <div class="header-actions">
-      <button class="btn-ghost btn-sm" id="btn-clear" disabled onclick="clearChecked()">Clear checked</button>
-      <button class="btn-success btn-sm" id="btn-print" disabled onclick="printList()">&#128424; Print</button>
+      <div class="hbar-scroll">
+        <button class="btn-ghost btn-sm" id="btn-clear" disabled onclick="clearChecked()">Clear</button>
+        <button class="btn-success btn-sm" id="btn-print" disabled onclick="printList()">&#128424; Print</button>
+      </div>
+      <div class="cat-menu-wrap">
+        <button class="cat-menu-btn" onclick="toggleMenu('lists-menu-dropdown', event)" title="View options">&#9776;</button>
+        <div class="cat-menu-dropdown align-right" id="lists-menu-dropdown">
+          <button class="cat-menu-item" onclick="listsToggleShowProject()">
+            Show Project Lists <span class="menu-check" id="lists-show-project-check"></span>
+          </button>
+        </div>
+      </div>
     </div>
   </header>
 
@@ -1303,9 +1335,6 @@
         <div class="group-section-header">
           <span>Groups</span>
           <button class="btn-icon" onclick="toggleAddGroupForm()" title="New group">+</button>
-        </div>
-        <div class="notes-filters" style="padding:0 4px 8px;">
-          <button class="filter-pill" id="lists-hide-project-toggle" onclick="listsToggleHideProject(this)">Hide Project Lists</button>
         </div>
         <div class="group-list" id="group-tabs"></div>
         <div class="add-group-form" id="add-group-form" style="display:none;">
@@ -1420,9 +1449,20 @@
   <!-- Notes sub-nav -->
   <div class="notes-nav">
     <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
-    <button class="notes-tab active" id="ntab-add" onclick="notesShowTab('add')">&#43; Quick Add</button>
-    <button class="notes-tab" id="ntab-browse" onclick="notesShowTab('browse')">Browse</button>
-    <button class="notes-tab" id="ntab-search" onclick="notesShowTab('search')">Search</button>
+    <div class="hbar-scroll">
+      <button class="notes-tab active" id="ntab-add" onclick="notesShowTab('add')">&#43; New</button>
+      <button class="notes-tab" id="ntab-browse" onclick="notesShowTab('browse')">Browse</button>
+      <button class="notes-tab" id="ntab-search" onclick="notesShowTab('search')">Search</button>
+    </div>
+    <div class="cat-menu-wrap">
+      <button class="cat-menu-btn" onclick="toggleMenu('notes-menu-dropdown', event)" title="View options">&#9776;</button>
+      <div class="cat-menu-dropdown align-right" id="notes-menu-dropdown">
+        <button class="cat-menu-item" onclick="notesToggleShowProject()">
+          Show Project Items <span class="menu-check" id="notes-show-project-check"></span>
+        </button>
+        <button class="cat-menu-item" onclick="notesOpenArchive()">&#128193; Archive</button>
+      </div>
+    </div>
   </div>
 
   <!-- Quick Add panel -->
@@ -1460,9 +1500,6 @@
   <div class="notes-panel" id="npanel-browse">
     <div class="notes-filters" id="notebook-filters">
       <button class="filter-pill active" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>
-    </div>
-    <div class="notes-filters">
-      <button class="filter-pill" id="notes-hide-project-toggle" onclick="notesToggleHideProject(this)">Hide Project Items</button>
     </div>
     <div class="notes-list" id="notes-list">
       <div class="empty-state"><span class="icon">&#128221;</span><span>No notes yet</span></div>
@@ -1527,8 +1564,18 @@
   <!-- Log sub-nav -->
   <div class="notes-nav">
     <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
-    <button class="log-tab active" id="ltab-add" onclick="logShowTab('add')">&#43; Add Entry</button>
-    <button class="log-tab" id="ltab-recent" onclick="logShowTab('recent')">Recent</button>
+    <div class="hbar-scroll">
+      <button class="log-tab active" id="ltab-add" onclick="logShowTab('add')">&#43; New</button>
+      <button class="log-tab" id="ltab-recent" onclick="logShowTab('recent')">Recent</button>
+    </div>
+    <div class="cat-menu-wrap">
+      <button class="cat-menu-btn" onclick="toggleMenu('log-menu-dropdown', event)" title="View options">&#9776;</button>
+      <div class="cat-menu-dropdown align-right" id="log-menu-dropdown">
+        <button class="cat-menu-item" onclick="logToggleShowProject()">
+          Show Project Items <span class="menu-check" id="log-show-project-check"></span>
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Add Entry panel: quick entries into today's daily log (nb daily plugin) -->
@@ -1558,9 +1605,6 @@
 
   <!-- Recent panel: read-only view of the last 7 days of daily log entries -->
   <div class="log-panel" id="lpanel-recent">
-    <div class="notes-filters">
-      <button class="filter-pill" id="log-hide-project-toggle" onclick="logToggleHideProject(this)">Hide Project Items</button>
-    </div>
     <div class="notes-list" id="logs-list">
       <div class="empty-state"><span class="icon">&#128220;</span><span>No log entries yet</span></div>
     </div>
@@ -1574,8 +1618,18 @@
   <!-- Todo sub-nav -->
   <div class="notes-nav">
     <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
-    <button class="todo-tab" id="ttab-add" onclick="todoResetForm(); todoShowTab('add')">&#43; Add Todo</button>
-    <button class="todo-tab active" id="ttab-list" onclick="todoShowTab('list')">List</button>
+    <div class="hbar-scroll">
+      <button class="todo-tab" id="ttab-add" onclick="todoResetForm(); todoShowTab('add')">&#43; New</button>
+      <button class="todo-tab active" id="ttab-list" onclick="todoShowTab('list')">List</button>
+    </div>
+    <div class="cat-menu-wrap">
+      <button class="cat-menu-btn" onclick="toggleMenu('todo-menu-dropdown', event)" title="View options">&#9776;</button>
+      <div class="cat-menu-dropdown align-right" id="todo-menu-dropdown">
+        <button class="cat-menu-item" onclick="todoToggleShowProject()">
+          Show Project Items <span class="menu-check" id="todo-show-project-check"></span>
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Add panel -->
@@ -1638,9 +1692,6 @@
       <button class="filter-pill" data-filter="completed" onclick="todoSetFilter(this,'completed')">Completed</button>
       <button class="filter-pill" data-filter="all" onclick="todoSetFilter(this,'all')">All</button>
     </div>
-    <div class="notes-filters">
-      <button class="filter-pill" id="todo-hide-project-toggle" onclick="todoToggleHideProject(this)">Hide Project Items</button>
-    </div>
     <div class="notes-list" id="todo-list">
       <div class="empty-state"><span class="icon">&#9989;</span><span>No todos yet</span></div>
     </div>
@@ -1677,6 +1728,12 @@
 <div id="project-detail-overlay" class="app-overlay">
   <div class="notes-nav">
     <button class="btn-ghost btn-sm" onclick="history.back()" style="margin-right:8px;">&#8592; Back</button>
+    <div class="cat-menu-wrap" style="margin-left:auto;">
+      <button class="cat-menu-btn" onclick="toggleMenu('project-detail-menu-dropdown', event)" title="View options">&#9776;</button>
+      <div class="cat-menu-dropdown align-right" id="project-detail-menu-dropdown">
+        <button class="cat-menu-item" onclick="closeAllMenus(); archiveProject(currentProjectDetailId)">&#128193; Archive</button>
+      </div>
+    </div>
   </div>
   <div class="notes-panel active" id="ppanel-project-detail">
     <div id="project-detail-content" style="padding:12px 16px;"></div>
@@ -1723,6 +1780,16 @@
   // ── Bootstrap ──────────────────────────────────────────────────────────────
 
   async function init() {
+    await loadProjectListGroupIds();
+    updateListsProjectCheck();
+    await loadGroups();
+  }
+
+  // Re-fetches groups and which of them belong to a project on every visit —
+  // both can change elsewhere in the app (Projects overlay) without this
+  // view ever reloading, and a project group's delete button must never show.
+  async function listsOnOpen() {
+    await loadProjectListGroupIds();
     await loadGroups();
   }
 
@@ -1764,7 +1831,9 @@
     }
   }
 
-  let listsHideProjectItems = false;
+  // Project lists are hidden by default — only shown once "Show Project
+  // Lists" is switched on from the view-options menu.
+  let listsHideProjectItems = true;
   let projectListGroupIds = new Set();
 
   async function loadProjectListGroupIds() {
@@ -1775,10 +1844,14 @@
     } catch (_) {}
   }
 
-  async function listsToggleHideProject(btn) {
+  function updateListsProjectCheck() {
+    const check = document.getElementById('lists-show-project-check');
+    if (check) check.textContent = listsHideProjectItems ? '' : '✓';
+  }
+
+  function listsToggleShowProject() {
     listsHideProjectItems = !listsHideProjectItems;
-    btn.classList.toggle('active', listsHideProjectItems);
-    if (listsHideProjectItems) await loadProjectListGroupIds();
+    updateListsProjectCheck();
     renderGroupTabs();
   }
 
@@ -1795,8 +1868,9 @@
       <div class="group-item${g.id === selectedGroupId ? ' active' : ''}"
            onclick="selectGroup(${g.id})">
         <span class="group-item-name">${esc(g.name)}</span>
+        ${projectListGroupIds.has(g.id) ? '' : `
         <button class="group-delete" onclick="event.stopPropagation(); deleteGroup(${g.id})"
-                title="Delete group">&#215;</button>
+                title="Delete group">&#215;</button>`}
       </div>
     `).join('');
   }
@@ -1858,6 +1932,10 @@
   }
 
   async function deleteGroup(id) {
+    if (projectListGroupIds.has(id)) {
+      toast('This list group belongs to a project — archive or delete the project to remove it', true);
+      return;
+    }
     const group = groups.find(g => g.id === id);
     if (!confirm(`Delete group "${group?.name}"?\nThis removes all its lists and items.`)) return;
     try {
@@ -2323,7 +2401,22 @@
     if (d) d.classList.remove('open');
   }
 
-  document.addEventListener('click', closeCategoryMenu);
+  // Generic open/close for every "☰ view options" dropdown (List options,
+  // and each section's Show Project Items menu) — they all share the
+  // .cat-menu-dropdown styling and open/close behavior.
+  function toggleMenu(id, e) {
+    e.stopPropagation();
+    document.querySelectorAll('.cat-menu-dropdown.open').forEach(d => {
+      if (d.id !== id) d.classList.remove('open');
+    });
+    document.getElementById(id).classList.toggle('open');
+  }
+
+  function closeAllMenus() {
+    document.querySelectorAll('.cat-menu-dropdown.open').forEach(d => d.classList.remove('open'));
+  }
+
+  document.addEventListener('click', closeAllMenus);
 
   async function renameCategory() {
     closeCategoryMenu();
@@ -2594,8 +2687,53 @@
     toastTimer = setTimeout(() => { el.className = ''; }, 3000);
   }
 
+  // ── Form draft persistence ───────────────────────────────────────────────
+  // Keeps whatever is typed into the three "Add" forms safe across a forced
+  // page reload (see restoreLastView()'s comment) — saved to sessionStorage
+  // per form, debounced, and cleared once that form is actually submitted.
+  const FORM_PERSIST_IDS = ['npanel-add', 'lpanel-add', 'tpanel-add'];
+  let formPersistTimer = null;
+
+  function persistFormState(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const data = {};
+    container.querySelectorAll('input, textarea, select').forEach(el => {
+      if (el.id) data[el.id] = el.value;
+    });
+    try { sessionStorage.setItem('form:' + containerId, JSON.stringify(data)); } catch (_) {}
+  }
+
+  function restoreFormState(containerId) {
+    const ids = containerId ? [containerId] : FORM_PERSIST_IDS;
+    ids.forEach(id => {
+      const raw = sessionStorage.getItem('form:' + id);
+      if (!raw) return;
+      try {
+        const data = JSON.parse(raw);
+        Object.entries(data).forEach(([fieldId, val]) => {
+          const el = document.getElementById(fieldId);
+          if (el) el.value = val;
+        });
+      } catch (_) {}
+    });
+  }
+
+  function clearFormState(containerId) {
+    try { sessionStorage.removeItem('form:' + containerId); } catch (_) {}
+  }
+
+  document.addEventListener('input', e => {
+    const container = FORM_PERSIST_IDS.map(id => document.getElementById(id)).find(c => c && c.contains(e.target));
+    if (!container) return;
+    clearTimeout(formPersistTimer);
+    formPersistTimer = setTimeout(() => persistFormState(container.id), 250);
+  });
+
   // ── Start ──────────────────────────────────────────────────────────────────
   init();
+  restoreFormState();
+  restoreLastView();
 
   // ═══════════════════════════════════════════════════════════════════════════
   // APP NAVIGATION (Home / Lists / Notes / Log — full-screen overlays)
@@ -2610,6 +2748,11 @@
     Object.entries(OVERLAY_IDS).forEach(([v, id]) => {
       document.getElementById(id).classList.toggle('active', v === view);
     });
+    // Foldables (and some browsers) tear down and reload the page on a
+    // fold/unfold screen-size change — remember where we were, in the same
+    // tab session only, so that reload lands back here instead of Home.
+    try { sessionStorage.setItem('lastView', JSON.stringify({ view, extra })); } catch (_) {}
+    if (view === 'lists') listsOnOpen();
     if (view === 'notes') notesOnOpen();
     if (view === 'log') logOnOpen();
     if (view === 'todo') todoOnOpen();
@@ -2626,6 +2769,23 @@
   }
 
   function showHome() { showView('home'); }
+
+  // Companion to the `sessionStorage` write in showView() — run once at
+  // boot so a fold/unfold-triggered reload resumes on the same screen (and,
+  // via restoreFormState(), with in-progress form text intact) instead of
+  // dumping back to Home.
+  function restoreLastView() {
+    try {
+      const raw = sessionStorage.getItem('lastView');
+      if (!raw) return;
+      const { view, extra } = JSON.parse(raw);
+      if (!view || view === 'home') return;
+      showView(view, true, extra);
+      if (view === 'notes') { const t = sessionStorage.getItem('notesTab'); if (t) notesShowTab(t); }
+      if (view === 'log')   { const t = sessionStorage.getItem('logTab');   if (t) logShowTab(t); }
+      if (view === 'todo')  { const t = sessionStorage.getItem('todoTab');  if (t) todoShowTab(t); }
+    } catch (_) {}
+  }
 
   window.addEventListener('popstate', (e) => {
     const state = e.state || { view: 'home' };
@@ -2656,6 +2816,7 @@
   let markedLoaded = false;
 
   function notesOnOpen() {
+    updateNotesProjectCheck();
     notesLoadNotebooks();
     if (pendingProjectContext !== null) {
       const pid = pendingProjectContext; pendingProjectContext = null;
@@ -2676,6 +2837,7 @@
 
   function notesShowTab(tab) {
     notesCurrentTab = tab;
+    try { sessionStorage.setItem('notesTab', tab); } catch (_) {}
     document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
     document.getElementById('ntab-' + tab).classList.add('active');
     document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
@@ -2694,6 +2856,7 @@
   let logCurrentTab = 'add';
 
   function logOnOpen() {
+    updateLogProjectCheck();
     if (pendingProjectContext !== null) {
       const pid = pendingProjectContext; pendingProjectContext = null;
       logShowTab('add');
@@ -2710,6 +2873,7 @@
 
   function logShowTab(tab) {
     logCurrentTab = tab;
+    try { sessionStorage.setItem('logTab', tab); } catch (_) {}
     document.querySelectorAll('.log-tab').forEach(t => t.classList.remove('active'));
     document.getElementById('ltab-' + tab).classList.add('active');
     document.querySelectorAll('.log-panel').forEach(p => p.classList.remove('active'));
@@ -2734,11 +2898,18 @@
     }
   }
 
-  let logHideProjectItems = false;
+  // Project log entries are hidden by default — only shown once "Show
+  // Project Items" is switched on from the view-options menu.
+  let logHideProjectItems = true;
 
-  function logToggleHideProject(btn) {
+  function updateLogProjectCheck() {
+    const check = document.getElementById('log-show-project-check');
+    if (check) check.textContent = logHideProjectItems ? '' : '✓';
+  }
+
+  function logToggleShowProject() {
     logHideProjectItems = !logHideProjectItems;
-    btn.classList.toggle('active', logHideProjectItems);
+    updateLogProjectCheck();
     logLoadRecent();
   }
 
@@ -2775,25 +2946,36 @@
 
   async function notesLoadNotebooks() {
     try {
-      const r = await fetch(NOTES_API + '/folders');
+      const [, r] = await Promise.all([ensureProjectsLoaded(), fetch(NOTES_API + '/folders')]);
       notebookList = await r.json();
       renderNotebookFilters();
     } catch (_) {}
   }
 
   // Rebuilds the notebook filter pill row, dropping project notebooks
-  // (named exactly after their project's slug) while Hide Project Items is on.
+  // (named exactly after their project's slug) while Hide Project Items is
+  // on, and always dropping the shared "archive" notebook — that one is only
+  // reachable via the view-options menu's "Archive" entry.
   function renderNotebookFilters() {
     const filtersEl = document.getElementById('notebook-filters');
     const projectSlugs = new Set(projectsList.map(p => p.slug));
-    const visible = notesHideProjectItems
-      ? notebookList.filter(nb => !projectSlugs.has(nb))
-      : notebookList;
-    if (notesHideProjectItems && projectSlugs.has(notesFilterNotebook)) {
+    let visible = notebookList.filter(nb => nb !== 'archive');
+    if (notesHideProjectItems) visible = visible.filter(nb => !projectSlugs.has(nb));
+    // Reset off "archive" on a fresh visit to Notes — it's a deliberate,
+    // one-off detour, not a filter that should silently stick around.
+    if (notesFilterNotebook === 'archive' || (notesHideProjectItems && projectSlugs.has(notesFilterNotebook))) {
       notesFilterNotebook = '';
     }
     filtersEl.innerHTML = `<button class="filter-pill ${notesFilterNotebook === '' ? 'active' : ''}" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>` +
       visible.map(nb => `<button class="filter-pill ${nb === notesFilterNotebook ? 'active' : ''}" data-notebook="${esc(nb)}" onclick="notesSetNotebook(this,'${esc(nb)}')">${esc(nb)}</button>`).join('');
+  }
+
+  // Opens the shared "archive" notebook (deliberately not in the pill row —
+  // it holds every archived project's notes, not a normal browsing target).
+  function notesOpenArchive() {
+    closeAllMenus();
+    notesFilterNotebook = 'archive';
+    notesShowTab('browse');
   }
 
   // Custom notebook-name autocomplete for the Quick Add form. Native
@@ -2831,12 +3013,19 @@
     }
   });
 
-  let notesHideProjectItems = false;
+  // Project notes/notebooks are hidden by default — only shown once "Show
+  // Project Items" is switched on from the view-options menu.
+  let notesHideProjectItems = true;
 
-  async function notesToggleHideProject(btn) {
+  function updateNotesProjectCheck() {
+    const check = document.getElementById('notes-show-project-check');
+    if (check) check.textContent = notesHideProjectItems ? '' : '✓';
+  }
+
+  async function notesToggleShowProject() {
     notesHideProjectItems = !notesHideProjectItems;
-    btn.classList.toggle('active', notesHideProjectItems);
-    if (notesHideProjectItems) await ensureProjectsLoaded();
+    updateNotesProjectCheck();
+    await ensureProjectsLoaded();
     renderNotebookFilters();
     notesLoadBrowse();
   }
@@ -2847,6 +3036,11 @@
     try {
       const r = await fetch(url);
       let notes = await r.json();
+      // The shared "archive" notebook is only ever browsed deliberately
+      // (via the view-options menu) — never mixed into "All" or filtered by.
+      if (notesFilterNotebook !== 'archive') {
+        notes = notes.filter(n => n.notebook !== 'archive');
+      }
       if (notesHideProjectItems) {
         notes = notes.filter(n => !(n.tags || []).some(t => t.startsWith('project-')));
       }
@@ -3051,6 +3245,7 @@
       document.getElementById('log-title').value = '';
       document.getElementById('log-content').value = '';
       document.getElementById('log-tags').value = '';
+      clearFormState('lpanel-add');
       toast('Log entry saved');
     } catch (_) {
       toast('Failed to save log entry', true);
@@ -3092,6 +3287,7 @@
       document.getElementById('note-content').value = '';
       document.getElementById('note-title').value = '';
       document.getElementById('note-tags').value = '';
+      clearFormState('npanel-add');
       toast('Note saved');
       notesLoadNotebooks();
     } catch (_) {
@@ -3110,6 +3306,7 @@
   let todoEditingId = null;
 
   function todoOnOpen() {
+    updateTodoProjectCheck();
     if (pendingProjectContext !== null) {
       const pid = pendingProjectContext; pendingProjectContext = null;
       todoResetForm();
@@ -3127,6 +3324,7 @@
 
   function todoShowTab(tab) {
     todoCurrentTab = tab;
+    try { sessionStorage.setItem('todoTab', tab); } catch (_) {}
     document.querySelectorAll('.todo-tab').forEach(t => t.classList.remove('active'));
     document.getElementById('ttab-' + tab).classList.add('active');
     document.querySelectorAll('.todo-panel').forEach(p => p.classList.remove('active'));
@@ -3161,6 +3359,7 @@
     document.getElementById('todo-subtasks').value = '';
     document.getElementById('btn-todo-submit').textContent = 'Save Todo';
     document.getElementById('btn-todo-cancel-edit').style.display = 'none';
+    clearFormState('tpanel-add');
   }
 
   function todoEditTodo(id) {
@@ -3319,11 +3518,18 @@
     </div>`;
   }
 
-  let todoHideProjectItems = false;
+  // Project todos are hidden by default — only shown once "Show Project
+  // Items" is switched on from the view-options menu.
+  let todoHideProjectItems = true;
 
-  function todoToggleHideProject(btn) {
+  function updateTodoProjectCheck() {
+    const check = document.getElementById('todo-show-project-check');
+    if (check) check.textContent = todoHideProjectItems ? '' : '✓';
+  }
+
+  function todoToggleShowProject() {
     todoHideProjectItems = !todoHideProjectItems;
-    btn.classList.toggle('active', todoHideProjectItems);
+    updateTodoProjectCheck();
     renderTodoList();
   }
 
@@ -3535,9 +3741,8 @@
       : '<div class="empty-state"><span>No lists</span></div>';
 
     el.innerHTML = `
-      <div class="note-card-title" style="font-size:1.2rem;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">
+      <div class="note-card-title" style="font-size:1.2rem;margin-bottom:8px;">
         ${esc(p.name)}
-        <button class="btn-danger btn-sm" onclick="archiveProject(${p.id})">Archive</button>
       </div>
       <div class="sidebar-header" style="display:flex;justify-content:space-between;align-items:center;">
         Todos <button class="btn-ghost btn-sm" onclick="addTodoForProject(${p.id})">&#43; Add Todo</button>
