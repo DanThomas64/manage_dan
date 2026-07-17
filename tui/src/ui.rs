@@ -69,6 +69,9 @@ pub enum ListsInputMode {
 pub enum ProjectInputMode {
     Normal,
     AddingProject,
+    /// Confirming a permanent delete of the selected (already-archived)
+    /// project — `y` confirms, any other key cancels back to `Normal`.
+    ConfirmDelete,
 }
 
 /// Which sub-mode the Notes screen is in.
@@ -1044,6 +1047,36 @@ impl App {
         }
     }
 
+    /// Restores the currently-selected (archived) project — the reverse of
+    /// `project_archive_selected`.
+    pub async fn project_restore_selected(&mut self) {
+        let Some(p) = self.project_list_state.selected().and_then(|i| self.projects.get(i)).cloned() else {
+            return;
+        };
+        match self.api_client.restore_project(p.id).await {
+            Ok(_) => {
+                self.fetch_projects().await;
+                self.project_load_selected_detail().await;
+            }
+            Err(e) => self.last_error = Some(format!("Restore failed: {}", e)),
+        }
+    }
+
+    /// Permanently deletes the currently-selected (archived) project. Called
+    /// only after `ProjectInputMode::ConfirmDelete` confirmation.
+    pub async fn project_delete_selected(&mut self) {
+        let Some(p) = self.project_list_state.selected().and_then(|i| self.projects.get(i)).cloned() else {
+            return;
+        };
+        match self.api_client.delete_project(p.id).await {
+            Ok(_) => {
+                self.fetch_projects().await;
+                self.project_load_selected_detail().await;
+            }
+            Err(e) => self.last_error = Some(format!("Delete failed: {}", e)),
+        }
+    }
+
     /// Handles input events specific to the current screen.
     pub async fn handle_input(&mut self, event: CEvent) {
         let previous_screen = self.current_screen;
@@ -1296,6 +1329,13 @@ impl App {
                                     self.project_archive_selected().await;
                                     action_taken = true;
                                 }
+                                KeyCode::Char('u') => {
+                                    self.project_restore_selected().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Char('D') => {
+                                    self.project_input_mode = ProjectInputMode::ConfirmDelete;
+                                }
                                 KeyCode::Char('r') => {
                                     self.fetch_projects().await;
                                     self.project_load_selected_detail().await;
@@ -1319,6 +1359,16 @@ impl App {
                                 _ => {}
                             }
                         }
+                        ProjectInputMode::ConfirmDelete => match key.code {
+                            KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                self.project_delete_selected().await;
+                                self.project_input_mode = ProjectInputMode::Normal;
+                                action_taken = true;
+                            }
+                            _ => {
+                                self.project_input_mode = ProjectInputMode::Normal;
+                            }
+                        },
                     }
                 }
             }
@@ -3569,7 +3619,9 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             let body = format!(
                 "Archived {}\n\nSlug: {}\nFolder: {} (zipped under .archive/)\n\n\
                 Notes/todos moved to the shared \"archive\" notebook.\n\
-                No live content shown for archived projects.",
+                No live content shown for archived projects.\n\n\
+                u: restore this project\n\
+                D: permanently delete this project (cannot be undone)",
                 archived, detail.project.slug, detail.project.fs_path,
             );
             (format!(" {} ", detail.project.name), body)
@@ -3603,6 +3655,8 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 \u{2022} j / k or arrows — move selection\n\
                 \u{2022} a              — new project\n\
                 \u{2022} x              — archive selected (never deletes)\n\
+                \u{2022} u              — restore selected (un-archive)\n\
+                \u{2022} D              — permanently delete selected (archived only)\n\
                 \u{2022} r              — refresh\n\
                 \u{2022} q              — back to dashboard".to_string();
             (" Project ".to_string(), help)
@@ -3617,13 +3671,32 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Footer
     let footer_text = match app.project_input_mode {
-        ProjectInputMode::Normal => "j/k: move  a: new  x: archive  P: (other screens) hide project items  r: refresh  q: back".to_string(),
+        ProjectInputMode::Normal => "j/k: move  a: new  x: archive  u: restore  D: delete  P: (other screens) hide project items  r: refresh  q: back".to_string(),
         ProjectInputMode::AddingProject => format!("New project name: {}_  (Enter: create, Esc: cancel)", app.project_input_buffer),
+        ProjectInputMode::ConfirmDelete => "y: confirm permanent delete  any other key: cancel".to_string(),
     };
     frame.render_widget(
         Paragraph::new(footer_text).style(Style::default().fg(Color::Magenta)),
         footer_area,
     );
+
+    // Permanent-delete confirmation overlay
+    if app.project_input_mode == ProjectInputMode::ConfirmDelete {
+        let popup = Rect {
+            x: area.width.saturating_sub(56) / 2,
+            y: area.height.saturating_sub(5) / 2,
+            width: 56.min(area.width),
+            height: 5.min(area.height),
+        };
+        frame.render_widget(Clear, popup);
+        frame.render_widget(
+            Paragraph::new("Permanently delete this project? This cannot be undone. (y = confirm, any other key = cancel)")
+                .block(Block::default().borders(Borders::ALL).title(" Delete Project ")
+                    .border_style(Style::default().fg(Color::Red)))
+                .wrap(Wrap { trim: true }),
+            popup,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------

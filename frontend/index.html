@@ -3330,12 +3330,18 @@
     const archivedDate = new Date(p.archived_at).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'});
     el.innerHTML = `
       <div class="note-card" style="cursor:default;">
-        <div class="note-card-title">${esc(p.name)} <span class="note-badge tag">Archived</span></div>
+        <div class="note-card-title" style="display:flex;justify-content:space-between;align-items:center;">
+          ${esc(p.name)} <span class="note-badge tag">Archived</span>
+        </div>
         <div class="note-card-meta">
           <span class="note-badge folder">&#128193; ${esc(p.slug)}</span>
           <span class="note-date">Archived ${archivedDate}</span>
         </div>
         <div class="note-card-preview">Notes/todos moved to the "archive" notebook. Folder zipped at: ${esc(p.fs_path)}.zip (under .archive/)</div>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button class="btn-primary btn-sm" onclick="restoreProject(${p.id})">Restore</button>
+          <button class="btn-danger btn-sm" onclick="deleteProjectPermanently(${p.id})">Delete Permanently</button>
+        </div>
       </div>`;
   }
 
@@ -3382,6 +3388,30 @@
       projectDetailOnOpen(id);
     } catch (_) {
       toast('Failed to archive project', true);
+    }
+  }
+
+  async function restoreProject(id) {
+    try {
+      const r = await fetch(`${PROJECT_API}/${id}/restore`, { method: 'POST' });
+      if (!r.ok) throw 0;
+      toast('Project restored');
+      projectsLoaded = false; // archived-filtered project selects need a refetch
+      projectDetailOnOpen(id);
+    } catch (_) {
+      toast('Failed to restore project', true);
+    }
+  }
+
+  async function deleteProjectPermanently(id) {
+    if (!confirm('Permanently delete this project? Its archived notes/todos, notebook, and archive zip are all destroyed. This cannot be undone.')) return;
+    try {
+      const r = await fetch(`${PROJECT_API}/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw 0;
+      toast('Project permanently deleted');
+      history.back();
+    } catch (_) {
+      toast('Failed to delete project', true);
     }
   }
 </script>

@@ -103,6 +103,13 @@ pub async fn archive_note(note: &Note, dest_path: &str) -> NotesLibResult {
     nb_client::nb_move(&note.notebook, note.nb_id, &format!("archive:{}", dest_path)).await
 }
 
+/// Moves every note archived under `archive:<folder>/` back into
+/// `dest_notebook`'s root — the reverse of `archive_note`, used when
+/// restoring a project. Returns the number of notes moved.
+pub async fn restore_archived_notes(folder: &str, dest_notebook: &str) -> NotesLibResult<usize> {
+    nb_client::nb_restore_folder("archive", folder, dest_notebook).await
+}
+
 /// Ensures the shared `archive` notebook exists — call before any
 /// `nb move ... archive:...` (see `nb_client::nb_ensure_notebook`).
 pub async fn ensure_archive_notebook() -> NotesLibResult<()> {
@@ -114,6 +121,23 @@ pub async fn ensure_archive_notebook() -> NotesLibResult<()> {
 /// `nb add`/`nb daily`'s implicit lazy creation on first note.
 pub async fn ensure_notebook(name: &str) -> NotesLibResult<()> {
     nb_client::nb_ensure_notebook(name).await
+}
+
+/// Permanently deletes `folder` (and everything in it) from the shared
+/// `archive` notebook — used when permanently deleting an archived project.
+/// Best-effort: a project that never had anything archived under it has no
+/// such folder, which `nb` reports as an error; that's not a failure here.
+pub async fn delete_archived_folder(folder: &str) -> NotesLibResult<()> {
+    let _ = nb_client::nb_delete_folder("archive", folder).await;
+    Ok(())
+}
+
+/// Permanently deletes a project's own dedicated notebook — used when
+/// permanently deleting an archived project. Best-effort, same reasoning as
+/// `delete_archived_folder`.
+pub async fn delete_notebook(name: &str) -> NotesLibResult<()> {
+    let _ = nb_client::nb_delete_notebook(name).await;
+    Ok(())
 }
 
 pub async fn search(query: &str) -> NotesLibResult<Vec<Note>> {

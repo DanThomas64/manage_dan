@@ -487,4 +487,15 @@ impl ApiClient {
         let url = format!("{}/api/v1/project/{}/archive", self.base_url, id);
         Ok(self.client.post(&url).send().await?.error_for_status()?.json().await?)
     }
+
+    pub async fn restore_project(&self, id: i64) -> Result<Project> {
+        let url = format!("{}/api/v1/project/{}/restore", self.base_url, id);
+        Ok(self.client.post(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn delete_project(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/project/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
 }

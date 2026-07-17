@@ -313,6 +313,16 @@ pub async fn archive_project_todos(project_slug: &str) -> TodoLibResult {
     }
 }
 
+/// Moves every todo item belonging to a project back out of the shared
+/// `archive` notebook, as part of un-archiving (restoring) a project. No-op
+/// under the Vikunja backend, matching `archive_project_todos`.
+pub async fn restore_project_todos(project_slug: &str) -> TodoLibResult {
+    match backend() {
+        BackendKind::Vikunja => Ok(()),
+        BackendKind::Nb { notebook } => backends::nb::restore_project_todos(notebook, project_slug).await,
+    }
+}
+
 /// Deletes a TodoItem and all its subtasks.
 pub async fn delete_item(id: i64) -> TodoLibResult {
     match backend() {
