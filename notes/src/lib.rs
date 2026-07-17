@@ -109,6 +109,13 @@ pub async fn ensure_archive_notebook() -> NotesLibResult<()> {
     nb_client::nb_ensure_notebook("archive").await
 }
 
+/// Ensures a notebook named `name` exists. Used by the project subsystem to
+/// give each project its own notebook up front, rather than relying on
+/// `nb add`/`nb daily`'s implicit lazy creation on first note.
+pub async fn ensure_notebook(name: &str) -> NotesLibResult<()> {
+    nb_client::nb_ensure_notebook(name).await
+}
+
 pub async fn search(query: &str) -> NotesLibResult<Vec<Note>> {
     let mut notes = nb_client::nb_search(query).await?;
     notes.retain(|n| n.notebook != LOG_NOTEBOOK && n.notebook != TODO_NOTEBOOK);
