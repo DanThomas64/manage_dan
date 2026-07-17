@@ -17,6 +17,7 @@ pub struct ListCategory {
     pub group_id: i64,
     pub name: String,
     pub has_checkboxes: bool,
+    pub has_quick_add: bool,
 }
 
 /// A saved common item template for a list (used for quick re-add).

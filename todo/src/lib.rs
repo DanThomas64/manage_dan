@@ -1,28 +1,45 @@
 //! Business logic layer for Todo item management.
 //!
-//! All task persistence is delegated to a self-hosted Vikunja instance via the
-//! `vikunja` crate.  The only local SQLite usage is the lightweight
-//! `printed_tasks` table (managed by the `db` crate) which tracks when a
-//! physical ticket was last printed for each task.
+//! Persistence is delegated to one of two configurable backends (see
+//! [`BackendKind`]): a self-hosted Vikunja instance via the `vikunja` crate,
+//! or the `nb` CLI (same tool the `notes` crate shells out to). Only one
+//! backend is active per process, selected at `init()` time. Every public
+//! CRUD/read function below is a thin dispatcher so callers (and the
+//! background monitor/summary tasks) don't need to know which backend is
+//! active. The only local SQLite usage besides backend-specific bookkeeping
+//! is the lightweight `printed_tasks` table (managed by the `db` crate)
+//! which tracks when a physical ticket was last printed for each task.
 
 pub mod todo_error;
 pub mod todo_prelude;
 pub mod models;
+pub mod backends;
 pub mod monitor;
 pub mod daily_summary;
 pub mod completed_summary;
 pub mod recurring;
 pub mod reminders;
 
-use chrono::{DateTime, Local, Utc};
+use std::sync::OnceLock;
+
+use chrono::Local;
 use tracing::{info, warn};
 
-use vikunja::VikunjaClient;
-use vikunja::models::{TaskPayload, VikunjaTask};
-
-use crate::models::{Subtask, TodoItem};
+use crate::models::TodoItem;
 use crate::todo_error::{TodoLibError, TodoLibResult};
 use printer::PrintJob;
+
+/// Which storage backend is active for this process. Set once by [`init`].
+enum BackendKind {
+    Vikunja,
+    Nb { notebook: String },
+}
+
+static BACKEND: OnceLock<BackendKind> = OnceLock::new();
+
+fn backend() -> &'static BackendKind {
+    BACKEND.get().expect("todo backend not initialized")
+}
 
 // --- Summary ---
 
@@ -93,79 +110,6 @@ fn strip_html(html: &str) -> String {
     }
 
     out.join("\n").trim().to_string()
-}
-
-// --- Mapping helpers ---
-
-fn to_task_payload(item: &TodoItem) -> TaskPayload {
-    TaskPayload {
-        title: item.title.clone(),
-        description: if item.description.is_empty() {
-            None
-        } else {
-            Some(item.description.clone())
-        },
-        done: item.completed,
-        due_date: item.due_date.map(|dt| dt.with_timezone(&Utc)),
-        priority: item.priority as i64,
-    }
-}
-
-fn subtask_payload(sub: &Subtask) -> TaskPayload {
-    TaskPayload {
-        title: sub.title.clone(),
-        description: None,
-        done: sub.done,
-        due_date: None,
-        priority: 0,
-    }
-}
-
-pub(crate) fn from_vikunja_task(
-    task: VikunjaTask,
-    printed_at: Option<DateTime<Local>>,
-    project_title: Option<String>,
-) -> TodoItem {
-    let now = Local::now();
-
-    let subtasks: Vec<Subtask> = task
-        .related_tasks
-        .get("subtask")
-        .map(|subs| {
-            subs.iter()
-                .map(|s| Subtask {
-                    id: Some(s.id),
-                    title: s.title.clone(),
-                    done: s.done,
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    let labels: Vec<String> = task.labels.iter().map(|l| l.title.clone()).collect();
-
-    let reminders: Vec<chrono::DateTime<Local>> = task.reminder_dates.iter()
-        .filter_map(|r| r.reminder)
-        .map(|dt| dt.with_timezone(&Local))
-        .collect();
-
-    TodoItem {
-        id: Some(task.id),
-        title: task.title,
-        description: strip_html(&task.description.unwrap_or_default()),
-        completed: task.done,
-        created_at: task.created.map(|dt| dt.with_timezone(&Local)).unwrap_or(now),
-        updated_at: task.updated.map(|dt| dt.with_timezone(&Local)).unwrap_or(now),
-        completed_at: task.done_at.map(|dt| dt.with_timezone(&Local)),
-        printed_at,
-        subtasks,
-        archived: false,
-        due_date: task.due_date.map(|dt| dt.with_timezone(&Local)),
-        priority: (task.priority.clamp(0, 5)) as u8,
-        project_title,
-        labels,
-        reminders,
-    }
 }
 
 // --- Printing ---
@@ -266,207 +210,116 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
         .await
 }
 
-async fn print_ticket_on_creation(item: &mut TodoItem) -> TodoLibResult {
+pub(crate) async fn print_ticket_on_creation(item: &mut TodoItem) -> TodoLibResult {
     if item.completed || item.archived {
         return Ok(());
     }
 
-    info!(
-        "Attempting to print ticket for newly created Todo ID {}",
-        item.id.unwrap_or(0)
-    );
+    let id = item.id.unwrap_or(0);
+    info!("Attempting to print ticket for newly created Todo ID {}", id);
+
+    // Claim the print atomically before doing it. Backends like `nb` shell
+    // out several times during creation, which takes long enough for the
+    // background print monitor's own poll to see the new item first and
+    // print it — whichever side claims the hash wins, the other skips.
+    let hash = crate::monitor::content_hash(item);
+    match db::printed_claim(id, hash).await {
+        Ok(true) => {}
+        Ok(false) => {
+            info!("Todo {} already printed (monitor won the race) — skipping duplicate print", id);
+            item.printed_at = Some(Local::now());
+            return Ok(());
+        }
+        Err(e) => {
+            warn!("Failed to claim print for Todo {}: {}", id, e);
+            return Ok(());
+        }
+    }
 
     match print_ticket(item).await {
         Ok(()) => {
-            let now = Local::now();
-            item.printed_at = Some(now);
-            let id = item.id.unwrap_or(0);
-            if let Err(e) = db::printed_at_set(id, now).await {
-                warn!("Failed to persist printed_at for Todo {}: {}", id, e);
-            }
+            item.printed_at = Some(Local::now());
             info!("Ticket printed for Todo ID {}", id);
         }
         Err(e) => {
-            warn!(
-                "Failed to print ticket for Todo ID {}: {}",
-                item.id.unwrap_or(0),
-                e
-            );
+            warn!("Failed to print ticket for Todo ID {}: {}", id, e);
+            // Undo the claim so the print monitor's next poll retries it.
+            if let Err(e2) = db::printed_at_delete(id).await {
+                warn!("Failed to revert print claim for Todo {}: {}", id, e2);
+            }
         }
     }
     Ok(())
 }
 
-// --- CRUD ---
+// --- CRUD (dispatched to the active backend) ---
 
-/// Creates a new TodoItem in Vikunja and prints a ticket.
+/// Creates a new TodoItem and prints a ticket.
 pub async fn create_item(item: TodoItem) -> TodoLibResult<TodoItem> {
-    info!("Creating new todo item: {}", item.title);
-    let client = VikunjaClient::get()?;
-
-    // 1. Create parent task
-    let parent = client.create_task(to_task_payload(&item)).await?;
-
-    // 2. Create subtask tasks and link them
-    for sub in &item.subtasks {
-        let child = client.create_task(subtask_payload(sub)).await?;
-        client.create_subtask_relation(parent.id, child.id).await?;
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::create_item(item).await,
+        BackendKind::Nb { notebook } => backends::nb::create_item(notebook, item).await,
     }
-
-    // 3. Fetch the full task with subtasks populated
-    let full = client.get_task(parent.id).await?;
-    let project_title = client.get_project(full.project_id).await.ok().map(|p| p.identifier);
-    let mut result = from_vikunja_task(full, None, project_title);
-
-    // 4. Attempt automatic print
-    print_ticket_on_creation(&mut result).await?;
-
-    Ok(result)
 }
 
-/// Returns all top-level (non-subtask) items across all accessible Vikunja projects.
+/// Returns all top-level (non-subtask) items across all projects/folders.
 pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
-    let client = VikunjaClient::get()?;
-    let (tasks, projects) = tokio::join!(client.list_all_tasks(), client.list_projects());
-    let tasks = tasks?;
-
-    let project_map: std::collections::HashMap<i64, String> = match projects {
-        Ok(list) => list.into_iter().map(|p| (p.id, p.identifier)).collect(),
-        Err(e) => {
-            warn!("read_items: list_projects failed, project titles will be missing: {}", e);
-            std::collections::HashMap::new()
-        }
-    };
-
-    // Collect IDs of tasks that appear as subtasks of other tasks so we can
-    // exclude them from the top-level list.
-    let subtask_ids: std::collections::HashSet<i64> = tasks
-        .iter()
-        .flat_map(|t| {
-            t.related_tasks
-                .get("subtask")
-                .into_iter()
-                .flat_map(|subs| subs.iter().map(|s| s.id))
-        })
-        .collect();
-
-    let printed_map = db::printed_at_get_all().await.unwrap_or_default();
-
-    let items = tasks
-        .into_iter()
-        .filter(|t| !subtask_ids.contains(&t.id))
-        .map(|t| {
-            let printed_at = printed_map.get(&t.id).copied();
-            let project_title = project_map.get(&t.project_id).cloned();
-            from_vikunja_task(t, printed_at, project_title)
-        })
-        .collect();
-
-    Ok(items)
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::read_items().await,
+        BackendKind::Nb { notebook } => backends::nb::read_items(notebook).await,
+    }
 }
 
-/// Updates a TodoItem in Vikunja, replacing its subtasks entirely.
+/// Updates a TodoItem, replacing its subtasks entirely.
 pub async fn update_item(item: TodoItem) -> TodoLibResult {
-    let id = item.id.ok_or(TodoLibError::Unknown)?;
-    info!("Updating todo item ID: {}", id);
-    let client = VikunjaClient::get()?;
-
-    // 1. Fetch current subtasks so we can clean them up
-    let current = client.get_task(id).await?;
-    if let Some(existing_subs) = current.related_tasks.get("subtask") {
-        for sub in existing_subs {
-            // Remove the relation first, then delete the child task
-            client.delete_subtask_relation(id, sub.id).await?;
-            client.delete_task(sub.id).await?;
-        }
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::update_item(item).await,
+        BackendKind::Nb { notebook } => backends::nb::update_item(notebook, item).await,
     }
-
-    // 2. Update parent task
-    client.update_task(id, to_task_payload(&item)).await?;
-
-    // 3. Create new subtasks
-    for sub in &item.subtasks {
-        let child = client.create_task(subtask_payload(sub)).await?;
-        client.create_subtask_relation(id, child.id).await?;
-    }
-
-    Ok(())
 }
 
 /// Marks a task as completed or pending without touching any other fields.
-///
-/// This is the correct path for a simple done-toggle: it fetches the current
-/// task state from Vikunja, flips only the `done` flag, and posts back.
-/// Subtasks are left entirely untouched.
 pub async fn complete_item(id: i64, completed: bool) -> TodoLibResult {
-    info!("Setting todo item {} done={}", id, completed);
-    let client = VikunjaClient::get()?;
-    let current = client.get_task(id).await?;
-    let payload = TaskPayload {
-        title: current.title.clone(),
-        description: if current.description.as_deref().unwrap_or("").is_empty() {
-            None
-        } else {
-            current.description.clone()
-        },
-        done: completed,
-        due_date: current.due_date,
-        priority: current.priority,
-    };
-    client.update_task(id, payload).await?;
-    Ok(())
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::complete_item(id, completed).await,
+        BackendKind::Nb { notebook } => backends::nb::complete_item(notebook, id, completed).await,
+    }
 }
 
 /// Manually prints a ticket for a TodoItem by ID.
 pub async fn print_item(id: i64) -> TodoLibResult {
-    info!("Manual print request for todo item ID: {}", id);
-    let client = VikunjaClient::get()?;
-    let task = client.get_task(id).await?;
-    let printed_at = db::printed_at_get(id).await.unwrap_or(None);
-    let project_title = client.get_project(task.project_id).await.ok().map(|p| p.identifier);
-    let item = from_vikunja_task(task, printed_at, project_title);
-
-    match print_ticket(&item).await {
-        Ok(()) => {
-            let now = Local::now();
-            if let Err(e) = db::printed_at_set(id, now).await {
-                warn!("Failed to persist printed_at for Todo {}: {}", id, e);
-            }
-            info!("Ticket manually printed for Todo ID {}", id);
-            Ok(())
-        }
-        Err(e) => Err(TodoLibError::CannotInitialize(format!(
-            "Manual print failed: {}",
-            e
-        ))),
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::print_item(id).await,
+        BackendKind::Nb { notebook } => backends::nb::print_item(notebook, id).await,
     }
 }
 
-/// Archives a TodoItem — deletes it from Vikunja (no native archive concept).
+/// Archives a TodoItem (deletes it — neither backend has a native archive concept).
 pub async fn archive_item(id: i64) -> TodoLibResult {
-    info!("Archiving (deleting) todo item ID: {}", id);
-    delete_item(id).await
-}
-
-/// Deletes a TodoItem and all its subtasks from Vikunja.
-pub async fn delete_item(id: i64) -> TodoLibResult {
-    info!("Deleting todo item ID: {}", id);
-    let client = VikunjaClient::get()?;
-
-    // Delete subtasks first
-    let task = client.get_task(id).await?;
-    if let Some(subs) = task.related_tasks.get("subtask") {
-        for sub in subs {
-            client.delete_task(sub.id).await?;
-        }
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::archive_item(id).await,
+        BackendKind::Nb { notebook } => backends::nb::archive_item(notebook, id).await,
     }
-
-    client.delete_task(id).await?;
-    db::printed_at_delete(id).await.ok();
-    Ok(())
 }
 
-/// Returns summary statistics for pending todo items.
+/// Deletes a TodoItem and all its subtasks.
+pub async fn delete_item(id: i64) -> TodoLibResult {
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::delete_item(id).await,
+        BackendKind::Nb { notebook } => backends::nb::delete_item(notebook, id).await,
+    }
+}
+
+/// Fetches a single TodoItem by id.
+pub async fn get_item(id: i64) -> TodoLibResult<TodoItem> {
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::get_item(id).await,
+        BackendKind::Nb { notebook } => backends::nb::get_item(notebook, id).await,
+    }
+}
+
+/// Returns summary statistics for pending todo items. Backend-agnostic —
+/// only depends on the dispatched `read_items()`.
 pub async fn get_summary() -> TodoLibResult<TodoSummary> {
     let items = read_items().await?;
     let now = Local::now();
@@ -500,27 +353,30 @@ pub async fn get_summary() -> TodoLibResult<TodoSummary> {
     })
 }
 
-/// Initializes the Todo subsystem (Vikunja client).
-/// Fetches a single TodoItem by its Vikunja task ID.
-pub async fn get_item(id: i64) -> TodoLibResult<TodoItem> {
-    let client = VikunjaClient::get()?;
-    let task = client.get_task(id).await?;
-    let printed_at = db::printed_at_get(id).await.unwrap_or(None);
-    let project_title = client.get_project(task.project_id).await.ok().map(|p| p.identifier);
-    Ok(from_vikunja_task(task, printed_at, project_title))
-}
+/// Initializes the Todo subsystem: verifies/connects to whichever backend
+/// `backend_name` selects ("nb" or anything else defaulting to "vikunja")
+/// and records it as the active [`BackendKind`] for the rest of the process.
+pub fn init(backend_name: &str, base_url: &str, api_token: &str, project_id: i64, nb_notebook: &str) -> TodoLibResult {
+    info!("initializing todo (backend: {})", backend_name);
 
-pub fn init(base_url: &str, api_token: &str, project_id: i64) -> TodoLibResult {
-    info!("initializing todo");
-    vikunja::init(base_url, api_token, project_id)
-        .map_err(TodoLibError::Vikunja)
+    let kind = if backend_name == "nb" {
+        backends::nb::check_nb_installed(nb_notebook)?;
+        BackendKind::Nb { notebook: nb_notebook.to_string() }
+    } else {
+        vikunja::init(base_url, api_token, project_id).map_err(TodoLibError::Vikunja)?;
+        BackendKind::Vikunja
+    };
+
+    BACKEND
+        .set(kind)
+        .map_err(|_| TodoLibError::CannotInitialize("todo backend already initialized".to_string()))
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn it_works() {
-        // init() requires a running Vikunja instance; tested via integration tests.
+        // init() requires a running Vikunja instance or `nb`; tested via integration tests.
         assert!(true);
     }
 }

@@ -9,6 +9,10 @@ pub use models::{CreateLogRequest, CreateNoteRequest, LogEntry, Note, UpdateNote
 
 /// Notebook all daily log entries are written to, via nb's `daily` plugin.
 const LOG_NOTEBOOK: &str = "log";
+
+/// Notebook the todo `nb` backend stores its items in (see the `todo` crate).
+/// Excluded from general note browsing for the same reason `LOG_NOTEBOOK` is.
+const TODO_NOTEBOOK: &str = "todo";
 pub use notes_error::NotesLibError;
 
 pub fn init() -> NotesLibResult {
@@ -54,7 +58,7 @@ pub async fn get(nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
 pub async fn list(notebook: Option<String>, tag: Option<String>) -> NotesLibResult<Vec<Note>> {
     let mut notes = nb_client::nb_list(notebook.as_deref()).await?;
     if notebook.is_none() {
-        notes.retain(|n| n.notebook != LOG_NOTEBOOK);
+        notes.retain(|n| n.notebook != LOG_NOTEBOOK && n.notebook != TODO_NOTEBOOK);
     }
     if let Some(tag_filter) = tag {
         notes.retain(|n| n.tags.iter().any(|t| *t == tag_filter));
@@ -88,13 +92,13 @@ pub async fn delete(nb_id: u64, notebook: &str) -> NotesLibResult {
 
 pub async fn search(query: &str) -> NotesLibResult<Vec<Note>> {
     let mut notes = nb_client::nb_search(query).await?;
-    notes.retain(|n| n.notebook != LOG_NOTEBOOK);
+    notes.retain(|n| n.notebook != LOG_NOTEBOOK && n.notebook != TODO_NOTEBOOK);
     Ok(notes)
 }
 
 pub async fn folders() -> NotesLibResult<Vec<String>> {
     let mut notebooks = nb_client::nb_notebooks().await?;
-    notebooks.retain(|n| n != LOG_NOTEBOOK);
+    notebooks.retain(|n| n != LOG_NOTEBOOK && n != TODO_NOTEBOOK);
     Ok(notebooks)
 }
 

@@ -107,6 +107,7 @@ pub enum TodoInputFocus {
     CalendarDate,
     CalendarTime,
     Priority,
+    Tags,
     Submit,
 }
 
@@ -137,6 +138,7 @@ pub struct App {
     pub calendar_date: NaiveDate,
     pub time_buffer: String,
     pub priority_buffer: String,
+    pub tags_buffer: String,
 
     // Notes state
     pub notes: Vec<Note>,
@@ -200,6 +202,16 @@ fn parse_subtasks_buffer(buffer: &str) -> Vec<Subtask> {
         .collect()
 }
 
+/// Parses a comma-separated tags input buffer into a list of trimmed,
+/// non-empty label titles.
+fn parse_tags_buffer(buffer: &str) -> Vec<String> {
+    buffer
+        .split(',')
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect()
+}
+
 impl App {
     pub fn new(api_client: ApiClient) -> Self {
         let now = Local::now().date_naive();
@@ -225,6 +237,7 @@ impl App {
             calendar_date: now,
             time_buffer: String::from("00:00"),
             priority_buffer: String::new(),
+            tags_buffer: String::new(),
 
             notes: Vec::new(),
             notes_list_state: ListState::default(),
@@ -1411,7 +1424,7 @@ impl App {
                                 TodoInputFocus::CalendarDate => {
                                     self.input_mode = InputMode::Insert;
                                 }
-                                TodoInputFocus::CalendarTime | TodoInputFocus::Priority | TodoInputFocus::Title | TodoInputFocus::Description | TodoInputFocus::Subtasks => {
+                                TodoInputFocus::CalendarTime | TodoInputFocus::Priority | TodoInputFocus::Tags | TodoInputFocus::Title | TodoInputFocus::Description | TodoInputFocus::Subtasks => {
                                     self.input_mode = InputMode::Insert;
                                 }
                             }
@@ -1491,6 +1504,7 @@ impl App {
             TodoInputFocus::CalendarDate,
             TodoInputFocus::CalendarTime,
             TodoInputFocus::Priority,
+            TodoInputFocus::Tags,
             TodoInputFocus::Submit,
         ];
         
@@ -1528,6 +1542,7 @@ impl App {
             TodoInputFocus::Subtasks => &mut self.subtasks_buffer,
             TodoInputFocus::CalendarTime => &mut self.time_buffer, // NEW
             TodoInputFocus::Priority => &mut self.priority_buffer,
+            TodoInputFocus::Tags => &mut self.tags_buffer,
             _ => return, // Not focused on a text field
         };
 
@@ -1588,6 +1603,7 @@ impl App {
         self.calendar_date = now;
         self.time_buffer = String::from("00:00");
         self.priority_buffer.clear();
+        self.tags_buffer.clear();
         self.subtasks_scroll = 0;
         self.todo_input_focus = TodoInputFocus::Title;
         self.last_error = None;
@@ -1604,6 +1620,7 @@ impl App {
         self.calendar_date = now;
         self.time_buffer = String::from("00:00");
         self.priority_buffer.clear();
+        self.tags_buffer.clear();
         self.subtasks_scroll = 0;
     }
     
@@ -1664,20 +1681,22 @@ impl App {
             0
         } else {
             match priority_str.parse::<u8>() {
-                Ok(p) if p <= 10 => p,
+                Ok(p) if p <= 5 => p,
                 _ => {
-                    self.last_error = Some("Priority must be an integer between 0 and 10.".to_string());
+                    self.last_error = Some("Priority must be an integer between 0 and 5.".to_string());
                     return;
                 }
             }
         };
         
         let parsed_subtasks = parse_subtasks_buffer(&subtasks);
+        let parsed_tags = parse_tags_buffer(&self.tags_buffer);
 
         let mut new_item = TodoItem::new(title, description);
         new_item.subtasks = parsed_subtasks;
         new_item.due_date = due_date_opt;
         new_item.priority = priority;
+        new_item.labels = parsed_tags;
         let result = self.api_client.create_todo(new_item).await.map(|_| ());
         
         match result {
@@ -2116,6 +2135,10 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
                 Line::from(format!("Status: {}", if item.completed { "COMPLETED" } else { "PENDING" })),
                 Line::from(format!("Priority: {}", item.priority)).fg(if item.priority >= 8 { Color::Red } else { Color::White }),
                 Line::from(format!("Project: {}", item.project_title.as_deref().unwrap_or("—"))),
+                Line::from(format!(
+                    "Tags: {}",
+                    if item.labels.is_empty() { "—".to_string() } else { item.labels.join(", ") }
+                )),
             ];
 
             if let Some(due_date) = item.due_date {
@@ -2294,7 +2317,7 @@ fn draw_calendar_picker(frame: &mut ratatui::Frame, area: Rect, date: NaiveDate,
 fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: Rect) {
     // Calculate the size and position of the floating window
     let width = parent_area.width.min(80);
-    let height = 31; // 29 inner lines + 2 borders (accommodates calendar + completed field)
+    let height = 33; // 31 inner lines + 2 borders (accommodates calendar + completed + tags fields)
     let x = (parent_area.width.saturating_sub(width)) / 2;
     let y = (parent_area.height.saturating_sub(height)) / 2;
     let area = Rect::new(x, y, width, height);
@@ -2335,8 +2358,9 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
             Constraint::Length(9), // 6: Calendar Grid
             Constraint::Length(2), // 7: Calendar Time
             Constraint::Length(2), // 8: Priority
-            Constraint::Length(1), // 9: Spacer
-            Constraint::Length(1), // 10: Submit button
+            Constraint::Length(2), // 9: Tags
+            Constraint::Length(1), // 10: Spacer
+            Constraint::Length(1), // 11: Submit button
         ]
     } else {
         vec![
@@ -2349,8 +2373,9 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
             Constraint::Length(0), // 6: Calendar Grid (collapsed)
             Constraint::Length(2), // 7: Calendar Time
             Constraint::Length(2), // 8: Priority
-            Constraint::Length(1), // 9: Spacer
-            Constraint::Length(1), // 10: Submit button
+            Constraint::Length(2), // 9: Tags
+            Constraint::Length(1), // 10: Spacer
+            Constraint::Length(1), // 11: Submit button
         ]
     };
 
@@ -2573,7 +2598,8 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
     // --- Calendar Time Input (NEW) ---
     let time_chunk_index = 7;
     let priority_chunk_index = 8;
-    let submit_chunk_index = 10;
+    let tags_chunk_index = 9;
+    let submit_chunk_index = 11;
 
     let time_style = if is_active(TodoInputFocus::CalendarTime) {
         Style::default().fg(Color::Yellow)
@@ -2612,12 +2638,31 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
         Constraint::Min(0),
     ]).split(chunks[priority_chunk_index]);
 
-    let priority_label = Paragraph::new("Priority (0-10):").style(priority_style);
+    let priority_label = Paragraph::new("Priority (0-5):").style(priority_style);
     frame.render_widget(priority_label, priority_chunks[0]);
     
     let priority_input = Paragraph::new(app.priority_buffer.as_str()).style(priority_style);
     frame.render_widget(priority_input, priority_chunks[1]);
     let priority_input_area = priority_chunks[1]; // Used for cursor positioning
+
+    // --- Tags Input ---
+    let tags_style = if is_active(TodoInputFocus::Tags) {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    let tags_chunks = Layout::horizontal([
+        Constraint::Length(17), // Label width (matches Priority label)
+        Constraint::Min(0),
+    ]).split(chunks[tags_chunk_index]);
+
+    let tags_label = Paragraph::new("Tags (comma-sep):").style(tags_style);
+    frame.render_widget(tags_label, tags_chunks[0]);
+
+    let tags_input = Paragraph::new(app.tags_buffer.as_str()).style(tags_style);
+    frame.render_widget(tags_input, tags_chunks[1]);
+    let tags_input_area = tags_chunks[1]; // Used for cursor positioning
 
     // --- Submit Button ---
     let submit_style = if is_active(TodoInputFocus::Submit) {
@@ -2674,6 +2719,12 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
                 frame.set_cursor(
                     priority_input_area.x + app.priority_buffer.len() as u16,
                     priority_input_area.y,
+                );
+            }
+            TodoInputFocus::Tags => {
+                frame.set_cursor(
+                    tags_input_area.x + app.tags_buffer.len() as u16,
+                    tags_input_area.y,
                 );
             }
             TodoInputFocus::Subtasks => { // NEW

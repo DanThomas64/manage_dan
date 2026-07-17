@@ -156,12 +156,14 @@ impl SystemsStatus {
             false => self.update("printer", Status::Nogo),
         };
 
-        // initialize todo (Vikunja backend)
-        let vikunja_cfg = &AppConfig::get().vikunja;
+        // initialize todo (Vikunja or nb backend, per config)
+        let cfg = AppConfig::get();
         match todo::init(
-            &vikunja_cfg.base_url,
-            &vikunja_cfg.api_token,
-            vikunja_cfg.project_id,
+            &cfg.todo.backend,
+            &cfg.vikunja.base_url,
+            &cfg.vikunja.api_token,
+            cfg.vikunja.project_id,
+            &cfg.todo.nb_notebook,
         )
         .map_err(|e| AppError::Todo(e).print())
         .is_ok()

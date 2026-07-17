@@ -31,6 +31,15 @@ pub struct VikunjaConfig {
     pub project_id: i64,
 }
 
+/// Configuration for which todo backend is active.
+#[derive(Debug, Deserialize, Clone)]
+pub struct TodoConfig {
+    /// "vikunja" or "nb".
+    pub backend: String,
+    /// nb notebook name used when `backend = "nb"`.
+    pub nb_notebook: String,
+}
+
 /// File logging configuration.
 ///
 /// Override with `APP_LOGGING_FILE=/path/to/app.log` env var, or set
@@ -48,6 +57,7 @@ pub struct AppConfig {
     pub environment: String,
     pub printer: PrinterConfig,
     pub vikunja: VikunjaConfig,
+    pub todo: TodoConfig,
     /// How often the print monitor polls Vikunja for labelled tasks (seconds).
     pub monitor_interval_secs: u64,
     /// Local hour (0–23) at which the daily summary is printed.
@@ -84,6 +94,8 @@ impl AppConfig {
             .set_default("vikunja.base_url", "http://localhost:3456")?
             .set_default("vikunja.api_token", "")?
             .set_default("vikunja.project_id", 1i64)?
+            .set_default("todo.backend", "vikunja")?
+            .set_default("todo.nb_notebook", "todo")?
             .set_default("monitor_interval_secs", 30u64)?
             .set_default("summary_hour", 8u64)?
             .set_default("summary_level", "full")?

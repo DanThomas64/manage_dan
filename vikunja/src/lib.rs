@@ -3,7 +3,7 @@
 pub mod models;
 pub mod vikunja_error;
 
-use models::{CreateRelation, TaskPayload, VikunjaProject, VikunjaTask};
+use models::{CreateRelation, TaskPayload, VikunjaLabel, VikunjaProject, VikunjaTask};
 use std::sync::OnceLock;
 use tracing::info;
 use vikunja_error::{VikunjaError, VikunjaResult};
@@ -172,6 +172,43 @@ impl VikunjaClient {
             self.base_url, parent_id, child_id
         );
         let resp = self.client.delete(&url).send().await?;
+        self.require_success(resp).await?;
+        Ok(())
+    }
+
+    /// Searches labels visible to the authenticated user by title substring.
+    pub async fn list_labels(&self, search: Option<&str>) -> VikunjaResult<Vec<VikunjaLabel>> {
+        let url = format!("{}/api/v1/labels", self.base_url);
+        let mut req = self.client.get(&url).query(&[("per_page", "500")]);
+        if let Some(s) = search {
+            req = req.query(&[("s", s)]);
+        }
+        let resp = req.send().await?;
+        let resp = self.require_success(resp).await?;
+        decode(resp).await
+    }
+
+    /// Creates a new label with the given title.
+    pub async fn create_label(&self, title: &str) -> VikunjaResult<VikunjaLabel> {
+        let url = format!("{}/api/v1/labels", self.base_url);
+        let payload = serde_json::json!({ "title": title });
+        let resp = self.client.put(&url).json(&payload).send().await?;
+        let resp = self.require_success(resp).await?;
+        decode(resp).await
+    }
+
+    /// Sets the complete label set on a task in one call — any label
+    /// currently on the task that isn't in `label_ids` is removed, and any
+    /// id in `label_ids` not yet on the task is added. Every id must
+    /// already exist (this endpoint does not create labels).
+    pub async fn set_task_labels(&self, task_id: i64, label_ids: &[i64]) -> VikunjaResult<()> {
+        let url = format!("{}/api/v1/tasks/{}/labels/bulk", self.base_url, task_id);
+        let labels: Vec<_> = label_ids
+            .iter()
+            .map(|id| serde_json::json!({ "id": id }))
+            .collect();
+        let payload = serde_json::json!({ "labels": labels });
+        let resp = self.client.post(&url).json(&payload).send().await?;
         self.require_success(resp).await?;
         Ok(())
     }

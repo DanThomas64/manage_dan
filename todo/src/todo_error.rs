@@ -14,6 +14,9 @@ pub enum TodoLibError {
     #[error("Vikunja error: {0}")]
     Vikunja(#[from] VikunjaError),
 
+    #[error("nb error: {0}")]
+    Nb(String),
+
     #[error("database error: {0}")]
     Db(String),
 

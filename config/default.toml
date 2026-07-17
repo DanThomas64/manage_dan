@@ -50,3 +50,12 @@ api_token = ""
 
 # Vikunja project ID to store tasks in
 project_id = 1
+
+[todo]
+# Which backend stores todos: "vikunja" (self-hosted Vikunja instance) or
+# "nb" (local nb CLI notebook, same tool the notes/Log feature uses).
+backend = "vikunja"
+
+# nb notebook name used when backend = "nb". Vikunja "projects" are
+# approximated as subfolders inside this notebook (e.g. "work/", "personal/").
+nb_notebook = "todo"
