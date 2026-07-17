@@ -123,6 +123,7 @@
 
     .header-actions {
       display: flex;
+      align-items: center;
       gap: 8px;
       flex-shrink: 1;
       min-width: 0;
@@ -172,6 +173,13 @@
       color: var(--text-muted);
       flex-shrink: 0;
     }
+
+    /* Project Detail's collapsible Todos/Log/Lists sections */
+    .pd-section-header { cursor: pointer; user-select: none; }
+    .pd-section-header-left { display: flex; align-items: center; gap: 6px; }
+    .pd-chevron { display: inline-block; font-size: 0.7rem; transition: transform 0.2s; }
+    .pd-section.collapsed .pd-chevron { transform: rotate(-90deg); }
+    .pd-section.collapsed .pd-section-body { display: none; }
 
     .category-list {
       flex: 1;
@@ -378,8 +386,12 @@
 
     /* ── Category hamburger menu ── */
     .cat-menu-wrap { position: relative; flex-shrink: 0; }
-    .cat-menu-btn  { background: none; border: none; cursor: pointer; font-size: 1.1rem;
-                     padding: 2px 6px; color: var(--text-muted); line-height: 1; }
+    .cat-menu-btn  {
+      display: flex; align-items: center; justify-content: center;
+      background: none; border: none; cursor: pointer; font-size: 1.25rem;
+      min-width: 38px; min-height: 38px; padding: 4px 8px;
+      color: var(--text-muted); line-height: 1;
+    }
     .cat-menu-btn:hover { color: var(--text); }
     .cat-menu-dropdown {
       display: none;
@@ -389,21 +401,26 @@
       background: var(--surface2);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      min-width: 160px;
+      min-width: 200px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.35);
       z-index: 200;
     }
     .cat-menu-dropdown.open { display: block; }
     .cat-menu-dropdown.align-right { left: auto; right: 0; }
     .cat-menu-item {
-      display: flex; align-items: center; gap: 8px;
-      width: 100%; padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px;
+      width: 100%; min-height: 48px; padding: 13px 16px;
       background: none; border: none; cursor: pointer;
-      color: var(--text); font-size: 0.9rem; text-align: left;
+      color: var(--text); font-size: 0.95rem; text-align: left;
       white-space: nowrap;
     }
     .cat-menu-item:hover { background: var(--surface3, #333); }
-    .cat-menu-item .menu-check { font-size: 0.75rem; color: var(--accent); margin-left: auto; }
+    .cat-menu-item .menu-check { font-size: 0.8rem; color: var(--accent); margin-left: auto; }
+
+    @media (hover: none) and (pointer: coarse), (max-width: 1024px) {
+      .cat-menu-item { min-height: 52px; padding: 15px 18px; font-size: 1rem; }
+      .cat-menu-btn  { min-width: 44px; min-height: 44px; font-size: 1.35rem; }
+    }
 
     /* ── Notebook autocomplete dropdown (custom — native <datalist> is unreliable on mobile) ── */
     .suggestions-dropdown {
@@ -1058,6 +1075,30 @@
       .home-tile-label { font-size: 1.1rem; }
     }
 
+    /* ── Swipe-to-reveal delete (genuine touch devices only — a narrow
+       desktop window with a mouse keeps the existing hover reveal, since a
+       swipe gesture isn't available there) ──
+       Mirrors the grocery-item swipe's visual language, but these rows
+       already have a real delete button: swiping just reveals it, so a
+       tap is still required — the same hover-then-click two-step mouse
+       users get, just gesture-driven instead of pointer-driven. */
+    @media (hover: none) and (pointer: coarse) {
+      .category-item .category-delete,
+      .group-item .group-delete,
+      .todo-card .todo-delete,
+      .note-card .note-card-delete {
+        opacity: 0;
+        pointer-events: none;
+      }
+      .category-item.swiped .category-delete,
+      .group-item.swiped .group-delete,
+      .todo-card.swiped .todo-delete,
+      .note-card.swiped .note-card-delete {
+        opacity: 1;
+        pointer-events: auto;
+      }
+    }
+
     /* ── Full-screen section overlays (Home / Lists / Notes / Log) ── */
     .app-overlay {
       display: none;
@@ -1099,6 +1140,25 @@
       border-bottom: 2px solid var(--accent);
     }
     .notes-tab:hover:not(.active), .log-tab:hover:not(.active), .todo-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+
+    /* "+ New" is a create-action, not a view filter like its sibling tabs —
+       give it its own amber outline so it reads as a button, not a tab. */
+    .notes-tab[id$="-add"], .log-tab[id$="-add"], .todo-tab[id$="-add"] {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+    }
+    .notes-tab[id$="-add"]:hover:not(.active),
+    .log-tab[id$="-add"]:hover:not(.active),
+    .todo-tab[id$="-add"]:hover:not(.active) {
+      background: var(--accent-dim);
+      color: var(--accent-cont);
+    }
+    .notes-tab.active[id$="-add"], .log-tab.active[id$="-add"], .todo-tab.active[id$="-add"] {
+      background: var(--accent);
+      color: var(--accent-on);
+      border-color: var(--accent);
+    }
 
     .notes-panel, .log-panel, .todo-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
     .notes-panel.active, .log-panel.active, .todo-panel.active { display: flex; }
@@ -1208,6 +1268,7 @@
 
     .notes-list { flex: 1; overflow-y: auto; padding: 8px; }
     .note-card {
+      position: relative;
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -1220,7 +1281,29 @@
       transition: border-color 0.15s;
     }
     .note-card:hover { background: var(--surface2); border-color: var(--accent); }
-    .note-card-title { font-weight: 600; font-size: 0.95rem; }
+    .note-card-delete {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 4px 6px;
+      min-width: 30px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+    }
+    .note-card:hover .note-card-delete { opacity: 1; }
+    .note-card-delete:hover { color: var(--red); }
+    .note-card-title { font-weight: 600; font-size: 0.95rem; padding-right: 30px; }
     .note-card-preview { color: var(--text-muted); font-size: 0.82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .note-card-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     .note-badge {
@@ -1568,14 +1651,6 @@
       <button class="log-tab active" id="ltab-add" onclick="logShowTab('add')">&#43; New</button>
       <button class="log-tab" id="ltab-recent" onclick="logShowTab('recent')">Recent</button>
     </div>
-    <div class="cat-menu-wrap">
-      <button class="cat-menu-btn" onclick="toggleMenu('log-menu-dropdown', event)" title="View options">&#9776;</button>
-      <div class="cat-menu-dropdown align-right" id="log-menu-dropdown">
-        <button class="cat-menu-item" onclick="logToggleShowProject()">
-          Show Project Items <span class="menu-check" id="log-show-project-check"></span>
-        </button>
-      </div>
-    </div>
   </div>
 
   <!-- Add Entry panel: quick entries into today's daily log (nb daily plugin) -->
@@ -1710,7 +1785,7 @@
 
   <!-- All projects + create form -->
   <div class="notes-panel active" id="ppanel-list">
-    <div class="quick-note-form" style="flex-direction:row;gap:8px;padding:12px 16px;">
+    <div class="quick-note-form" style="flex:0 0 auto;flex-direction:row;align-items:center;gap:8px;padding:12px 16px;">
       <input type="text" id="project-name" class="lc-first" placeholder="New project name…" autocomplete="off"
              onkeydown="if(event.key==='Enter') submitProject()" style="flex:1;" />
       <button class="btn-primary btn-sm" onclick="submitProject()">&#43; Create</button>
@@ -1736,7 +1811,7 @@
     </div>
   </div>
   <div class="notes-panel active" id="ppanel-project-detail">
-    <div id="project-detail-content" style="padding:12px 16px;"></div>
+    <div id="project-detail-content" style="flex:1;overflow-y:auto;padding:12px 16px;"></div>
   </div>
 </div>
 
@@ -1873,6 +1948,7 @@
                 title="Delete group">&#215;</button>`}
       </div>
     `).join('');
+    initSwipeRevealAll(el.querySelectorAll('.group-item'));
   }
 
   async function selectGroup(id) {
@@ -1984,6 +2060,7 @@
                 onclick="event.stopPropagation(); deleteCategory(${c.id})">&#215;</button>
       </div>
     `).join('');
+    initSwipeRevealAll(el.querySelectorAll('.category-item'));
   }
 
   async function selectCategory(id, fromPopState) {
@@ -2649,6 +2726,60 @@
     });
   }
 
+  // ── Swipe-to-reveal delete (touch) ───────────────────────────────────────
+  // Used by list groups/categories, todo cards, and note cards — unlike
+  // initSwipe() above (grocery-list items, which swipe straight through to
+  // delete/check), these rows already have a real delete button behind a
+  // confirm(); swiping just reveals it via the `.swiped` class (see the
+  // matching `@media (hover: none) and (pointer: coarse)` CSS block), so
+  // the actual delete still needs an explicit second tap.
+  function initSwipeReveal(el) {
+    let startX = 0, startY = 0, axis = null;
+
+    el.addEventListener('touchstart', e => {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      axis = null;
+    }, { passive: true });
+
+    el.addEventListener('touchmove', e => {
+      if (axis === 'v') return;
+      const dx = e.touches[0].clientX - startX;
+      const dy = e.touches[0].clientY - startY;
+      if (!axis) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        axis = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+      }
+    }, { passive: true });
+
+    el.addEventListener('touchend', e => {
+      if (axis !== 'h') return;
+      const dx = e.changedTouches[0].clientX - startX;
+      if (dx < -32) {
+        closeAllSwipeReveals();
+        el.classList.add('swiped');
+        if (navigator.vibrate) navigator.vibrate(8);
+      } else if (dx > 32) {
+        el.classList.remove('swiped');
+      }
+    });
+  }
+
+  function initSwipeRevealAll(elements) {
+    elements.forEach(initSwipeReveal);
+  }
+
+  function closeAllSwipeReveals() {
+    document.querySelectorAll('.swiped').forEach(el => el.classList.remove('swiped'));
+  }
+
+  // Tapping anywhere outside an already-revealed delete button closes it —
+  // same convention as closeAllMenus() for the "☰" dropdowns.
+  document.addEventListener('click', e => {
+    if (e.target.closest('.category-delete, .group-delete, .todo-delete, .note-card-delete')) return;
+    closeAllSwipeReveals();
+  });
+
   // ── Utilities ──────────────────────────────────────────────────────────────
 
   // Forces the first character of "name"-like fields to lowercase, live as
@@ -2856,7 +2987,6 @@
   let logCurrentTab = 'add';
 
   function logOnOpen() {
-    updateLogProjectCheck();
     if (pendingProjectContext !== null) {
       const pid = pendingProjectContext; pendingProjectContext = null;
       logShowTab('add');
@@ -2885,37 +3015,22 @@
     }
   }
 
+  // The main Log screen always shows everything, project entries included —
+  // filtering by project only happens implicitly via Project Detail's own
+  // scoped fetch (see below).
   async function logLoadRecent() {
     try {
       const r = await fetch(NOTES_API + '/daily?days=7');
-      let entries = await r.json();
-      if (logHideProjectItems) {
-        entries = entries.filter(e => !(e.tags || []).some(t => t.startsWith('project-')));
-      }
+      const entries = await r.json();
       renderLogList(entries);
     } catch (_) {
       document.getElementById('logs-list').innerHTML = '<div class="empty-state"><span>Failed to load log entries</span></div>';
     }
   }
 
-  // Project log entries are hidden by default — only shown once "Show
-  // Project Items" is switched on from the view-options menu.
-  let logHideProjectItems = true;
-
-  function updateLogProjectCheck() {
-    const check = document.getElementById('log-show-project-check');
-    if (check) check.textContent = logHideProjectItems ? '' : '✓';
-  }
-
-  function logToggleShowProject() {
-    logHideProjectItems = !logHideProjectItems;
-    updateLogProjectCheck();
-    logLoadRecent();
-  }
-
   // `containerId` defaults to the main Log screen's list; the Project detail
-  // panel passes its own container id and is never subject to the main
-  // screen's "hide project items" toggle (it's already scoped to one project).
+  // panel passes its own container id, already scoped server-side to one
+  // project's entries.
   function renderLogList(entries, containerId) {
     const el = document.getElementById(containerId || 'logs-list');
     if (!entries || entries.length === 0) {
@@ -3086,6 +3201,8 @@
       const nbHtml = `<span class="note-badge folder">&#128193; ${esc(n.notebook)}</span>`;
       const dateStr = new Date(n.updated_at).toLocaleDateString('en-GB', {day:'numeric',month:'short'});
       return `<div class="note-card" onclick="notesOpenNote(${n.nb_id},'${esc(n.notebook)}','${fromTab}')">
+        <button class="note-card-delete" title="Delete note"
+                onclick="event.stopPropagation(); notesDeleteFromList(${n.nb_id}, '${esc(n.notebook)}')">&#215;</button>
         <div class="note-card-title">${esc(n.title || 'Untitled')}</div>
         ${preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
         <div class="note-card-meta">
@@ -3094,6 +3211,23 @@
         </div>
       </div>`;
     }).join('');
+    initSwipeRevealAll(el.querySelectorAll('.note-card'));
+  }
+
+  async function notesDeleteFromList(nbId, notebook) {
+    if (!confirm('Delete this note? This cannot be undone.')) return;
+    try {
+      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook), { method: 'DELETE' });
+      if (!r.ok) throw 0;
+      toast('Note deleted');
+      if (notesCurrentTab === 'search') {
+        notesSearch(document.getElementById('note-search-input').value);
+      } else {
+        notesLoadBrowse();
+      }
+    } catch (_) {
+      toast('Failed to delete note', true);
+    }
   }
 
   async function notesOpenNote(nbId, notebook, fromTab) {
@@ -3513,7 +3647,7 @@
       <div class="todo-actions">
         ${editable ? `<button class="btn-ghost btn-sm" onclick="todoEditTodo(${i.id})">Edit</button>` : ''}
         <button class="btn-ghost btn-sm" onclick="todoPrint(${i.id})">&#128424; Print</button>
-        <button class="btn-danger btn-sm" onclick="todoDelete(${i.id})">Delete</button>
+        <button class="btn-danger btn-sm todo-delete" onclick="todoDelete(${i.id})">Delete</button>
       </div>
     </div>`;
   }
@@ -3554,6 +3688,7 @@
     });
 
     el.innerHTML = items.map(renderTodoCard).join('');
+    initSwipeRevealAll(el.querySelectorAll('.todo-card'));
   }
 
   async function todoToggleDone(id, done) {
@@ -3689,8 +3824,31 @@
 
   let currentProjectDetailId = null;
 
+  // Todos open by default; Log/Lists start collapsed. Reset on every fresh
+  // visit to a project rather than persisted, so it doesn't get "stuck".
+  let pdSectionCollapsed = { todos: false, log: true, lists: true };
+
+  function toggleProjectSection(key) {
+    pdSectionCollapsed[key] = !pdSectionCollapsed[key];
+    const section = document.getElementById('pd-section-' + key);
+    if (section) section.classList.toggle('collapsed', pdSectionCollapsed[key]);
+  }
+
+  function pdSection(key, label, actionsHtml, bodyHtml) {
+    const collapsed = pdSectionCollapsed[key] ? ' collapsed' : '';
+    return `
+      <div class="pd-section${collapsed}" id="pd-section-${key}">
+        <div class="sidebar-header pd-section-header" style="display:flex;justify-content:space-between;align-items:center;" onclick="toggleProjectSection('${key}')">
+          <span class="pd-section-header-left"><span class="pd-chevron">&#9660;</span>${label}</span>
+          <span onclick="event.stopPropagation()">${actionsHtml}</span>
+        </div>
+        <div class="pd-section-body">${bodyHtml}</div>
+      </div>`;
+  }
+
   async function projectDetailOnOpen(id) {
     currentProjectDetailId = id;
+    pdSectionCollapsed = { todos: false, log: true, lists: true };
     const el = document.getElementById('project-detail-content');
     el.innerHTML = '<div class="empty-state"><span>Loading…</span></div>';
     try {
@@ -3744,23 +3902,35 @@
       <div class="note-card-title" style="font-size:1.2rem;margin-bottom:8px;">
         ${esc(p.name)}
       </div>
-      <div class="sidebar-header" style="display:flex;justify-content:space-between;align-items:center;">
-        Todos <button class="btn-ghost btn-sm" onclick="addTodoForProject(${p.id})">&#43; Add Todo</button>
+      ${pdSection('todos', 'Todos',
+        `<button class="btn-ghost btn-sm" onclick="addTodoForProject(${p.id})">&#43; Add Todo</button>`,
+        `<div class="notes-list">${todosHtml}</div>`)}
+      <div class="sidebar-header" style="display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="openProjectNotes('${esc(p.slug)}')">
+        Notes (${detail.notes.length}) &#8594;
+        <button class="btn-ghost btn-sm" onclick="event.stopPropagation(); addNoteForProject(${p.id})">&#43; Add Note</button>
       </div>
-      <div class="notes-list">${todosHtml}</div>
-      <div class="sidebar-header" style="display:flex;justify-content:space-between;align-items:center;">
-        Notes <button class="btn-ghost btn-sm" onclick="addNoteForProject(${p.id})">&#43; Add Note</button>
-      </div>
-      <div class="notes-list" id="project-notes-list"></div>
-      <div class="sidebar-header" style="display:flex;justify-content:space-between;align-items:center;">
-        Log <button class="btn-ghost btn-sm" onclick="addLogForProject(${p.id})">&#43; Add Entry</button>
-      </div>
-      <div class="notes-list" id="project-logs-list"></div>
-      <div class="sidebar-header">Lists</div>
-      <div class="notes-list">${listsHtml}</div>
+      ${pdSection('log', 'Log',
+        `<button class="btn-ghost btn-sm" onclick="addLogForProject(${p.id})">&#43; Add Entry</button>`,
+        `<div class="notes-list" id="project-logs-list"></div>`)}
+      ${pdSection('lists', 'Lists', '', `<div class="notes-list">${listsHtml}</div>`)}
     `;
-    renderNoteList(detail.notes, 'project-notes-list', 'project-detail');
     renderLogList(detail.logs, 'project-logs-list');
+    initSwipeRevealAll(el.querySelectorAll('.todo-card'));
+  }
+
+  // The Notes row navigates straight to the Notes overlay filtered to this
+  // project's own notebook, rather than previewing notes inline — mirrors
+  // the "☰ → Archive" shortcut pattern. Project items are tag-filtered out
+  // of Notes by default, so that has to be switched off here or the filter
+  // would strip out every note in the very notebook being requested.
+  async function openProjectNotes(slug) {
+    showView('notes');
+    notesHideProjectItems = false;
+    updateNotesProjectCheck();
+    await ensureProjectsLoaded();
+    notesFilterNotebook = slug;
+    notesShowTab('browse');
+    notesLoadNotebooks();
   }
 
   async function archiveProject(id) {
