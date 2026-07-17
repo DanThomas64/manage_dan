@@ -18,7 +18,6 @@ resolver = "2"
 
 [workspace.package]
 
-version = "0.3.0"
 authors = ["DanThomas64"]
 description = "I need to organize my life"
 edition = "2021"
