@@ -1096,16 +1096,22 @@ impl App {
 
     /// Permanently deletes the currently-selected (archived) project. Called
     /// only after `ProjectInputMode::ConfirmDelete` confirmation.
-    pub async fn project_delete_selected(&mut self) {
+    /// Returns whether the delete succeeded, so the confirm dialog can stay
+    /// open (showing the error) on failure instead of silently closing.
+    pub async fn project_delete_selected(&mut self) -> bool {
         let Some(p) = self.project_list_state.selected().and_then(|i| self.projects.get(i)).cloned() else {
-            return;
+            return false;
         };
         match self.api_client.delete_project(p.id).await {
             Ok(_) => {
                 self.fetch_projects().await;
                 self.project_load_selected_detail().await;
+                true
             }
-            Err(e) => self.last_error = Some(format!("Delete failed: {}", e)),
+            Err(e) => {
+                self.last_error = Some(format!("Delete failed: {}", e));
+                false
+            }
         }
     }
 
@@ -1217,6 +1223,7 @@ impl App {
                             }
                             KeyCode::Char('d') => {
                                 self.notes_mode = NotesMode::ConfirmDelete;
+                                self.last_error = None;
                             }
                             KeyCode::Char('n') => {
                                 self.notes_mode = NotesMode::Create;
@@ -1306,6 +1313,7 @@ impl App {
                             }
                             KeyCode::Char('d') => {
                                 self.notes_mode = NotesMode::ConfirmDelete;
+                                self.last_error = None;
                             }
                             KeyCode::Char('p') => {
                                 if let Some(ref note) = self.notes_view_note.clone() {
@@ -1380,6 +1388,7 @@ impl App {
                                 }
                                 KeyCode::Char('D') => {
                                     self.project_input_mode = ProjectInputMode::ConfirmDelete;
+                                    self.last_error = None;
                                 }
                                 KeyCode::Char('r') => {
                                     // Project Detail aggregates cached todos/notes — resync
@@ -1416,12 +1425,14 @@ impl App {
                         }
                         ProjectInputMode::ConfirmDelete => match key.code {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                self.project_delete_selected().await;
-                                self.project_input_mode = ProjectInputMode::Normal;
+                                if self.project_delete_selected().await {
+                                    self.project_input_mode = ProjectInputMode::Normal;
+                                }
                                 action_taken = true;
                             }
                             _ => {
                                 self.project_input_mode = ProjectInputMode::Normal;
+                                self.last_error = None;
                             }
                         },
                     }
@@ -3742,7 +3753,12 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         footer_area,
     );
 
-    // Delete confirmation overlay
+    // Delete confirmation overlay — shows `last_error` in place of the
+    // prompt when a previous confirm attempt failed (e.g. server
+    // unreachable), so a failed delete doesn't look identical to an
+    // unconfirmed one: the dialog would otherwise sit there unchanged and
+    // `y` would appear to do nothing, with only a non-`y` key (cancel)
+    // visibly responding.
     if app.notes_mode == NotesMode::ConfirmDelete {
         let popup = Rect {
             x: area.width.saturating_sub(50) / 2,
@@ -3750,9 +3766,13 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             width: 50.min(area.width),
             height: 5.min(area.height),
         };
+        let text = match &app.last_error {
+            Some(err) => format!("Delete failed: {}\n\ny: try again, any other key: cancel", err),
+            None => "Delete this note? (y = confirm, any other key = cancel)".to_string(),
+        };
         frame.render_widget(Clear, popup);
         frame.render_widget(
-            Paragraph::new("Delete this note? (y = confirm, any other key = cancel)")
+            Paragraph::new(text)
                 .block(Block::default().borders(Borders::ALL).title(" Delete Note ")
                     .border_style(Style::default().fg(Color::Red)))
                 .wrap(Wrap { trim: true }),
@@ -4042,9 +4062,13 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             width: 56.min(area.width),
             height: 5.min(area.height),
         };
+        let text = match &app.last_error {
+            Some(err) => format!("Delete failed: {}\n\ny: try again, any other key: cancel", err),
+            None => "Permanently delete this project? This cannot be undone. (y = confirm, any other key = cancel)".to_string(),
+        };
         frame.render_widget(Clear, popup);
         frame.render_widget(
-            Paragraph::new("Permanently delete this project? This cannot be undone. (y = confirm, any other key = cancel)")
+            Paragraph::new(text)
                 .block(Block::default().borders(Borders::ALL).title(" Delete Project ")
                     .border_style(Style::default().fg(Color::Red)))
                 .wrap(Wrap { trim: true }),
