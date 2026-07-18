@@ -127,7 +127,11 @@ pub struct App {
     pub api_client: ApiClient,
     pub status: Option<StatusResponse>,
     pub last_error: Option<String>,
-    
+    /// Toggled by `?` on any screen's normal/list mode — draws a full
+    /// keybind reference for the current screen over everything else.
+    /// Any keypress while open closes it (see `handle_input`).
+    pub show_help: bool,
+
     // Dashboard State
     pub latest_logs: Vec<LogEntry>, // NEW: Store latest log entries
     
@@ -255,6 +259,7 @@ impl App {
             api_client,
             status: None,
             last_error: None,
+            show_help: false,
             latest_logs: Vec::new(), // Initialize logs
             todo_items: Vec::new(),
             todo_list_state: ListState::default(),
@@ -1107,7 +1112,17 @@ impl App {
     pub async fn handle_input(&mut self, event: CEvent) {
         let previous_screen = self.current_screen;
         let mut action_taken = false;
-        
+
+        // The help popup floats over whichever screen is active — swallow
+        // every keypress here (closing it) rather than letting it fall
+        // through to that screen's own handler while open.
+        if self.show_help {
+            if let CEvent::Key(_) = event {
+                self.show_help = false;
+            }
+            return;
+        }
+
         match self.current_screen {
             Screen::Dashboard => {
                 if let CEvent::Key(key) = event {
@@ -1156,6 +1171,7 @@ impl App {
                                 KeyCode::Char('p') => { self.print_selected().await; action_taken = true; }
                                 KeyCode::Char('x') => { self.archive_selected().await; action_taken = true; }
                                 KeyCode::Char('d') => { self.delete_selected().await; action_taken = true; }
+                                KeyCode::Char('?') => { self.show_help = true; }
                                 _ => { self.handle_nav_key(key.code); }
                             }
                         }
@@ -1211,6 +1227,7 @@ impl App {
                                 let sel = self.notes_list_state.selected().unwrap_or(0).min(len.saturating_sub(1));
                                 if len == 0 { self.notes_list_state.select(None); } else { self.notes_list_state.select(Some(sel)); }
                             }
+                            KeyCode::Char('?') => { self.show_help = true; }
                             _ => { self.handle_nav_key(key.code); }
                         },
                         NotesMode::Create => {
@@ -1295,6 +1312,7 @@ impl App {
                                     action_taken = true;
                                 }
                             }
+                            KeyCode::Char('?') => { self.show_help = true; }
                             _ => { self.handle_nav_key(key.code); }
                         },
                         NotesMode::Search => match key.code {
@@ -1376,6 +1394,7 @@ impl App {
                                     self.project_load_selected_detail().await;
                                     action_taken = true;
                                 }
+                                KeyCode::Char('?') => { self.show_help = true; }
                                 _ => { self.handle_nav_key(key.code); }
                             }
                         }
@@ -1513,6 +1532,7 @@ impl App {
                                     self.fetch_list_categories_for_selected_group().await;
                                     action_taken = true;
                                 }
+                                KeyCode::Char('?') => { self.show_help = true; }
                                 _ => { self.handle_nav_key(key.code); }
                             }
                         }
@@ -1597,6 +1617,7 @@ impl App {
                                 let sel = self.daily_log_state.selected().unwrap_or(0).min(len.saturating_sub(1));
                                 if len == 0 { self.daily_log_state.select(None); } else { self.daily_log_state.select(Some(sel)); }
                             }
+                            KeyCode::Char('?') => { self.show_help = true; }
                             _ => { self.handle_nav_key(key.code); }
                         },
                         LogScreenMode::Create => {
@@ -1717,6 +1738,7 @@ impl App {
         match key_code {
             KeyCode::Char('q') => self.current_screen = Screen::Quit,
             KeyCode::Char('r') => { /* update_status is called automatically */ }
+            KeyCode::Char('?') => { self.show_help = true; }
             _ => { self.handle_nav_key(key_code); }
         }
     }
@@ -2184,9 +2206,259 @@ impl Tui {
                 Screen::Log => draw_log_screen(frame, app, area),
                 _ => {}
             }
+            if app.show_help {
+                draw_help_popup(frame, app, area);
+            }
         })?;
         Ok(())
     }
+}
+
+// --- Help popup ---
+//
+// Every screen's footer was trimmed down to just the common navigation keys
+// (back/quit, move, open, cycle-focus) plus `?`; every OTHER keybind for
+// that screen (actions like add/delete/print/archive/resync/toggle) now
+// only lives here, in a full reference opened by `?` and closed by any key.
+
+/// Returns `(title, key/description pairs)` for whichever screen (and, for
+/// screens with more than one input mode, sub-mode) is currently active.
+/// The `1-5: switch screen` shortcut works everywhere (`handle_nav_key`'s
+/// fallback), so it's listed on every screen rather than repeated in every
+/// footer.
+fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>) {
+    const SWITCH_SCREEN: (&str, &str) = ("1-5", "Switch screen (Tasks/Notes/Project/Lists/Log)");
+    const TOGGLE_HELP: (&str, &str) = ("?", "Toggle this help");
+
+    match app.current_screen {
+        Screen::Dashboard => (
+            "Dashboard",
+            vec![
+                ("q", "Quit"),
+                ("1", "Tasks"),
+                ("2", "Notes"),
+                ("3", "Project"),
+                ("4", "Lists"),
+                ("5", "Log"),
+                TOGGLE_HELP,
+            ],
+        ),
+        Screen::Todo => match app.todo_edit_mode {
+            TodoEditMode::Normal => (
+                "Todo",
+                vec![
+                    ("q", "Back to Dashboard"),
+                    ("j/k or ↑/↓", "Move selection"),
+                    ("a", "Add new todo"),
+                    ("c", "Toggle completed"),
+                    ("f", "Hide/show completed"),
+                    ("P", "Hide/show project items"),
+                    ("p", "Print selected"),
+                    ("x", "Archive selected"),
+                    ("d", "Delete selected"),
+                    ("r", "Force resync from server, then refetch"),
+                    SWITCH_SCREEN,
+                    TOGGLE_HELP,
+                ],
+            ),
+            TodoEditMode::Adding => (
+                "Todo — Add/Edit",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Tab / Shift+Tab", "Move between fields"),
+                    ("i or Enter", "Enter Insert mode on the focused field"),
+                    ("</>", "Navigate months (when the calendar is focused)"),
+                    ("Ctrl+S", "Save"),
+                ],
+            ),
+        },
+        Screen::Notes => match app.notes_mode {
+            NotesMode::List => (
+                "Notes",
+                vec![
+                    ("q", "Back to Dashboard"),
+                    ("j/k", "Move selection"),
+                    ("Enter", "Open selected note"),
+                    ("Tab", "Cycle notebook filter"),
+                    ("/", "Search"),
+                    ("n", "New note"),
+                    ("d", "Delete selected (confirm)"),
+                    ("P", "Hide/show project items"),
+                    ("r", "Force resync from server, then refetch"),
+                    SWITCH_SCREEN,
+                    TOGGLE_HELP,
+                ],
+            ),
+            NotesMode::View => (
+                "Notes — Viewing",
+                vec![
+                    ("q / Esc", "Back to note list"),
+                    ("j/k", "Scroll"),
+                    ("e", "Edit this note"),
+                    ("p", "Print this note"),
+                    ("d", "Delete (confirm)"),
+                    TOGGLE_HELP,
+                ],
+            ),
+            NotesMode::Search => (
+                "Notes — Search",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Enter", "Run search"),
+                    ("(type)", "Edit the search query"),
+                ],
+            ),
+            NotesMode::Create => (
+                "Notes — New Note",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Tab / Shift+Tab", "Move between fields"),
+                    ("Enter", "Next field (or newline, in Content)"),
+                    ("Ctrl+S", "Save"),
+                ],
+            ),
+            NotesMode::ConfirmDelete => (
+                "Notes — Confirm Delete",
+                vec![
+                    ("y / Y", "Confirm delete"),
+                    ("(other)", "Cancel"),
+                ],
+            ),
+        },
+        Screen::Project => match app.project_input_mode {
+            ProjectInputMode::Normal => (
+                "Project",
+                vec![
+                    ("q", "Back to Dashboard"),
+                    ("j/k", "Move selection (loads that project's detail)"),
+                    ("a", "New project"),
+                    ("x", "Archive selected"),
+                    ("u", "Restore selected (if archived)"),
+                    ("D", "Delete permanently (confirm, archived only)"),
+                    ("r", "Force resync todos + notes, then refetch"),
+                    SWITCH_SCREEN,
+                    TOGGLE_HELP,
+                ],
+            ),
+            ProjectInputMode::AddingProject => (
+                "Project — New",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Enter", "Create"),
+                    ("(type)", "Edit the project name"),
+                ],
+            ),
+            ProjectInputMode::ConfirmDelete => (
+                "Project — Confirm Delete",
+                vec![
+                    ("y / Y", "Confirm permanent delete"),
+                    ("(other)", "Cancel"),
+                ],
+            ),
+        },
+        Screen::Lists => match app.lists_input_mode {
+            ListsInputMode::Normal => (
+                "Lists",
+                vec![
+                    ("q", "Back to Dashboard"),
+                    ("Tab", "Cycle focus: Groups → Categories → Items"),
+                    ("j/k", "Move selection"),
+                    ("a", "Add (group/category/item, per focus)"),
+                    ("d", "Delete (group/category/item, per focus)"),
+                    ("Space or c", "Toggle item checked"),
+                    ("C", "Clear all checked items"),
+                    ("p", "Print current list"),
+                    ("s", "Save selected item as a common/quick-add template"),
+                    ("A", "Open Quick Add (common items)"),
+                    ("P", "Hide/show project lists"),
+                    ("r", "Refetch list groups"),
+                    SWITCH_SCREEN,
+                    TOGGLE_HELP,
+                ],
+            ),
+            ListsInputMode::QuickAdd => (
+                "Lists — Quick Add",
+                vec![
+                    ("q / Esc", "Close"),
+                    ("j/k", "Move selection"),
+                    ("Enter", "Add selected item to the list"),
+                    ("d", "Delete this common-item template"),
+                ],
+            ),
+            ListsInputMode::AddingGroup
+            | ListsInputMode::AddingCategory
+            | ListsInputMode::AddingItem => (
+                "Lists — New",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Enter", "Create"),
+                    ("(type)", "Edit the name"),
+                ],
+            ),
+        },
+        Screen::Log => match app.daily_log_mode {
+            LogScreenMode::List => (
+                "Log",
+                vec![
+                    ("q", "Back to Dashboard"),
+                    ("j/k", "Move selection"),
+                    ("Tab", "Cycle days filter"),
+                    ("n", "New log entry"),
+                    ("P", "Hide/show project entries"),
+                    ("r", "Refetch (Log isn't cache-backed — a plain refresh)"),
+                    SWITCH_SCREEN,
+                    TOGGLE_HELP,
+                ],
+            ),
+            LogScreenMode::Create => (
+                "Log — New Entry",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Tab / Shift+Tab", "Move between fields"),
+                    ("Enter", "Next field (or newline, in Content)"),
+                    ("Ctrl+S", "Save"),
+                ],
+            ),
+        },
+        Screen::Quit => ("", vec![]),
+    }
+}
+
+/// Draws the `?`-triggered keybind reference, floating centered over
+/// whatever screen is active. Closed by any keypress (see `handle_input`).
+fn draw_help_popup(frame: &mut ratatui::Frame, app: &App, parent_area: Rect) {
+    let (title, lines) = help_lines_for(app);
+
+    let key_width = lines.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(0);
+    let text_lines: Vec<Line> = lines
+        .iter()
+        .map(|(key, desc)| {
+            Line::from(vec![
+                ratatui::text::Span::styled(
+                    format!("  {:<width$}  ", key, width = key_width),
+                    Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::BOLD),
+                ),
+                ratatui::text::Span::raw(*desc),
+            ])
+        })
+        .collect();
+
+    let width = parent_area.width.clamp(30, 72);
+    let height = (text_lines.len() as u16 + 4).min(parent_area.height);
+    let x = (parent_area.width.saturating_sub(width)) / 2;
+    let y = (parent_area.height.saturating_sub(height)) / 2;
+    let area = Rect::new(x, y, width, height);
+
+    frame.render_widget(Clear, area);
+    let block = Block::default()
+        .title(format!(" {} — Keybinds (any key to close) ", title))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .style(Style::default().bg(Color::DarkGray));
+    frame.render_widget(
+        Paragraph::new(text_lines).block(block).wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 // --- Drawing Helper Functions ---
@@ -2375,7 +2647,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
 
 
     // Footer/Menu
-    let footer_text = "Q: Quit | 1: Tasks | 2: Notes | 3: Project | 4: Lists | 5: Log | R: Refresh";
+    let footer_text = "Q: Quit | 1: Tasks | 2: Notes | 3: Project | 4: Lists | 5: Log | ?: Help";
     let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::White));
     frame.render_widget(footer, footer_area);
 }
@@ -2448,9 +2720,9 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
     let list_title = match app.todo_edit_mode {
         TodoEditMode::Normal => {
             if app.todo_hide_completed {
-                "TODO List [F: Show All] (A: Add | C: Toggle Complete | P: Print | X: Archive | D: Delete | J/K: Navigate)"
+                "TODO List [F: Show All]"
             } else {
-                "TODO List [F: Hide Done] (A: Add | C: Toggle Complete | P: Print | X: Archive | D: Delete | J/K: Navigate)"
+                "TODO List [F: Hide Done]"
             }
         }
         TodoEditMode::Adding => "TODO List (Adding Item)",
@@ -2532,7 +2804,7 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
 
 
     // --- 3. Footer/Menu ---
-    let footer_text = "Q: Back | R: Resync | C: Toggle Complete | A: Add New | P: Print | X: Archive | D: Delete";
+    let footer_text = "Q: Back | j/k: Move | ?: Help";
     let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Blue));
     frame.render_widget(footer, footer_area);
     
@@ -3177,7 +3449,7 @@ fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         ListsInputMode::QuickAdd       =>
             "Quick Add — j/k:Navigate | Enter:Add to list | d:Delete template | Esc:Close".to_string(),
         ListsInputMode::Normal =>
-            "Q:Back | Tab:Focus | j/k:Nav | a:Add | d:Del | Space:Check | C:Clear | p:Print | s:Save common | A:Quick add | r:Refresh".to_string(),
+            "Q:Back | Tab:Focus | j/k:Nav | ?:Help".to_string(),
     };
 
     let footer_style = Style::default().fg(Color::Green);
@@ -3426,8 +3698,8 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Footer
     let footer_text = match app.notes_mode {
-        NotesMode::List   => "j/k: move  Enter: open  Tab: filter  /: search  n: new  a: advance  d: delete  r: resync  q: back",
-        NotesMode::View   => "j/k: scroll  e: edit  a: advance status  p: print  d: delete  q: back to list",
+        NotesMode::List   => "j/k: move  Enter: open  Tab: filter  q: back  ?: help",
+        NotesMode::View   => "j/k: scroll  q: back to list  ?: help",
         NotesMode::Search => "Type to search  Enter: run  Esc: cancel",
         NotesMode::Create => "Tab: next field  Ctrl+S: save  Esc: cancel",
         NotesMode::ConfirmDelete => "y: confirm delete  any other key: cancel",
@@ -3602,7 +3874,7 @@ fn draw_log_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Footer
     let footer_text = match app.daily_log_mode {
-        LogScreenMode::List => "j/k: move  Tab: days filter  n: new  r: refresh  q: back",
+        LogScreenMode::List => "j/k: move  Tab: days filter  q: back  ?: help",
         LogScreenMode::Create => "Tab: next field  Ctrl+S: save  Esc: cancel",
     };
     frame.render_widget(
@@ -3706,7 +3978,7 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Footer
     let footer_text = match app.project_input_mode {
-        ProjectInputMode::Normal => "j/k: move  a: new  x: archive  u: restore  D: delete  P: (other screens) hide project items  r: resync  q: back".to_string(),
+        ProjectInputMode::Normal => "j/k: move  q: back  ?: help".to_string(),
         ProjectInputMode::AddingProject => format!("New project name: {}_  (Enter: create, Esc: cancel)", app.project_input_buffer),
         ProjectInputMode::ConfirmDelete => "y: confirm permanent delete  any other key: cancel".to_string(),
     };
