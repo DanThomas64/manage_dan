@@ -9,14 +9,39 @@ pub mod models;
 
 use crate::db_error::{DbLibError, DbLibResult};
 use crate::db_prelude::*;
-use crate::models::LogEntry;
+use crate::models::{LogEntry, NoteCacheRow, TodoCacheRow};
 use rusqlite::{params, OptionalExtension};
 use tokio_rusqlite::Connection;
 use rusqlite::{Result as RusqliteResult, Row};
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
+use tokio::sync::OnceCell;
 
 pub const DB_FILE: &str = "app.sqlite";
+
+// A single shared connection handle, opened lazily on first use and reused
+// for the process lifetime. `tokio_rusqlite::Connection` is a cheap-clone
+// handle to a channel backed by one dedicated background thread that already
+// serializes all `.call()`s onto a single `rusqlite::Connection` — so this
+// is a correctly-serialized "pool of one" rather than a fresh connection
+// (and OS thread) opened and torn down on every single query, which is what
+// happened here before.
+static CONNECTION: OnceCell<Connection> = OnceCell::const_new();
+
+async fn get_connection() -> DbLibResult<Connection> {
+    let conn = CONNECTION
+        .get_or_try_init(|| async {
+            let conn = Connection::open(DB_FILE).await?;
+            // WAL mode itself is persisted in the database file by init()'s
+            // synchronous PRAGMA below; `synchronous` is per-connection, so
+            // it's set here once for the one connection this process uses.
+            conn.call(|c| c.execute_batch("PRAGMA synchronous = NORMAL;"))
+                .await?;
+            Ok::<Connection, DbLibError>(conn)
+        })
+        .await?;
+    Ok(conn.clone())
+}
 
 /// Helper to convert a database row into a LogEntry.
 fn row_to_log_entry(row: &Row) -> RusqliteResult<LogEntry> {
@@ -40,6 +65,10 @@ fn row_to_log_entry(row: &Row) -> RusqliteResult<LogEntry> {
 pub fn init() -> DbLibResult {
     info!("initializing db");
     let conn = rusqlite::Connection::open(DB_FILE)?;
+
+    // Persisted in the database file itself — readers (API requests) no
+    // longer block on the background monitor's writes, or vice versa.
+    conn.pragma_update(None, "journal_mode", "WAL")?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS log (
@@ -93,6 +122,71 @@ pub fn init() -> DbLibResult {
         [],
     )?;
 
+    // --- Local read cache mirroring nb/Vikunja-backed todos and notes ---
+    // `nb`/Vikunja remain the source of truth; these tables let list/browse
+    // views read local SQL instead of shelling out (or making HTTP calls)
+    // on every request. Kept in sync by the write path (upserted right
+    // after a successful create/update) and a periodic background
+    // reconciliation pass — see `todo::monitor` and `notes::monitor`.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS todo_cache (
+            id            INTEGER PRIMARY KEY,
+            title         TEXT NOT NULL,
+            description   TEXT NOT NULL,
+            completed     INTEGER NOT NULL,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            completed_at  TEXT,
+            printed_at    TEXT,
+            due_date      TEXT,
+            priority      INTEGER NOT NULL,
+            project_title TEXT,
+            labels        TEXT NOT NULL,
+            subtasks      TEXT NOT NULL,
+            reminders     TEXT NOT NULL,
+            archived      INTEGER NOT NULL,
+            source_mtime  TEXT,
+            synced_at     TEXT NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_todo_cache_project ON todo_cache(project_title)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS note_cache (
+            notebook      TEXT NOT NULL,
+            nb_id         INTEGER NOT NULL,
+            title         TEXT NOT NULL,
+            preview       TEXT NOT NULL,
+            created_at    TEXT NOT NULL,
+            updated_at    TEXT NOT NULL,
+            source_mtime  TEXT,
+            synced_at     TEXT NOT NULL,
+            PRIMARY KEY (notebook, nb_id)
+        )",
+        [],
+    )?;
+
+    // Normalized per-tag rows (rather than a JSON blob on note_cache) so an
+    // exact-match project-tag lookup (`note_cache_get_by_tag`) is an indexed
+    // query, not a scan.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS note_cache_tags (
+            notebook TEXT NOT NULL,
+            nb_id    INTEGER NOT NULL,
+            tag      TEXT NOT NULL,
+            PRIMARY KEY (notebook, nb_id, tag)
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_note_cache_tags_tag ON note_cache_tags(tag)",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -100,7 +194,7 @@ pub fn init() -> DbLibResult {
 
 /// Writes a log event to the database.
 pub async fn log_event(level: &str, target: &str, message: &str) -> DbLibResult {
-    let conn = Connection::open(DB_FILE).await?;
+    let conn = get_connection().await?;
     let timestamp = chrono::Local::now().to_rfc3339();
     let level = level.to_string();
     let target = target.to_string();
@@ -395,6 +489,388 @@ pub async fn todo_nb_index_delete(id: i64) -> DbLibResult {
     .map_err(|e| DbLibError::Internal(format!("DB error deleting todo_nb_index: {}", e)))
 }
 
+// --- Datetime <-> TEXT column helpers, shared by the cache tables below ---
+
+fn parse_dt(s: String) -> RusqliteResult<DateTime<Local>> {
+    DateTime::parse_from_rfc3339(&s)
+        .map(|dt| dt.with_timezone(&Local))
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e)))
+}
+
+fn parse_opt_dt(s: Option<String>) -> RusqliteResult<Option<DateTime<Local>>> {
+    s.map(parse_dt).transpose()
+}
+
+// --- todo_cache ---
+//
+// A local mirror of the fully-hydrated todo items `nb`/Vikunja otherwise
+// have to be asked for on every read. `nb`/Vikunja stay the source of
+// truth; this table is upserted right after a successful write and
+// reconciled on a timer by `todo::monitor`'s background sync pass.
+
+fn row_to_todo_cache_row(row: &Row) -> RusqliteResult<TodoCacheRow> {
+    let labels_json: String = row.get(11)?;
+    let subtasks_json: String = row.get(12)?;
+    let reminders_json: String = row.get(13)?;
+    Ok(TodoCacheRow {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        description: row.get(2)?,
+        completed: row.get::<_, i64>(3)? != 0,
+        created_at: parse_dt(row.get(4)?)?,
+        updated_at: parse_dt(row.get(5)?)?,
+        completed_at: parse_opt_dt(row.get(6)?)?,
+        printed_at: parse_opt_dt(row.get(7)?)?,
+        due_date: parse_opt_dt(row.get(8)?)?,
+        priority: row.get::<_, i64>(9)? as u8,
+        project_title: row.get(10)?,
+        labels: serde_json::from_str(&labels_json).unwrap_or_default(),
+        subtasks: serde_json::from_str(&subtasks_json).unwrap_or_default(),
+        reminders: serde_json::from_str(&reminders_json).unwrap_or_default(),
+        archived: row.get::<_, i64>(14)? != 0,
+        source_mtime: parse_opt_dt(row.get(15)?)?,
+        synced_at: parse_dt(row.get(16)?)?,
+    })
+}
+
+const TODO_CACHE_COLUMNS: &str = "id, title, description, completed, created_at, updated_at,
+     completed_at, printed_at, due_date, priority, project_title,
+     labels, subtasks, reminders, archived, source_mtime, synced_at";
+
+/// Inserts or fully replaces the cached row for a todo item — called by the
+/// write-path dispatcher right after a successful create/update/complete
+/// against `nb`/Vikunja, and by the background sync pass for items whose
+/// source has changed since the last sync.
+pub async fn todo_cache_upsert(row: TodoCacheRow) -> DbLibResult {
+    execute_async(move |conn| {
+        let labels_json = serde_json::to_string(&row.labels).unwrap_or_else(|_| "[]".to_string());
+        let subtasks_json = serde_json::to_string(&row.subtasks).unwrap_or_else(|_| "[]".to_string());
+        let reminders_json = serde_json::to_string(&row.reminders).unwrap_or_else(|_| "[]".to_string());
+        conn.execute(
+            "INSERT INTO todo_cache (
+                id, title, description, completed, created_at, updated_at,
+                completed_at, printed_at, due_date, priority, project_title,
+                labels, subtasks, reminders, archived, source_mtime, synced_at
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                description = excluded.description,
+                completed = excluded.completed,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                completed_at = excluded.completed_at,
+                printed_at = excluded.printed_at,
+                due_date = excluded.due_date,
+                priority = excluded.priority,
+                project_title = excluded.project_title,
+                labels = excluded.labels,
+                subtasks = excluded.subtasks,
+                reminders = excluded.reminders,
+                archived = excluded.archived,
+                source_mtime = excluded.source_mtime,
+                synced_at = excluded.synced_at",
+            params![
+                row.id,
+                row.title,
+                row.description,
+                row.completed as i64,
+                row.created_at.to_rfc3339(),
+                row.updated_at.to_rfc3339(),
+                row.completed_at.map(|d| d.to_rfc3339()),
+                row.printed_at.map(|d| d.to_rfc3339()),
+                row.due_date.map(|d| d.to_rfc3339()),
+                row.priority as i64,
+                row.project_title,
+                labels_json,
+                subtasks_json,
+                reminders_json,
+                row.archived as i64,
+                row.source_mtime.map(|d| d.to_rfc3339()),
+                row.synced_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error upserting todo_cache: {}", e)))
+}
+
+/// Returns every cached todo — the read path `todo::read_items()` uses once
+/// the cache is live, instead of a live `nb`/Vikunja fetch.
+pub async fn todo_cache_get_all() -> DbLibResult<Vec<TodoCacheRow>> {
+    execute_async(|conn| {
+        let sql = format!("SELECT {} FROM todo_cache", TODO_CACHE_COLUMNS);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows: RusqliteResult<Vec<TodoCacheRow>> = stmt.query_map([], row_to_todo_cache_row)?.collect();
+        rows
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading todo_cache: {}", e)))
+}
+
+pub async fn todo_cache_get(id: i64) -> DbLibResult<Option<TodoCacheRow>> {
+    execute_async(move |conn| {
+        let sql = format!("SELECT {} FROM todo_cache WHERE id = ?1", TODO_CACHE_COLUMNS);
+        conn.query_row(&sql, params![id], row_to_todo_cache_row).optional()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading todo_cache row: {}", e)))
+}
+
+/// Returns every cached todo belonging to `project_title` — a real indexed
+/// SQL filter (see `idx_todo_cache_project`), replacing the old
+/// fetch-everything-then-filter-in-Rust `project::project_todos` used.
+pub async fn todo_cache_get_by_project(project_title: String) -> DbLibResult<Vec<TodoCacheRow>> {
+    execute_async(move |conn| {
+        let sql = format!("SELECT {} FROM todo_cache WHERE project_title = ?1", TODO_CACHE_COLUMNS);
+        let mut stmt = conn.prepare(&sql)?;
+        let rows: RusqliteResult<Vec<TodoCacheRow>> =
+            stmt.query_map(params![project_title], row_to_todo_cache_row)?.collect();
+        rows
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading todo_cache by project: {}", e)))
+}
+
+pub async fn todo_cache_delete(id: i64) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute("DELETE FROM todo_cache WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting todo_cache row: {}", e)))
+}
+
+/// Returns every cached todo id — used by the background sync pass to
+/// detect items removed externally (deleted via the raw `nb` CLI or the
+/// Vikunja UI, outside this app) since the last sync, by diffing against a
+/// freshly-listed id set and deleting whatever's missing from it.
+pub async fn todo_cache_get_ids() -> DbLibResult<Vec<i64>> {
+    execute_async(|conn| {
+        let mut stmt = conn.prepare("SELECT id FROM todo_cache")?;
+        let rows: RusqliteResult<Vec<i64>> = stmt.query_map([], |row| row.get(0))?.collect();
+        rows
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading todo_cache ids: {}", e)))
+}
+
+/// Returns the stored source-file mtime for a cached todo, if any — lets the
+/// background sync pass (`nb` backend only) skip re-reading and re-parsing
+/// an item whose file hasn't changed since the last sync, so sync cost
+/// scales with how much changed, not with how many items exist in total.
+pub async fn todo_cache_get_source_mtime(id: i64) -> DbLibResult<Option<DateTime<Local>>> {
+    let opt = execute_async(move |conn| {
+        conn.query_row(
+            "SELECT source_mtime FROM todo_cache WHERE id = ?1",
+            params![id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading todo_cache source_mtime: {}", e)))?;
+
+    Ok(opt
+        .flatten()
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Local))))
+}
+
+// --- note_cache / note_cache_tags ---
+//
+// A local mirror of note list/browse metadata (title, tag set, a truncated
+// content preview — never the full body, see `NoteCacheRow`'s doc comment).
+// Tags live in a separate normalized table so an exact-tag lookup
+// (`note_cache_get_by_tag`, what project-note scoping needs) is an indexed
+// join, not a scan over a JSON blob.
+
+fn row_to_note_cache_row(row: &Row) -> RusqliteResult<NoteCacheRow> {
+    Ok(NoteCacheRow {
+        notebook: row.get(0)?,
+        nb_id: row.get::<_, i64>(1)? as u64,
+        title: row.get(2)?,
+        preview: row.get(3)?,
+        tags: Vec::new(), // filled in by attach_tags()
+        created_at: parse_dt(row.get(4)?)?,
+        updated_at: parse_dt(row.get(5)?)?,
+        source_mtime: parse_opt_dt(row.get(6)?)?,
+        synced_at: parse_dt(row.get(7)?)?,
+    })
+}
+
+const NOTE_CACHE_COLUMNS: &str = "notebook, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at";
+
+/// Batches in every row's tags with two queries total (one for the notes
+/// already fetched, one for all tags), rather than one extra query per note.
+fn attach_tags(conn: &rusqlite::Connection, rows: &mut [NoteCacheRow]) -> RusqliteResult<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut stmt = conn.prepare("SELECT notebook, nb_id, tag FROM note_cache_tags")?;
+    let tag_rows: Vec<(String, i64, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+        .collect::<RusqliteResult<_>>()?;
+
+    let mut by_key: HashMap<(String, i64), Vec<String>> = HashMap::new();
+    for (nb, id, tag) in tag_rows {
+        by_key.entry((nb, id)).or_default().push(tag);
+    }
+    for row in rows.iter_mut() {
+        if let Some(tags) = by_key.remove(&(row.notebook.clone(), row.nb_id as i64)) {
+            row.tags = tags;
+        }
+    }
+    Ok(())
+}
+
+/// Inserts or fully replaces the cached row (and tag set) for a note —
+/// called by the write-path dispatcher right after a successful
+/// create/update against `nb`, and by the background sync pass.
+pub async fn note_cache_upsert(row: NoteCacheRow) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO note_cache (
+                notebook, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+            ON CONFLICT(notebook, nb_id) DO UPDATE SET
+                title = excluded.title,
+                preview = excluded.preview,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                source_mtime = excluded.source_mtime,
+                synced_at = excluded.synced_at",
+            params![
+                row.notebook,
+                row.nb_id as i64,
+                row.title,
+                row.preview,
+                row.created_at.to_rfc3339(),
+                row.updated_at.to_rfc3339(),
+                row.source_mtime.map(|d| d.to_rfc3339()),
+                row.synced_at.to_rfc3339(),
+            ],
+        )?;
+
+        conn.execute(
+            "DELETE FROM note_cache_tags WHERE notebook = ?1 AND nb_id = ?2",
+            params![row.notebook, row.nb_id as i64],
+        )?;
+        for tag in &row.tags {
+            conn.execute(
+                "INSERT OR IGNORE INTO note_cache_tags (notebook, nb_id, tag) VALUES (?1, ?2, ?3)",
+                params![row.notebook, row.nb_id as i64, tag],
+            )?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error upserting note_cache: {}", e)))
+}
+
+pub async fn note_cache_get_all() -> DbLibResult<Vec<NoteCacheRow>> {
+    execute_async(|conn| {
+        let sql = format!("SELECT {} FROM note_cache", NOTE_CACHE_COLUMNS);
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows: Vec<NoteCacheRow> =
+            stmt.query_map([], row_to_note_cache_row)?.collect::<RusqliteResult<_>>()?;
+        attach_tags(conn, &mut rows)?;
+        Ok(rows)
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading note_cache: {}", e)))
+}
+
+pub async fn note_cache_get_by_notebook(notebook: String) -> DbLibResult<Vec<NoteCacheRow>> {
+    execute_async(move |conn| {
+        let sql = format!("SELECT {} FROM note_cache WHERE notebook = ?1", NOTE_CACHE_COLUMNS);
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows: Vec<NoteCacheRow> =
+            stmt.query_map(params![notebook], row_to_note_cache_row)?.collect::<RusqliteResult<_>>()?;
+        attach_tags(conn, &mut rows)?;
+        Ok(rows)
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading note_cache by notebook: {}", e)))
+}
+
+/// Returns every cached note tagged with `tag` — a real indexed join
+/// against `note_cache_tags` (see `idx_note_cache_tags_tag`), replacing the
+/// old fetch-everything-then-filter-in-Rust `project::project_notes` used.
+pub async fn note_cache_get_by_tag(tag: String) -> DbLibResult<Vec<NoteCacheRow>> {
+    execute_async(move |conn| {
+        let sql = format!(
+            "SELECT {} FROM note_cache nc
+             JOIN note_cache_tags nct ON nct.notebook = nc.notebook AND nct.nb_id = nc.nb_id
+             WHERE nct.tag = ?1",
+            NOTE_CACHE_COLUMNS.split(',').map(|c| format!("nc.{}", c.trim())).collect::<Vec<_>>().join(", ")
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows: Vec<NoteCacheRow> =
+            stmt.query_map(params![tag], row_to_note_cache_row)?.collect::<RusqliteResult<_>>()?;
+        attach_tags(conn, &mut rows)?;
+        Ok(rows)
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading note_cache by tag: {}", e)))
+}
+
+pub async fn note_cache_delete(notebook: String, nb_id: u64) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "DELETE FROM note_cache WHERE notebook = ?1 AND nb_id = ?2",
+            params![notebook, nb_id as i64],
+        )?;
+        conn.execute(
+            "DELETE FROM note_cache_tags WHERE notebook = ?1 AND nb_id = ?2",
+            params![notebook, nb_id as i64],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting note_cache row: {}", e)))
+}
+
+/// Returns every cached `(notebook, nb_id)` key, optionally scoped to one
+/// notebook — used by the background sync pass to detect notes removed
+/// externally since the last sync, the same way `todo_cache_get_ids` does.
+pub async fn note_cache_get_keys(notebook: Option<String>) -> DbLibResult<Vec<(String, u64)>> {
+    execute_async(move |conn| {
+        let rows: Vec<(String, i64)> = if let Some(nb) = &notebook {
+            let mut stmt = conn.prepare("SELECT notebook, nb_id FROM note_cache WHERE notebook = ?1")?;
+            let result: RusqliteResult<Vec<(String, i64)>> =
+                stmt.query_map(params![nb], |r| Ok((r.get(0)?, r.get(1)?)))?.collect();
+            result?
+        } else {
+            let mut stmt = conn.prepare("SELECT notebook, nb_id FROM note_cache")?;
+            let result: RusqliteResult<Vec<(String, i64)>> =
+                stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect();
+            result?
+        };
+        Ok(rows.into_iter().map(|(nb, id)| (nb, id as u64)).collect())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading note_cache keys: {}", e)))
+}
+
+/// Returns the stored source-file mtime for a cached note, if any — same
+/// skip-unchanged use as `todo_cache_get_source_mtime`.
+pub async fn note_cache_get_source_mtime(notebook: String, nb_id: u64) -> DbLibResult<Option<DateTime<Local>>> {
+    let opt = execute_async(move |conn| {
+        conn.query_row(
+            "SELECT source_mtime FROM note_cache WHERE notebook = ?1 AND nb_id = ?2",
+            params![notebook, nb_id as i64],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading note_cache source_mtime: {}", e)))?;
+
+    Ok(opt
+        .flatten()
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Local))))
+}
+
 // --- Generic helper ---
 
 pub async fn execute_async<F, T>(f: F) -> DbLibResult<T>
@@ -402,7 +878,7 @@ where
     F: FnOnce(&mut rusqlite::Connection) -> RusqliteResult<T> + Send + 'static,
     T: Send + 'static,
 {
-    let conn = Connection::open(DB_FILE).await?;
+    let conn = get_connection().await?;
     conn.call(f).await.map_err(|e| e.into())
 }
 

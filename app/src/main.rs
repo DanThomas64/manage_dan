@@ -132,8 +132,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     go_nogo.start_monitoring(systems);
 
     // 5b. Start the print monitor — polls all Vikunja projects for "print"-labelled tasks
+    // (and, as of the todo_cache/note_cache read-cache, reconciles that cache
+    // against the live backend each pass too — see todo::monitor's doc comment).
     let interval = AppConfig::get().monitor_interval_secs;
     tokio::spawn(todo::monitor::run(interval));
+    tokio::spawn(notes::monitor::run(interval));
 
     // 5c. Print recurring task tickets and the daily summary at startup
     //     (each skipped if already printed today), then schedule the daily run.

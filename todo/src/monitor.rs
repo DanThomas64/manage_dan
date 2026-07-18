@@ -121,8 +121,14 @@ async fn poll() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 /// Starts the print monitor as a background task.
 ///
-/// Runs an initial poll immediately, then repeats every `interval_secs` seconds.
-/// Errors within a poll are logged and do not stop the loop.
+/// Runs an initial sync+poll immediately, then repeats every `interval_secs`
+/// seconds. Errors within a pass are logged and do not stop the loop.
+///
+/// Each iteration syncs `todo_cache` against the live backend *before*
+/// polling for print-worthy changes — `poll()` reads via `crate::read_items()`,
+/// which (once the cache read path is live) serves `todo_cache` directly, so
+/// the sync has to run first each pass or `poll()` would be comparing
+/// against data that's already one interval stale relative to itself.
 pub async fn run(interval_secs: u64) {
     info!(
         "Print monitor started (interval: {}s, suppress label: \"{}\")",
@@ -130,6 +136,9 @@ pub async fn run(interval_secs: u64) {
     );
 
     loop {
+        if let Err(e) = crate::sync_cache().await {
+            warn!("Todo cache sync error: {}", e);
+        }
         if let Err(e) = poll().await {
             warn!("Print monitor poll error: {}", e);
         }

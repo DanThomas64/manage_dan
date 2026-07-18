@@ -73,6 +73,19 @@ pub async fn read_todos_handler() -> Result<impl Reply, Rejection> {
     }
 }
 
+/// POST /api/v1/todo/resync - Force an immediate cache resync against the
+/// live backend, rather than waiting out the background monitor's interval
+/// (e.g. right after editing a todo directly via the raw `nb` CLI).
+pub async fn resync_todos_handler() -> Result<impl Reply, Rejection> {
+    match todo::sync_cache().await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to resync todo cache: {}", e);
+            Err(warp::reject::custom(ApiError::TodoOperationFailed))
+        }
+    }
+}
+
 /// PUT /api/v1/todo/:id - Update an existing todo item
 pub async fn update_todo_handler(id: i64, item: TodoItem) -> Result<impl Reply, Rejection> {
     if item.id != Some(id) {
@@ -602,6 +615,19 @@ pub async fn list_notes_handler(q: NoteQuery) -> Result<impl Reply, Rejection> {
     }
 }
 
+/// POST /api/v1/notes/resync - Force an immediate cache resync against the
+/// live `nb` notebooks, rather than waiting out the background monitor's
+/// interval (e.g. right after editing a note directly via the raw `nb` CLI).
+pub async fn resync_notes_handler() -> Result<impl Reply, Rejection> {
+    match notes::sync_cache().await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to resync notes cache: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
 /// POST /api/v1/notes
 pub async fn create_note_handler(req: notes::CreateNoteRequest) -> Result<impl Reply, Rejection> {
     match notes::create(req).await {
@@ -1087,6 +1113,12 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::get())
         .and_then(read_todo_summary_handler);
 
+    // POST /api/v1/todo/resync
+    let resync = todo_base
+        .and(warp::path("resync"))
+        .and(warp::post())
+        .and_then(resync_todos_handler);
+
     // POST /api/v1/todo
     let create = todo_base
         .and(warp::post())
@@ -1140,7 +1172,7 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::get())
         .and_then(get_single_todo_handler);
 
-    summary.or(read_all).or(get_one).or(create).or(update).or(set_done).or(print).or(archive).or(delete)
+    summary.or(resync).or(read_all).or(get_one).or(create).or(update).or(set_done).or(print).or(archive).or(delete)
 }
 
 /// Defines routes related to system status.
@@ -1432,6 +1464,13 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(warp::get())
         .and_then(list_note_tags_handler);
 
+    // POST /api/v1/notes/resync
+    let resync = notes_seg
+        .and(warp::path("resync"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and_then(resync_notes_handler);
+
     // GET /api/v1/notes/:id?notebook=
     let get_one = notes_seg
         .and(warp::path::param::<u64>())
@@ -1466,7 +1505,7 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(query::<NoteIdQuery>())
         .and_then(|id, q| print_note_handler(id, q));
 
-    search.or(folders).or(tags).or(list).or(create).or(create_log).or(list_log).or(print).or(get_one).or(update).or(delete)
+    search.or(folders).or(tags).or(resync).or(list).or(create).or(create_log).or(list_log).or(print).or(get_one).or(update).or(delete)
 }
 
 /// Defines routes for the project subsystem.

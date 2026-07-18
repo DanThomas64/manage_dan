@@ -353,8 +353,14 @@ async fn list_paths_in_folder(notebook: &str, folder: &str) -> TodoLibResult<Vec
         .collect())
 }
 
-async fn hydrate_item(notebook: &str, folder: &str, local_id: i64, path: &str) -> TodoLibResult<TodoItem> {
-    let content = run(&[format!("{}:show", notebook), selector(folder, local_id)]).await?;
+async fn hydrate_item(folder: &str, local_id: i64, path: &str) -> TodoLibResult<TodoItem> {
+    // `path` is already resolved (from `list_paths_in_folder`'s `--paths`
+    // output), and `nb ...:show` output is confirmed byte-identical to a
+    // raw read of the file it resolves to (spot-checked against several
+    // real items with Description/Tasks/Tags/Due sections populated) — so
+    // reading it directly skips a second `nb` subprocess spawn per item.
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| TodoLibError::Nb(format!("failed to read {}: {}", path, e)))?;
     let parsed = parse_note_content(&content)?;
     let id = db::todo_nb_index_get_or_create(folder.to_string(), local_id)
         .await
@@ -491,7 +497,7 @@ pub async fn read_items(notebook: &str) -> TodoLibResult<Vec<TodoItem>> {
             }
         };
         for (local_id, path) in entries {
-            match hydrate_item(notebook, &folder, local_id, &path).await {
+            match hydrate_item(&folder, local_id, &path).await {
                 Ok(item) => items.push(item),
                 Err(e) => warn!(
                     "nb todo read_items: failed to load '{}' id {}: {}",
@@ -501,6 +507,77 @@ pub async fn read_items(notebook: &str) -> TodoLibResult<Vec<TodoItem>> {
         }
     }
     Ok(items)
+}
+
+/// Reconciles `todo_cache` against the live `nb` notebook. Items whose
+/// source file's mtime hasn't changed since the last sync are skipped
+/// entirely (no re-read, no re-parse — just a cheap local `stat`), so sync
+/// cost scales with how much changed since the last pass, not with total
+/// item count. Also removes cache rows for items no longer present in the
+/// live listing (deleted externally, e.g. via the raw `nb` CLI).
+pub async fn sync_cache(notebook: &str) -> TodoLibResult {
+    let mut scopes: Vec<String> = vec![String::new()];
+    scopes.extend(list_folders(notebook).await?);
+
+    let mut seen_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    for folder in scopes {
+        let entries = match list_paths_in_folder(notebook, &folder).await {
+            Ok(e) => e,
+            Err(e) => {
+                warn!("nb todo sync_cache: failed to list folder '{}': {}", folder, e);
+                continue;
+            }
+        };
+        for (local_id, path) in entries {
+            let id = match db::todo_nb_index_get_or_create(folder.clone(), local_id).await {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!(
+                        "nb todo sync_cache: failed to resolve id for '{}' local_id {}: {}",
+                        folder, local_id, e
+                    );
+                    continue;
+                }
+            };
+            seen_ids.insert(id);
+
+            let current_mtime = std::fs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(DateTime::<Local>::from);
+            let cached_mtime = db::todo_cache_get_source_mtime(id).await.unwrap_or(None);
+
+            // Compare at second resolution — the stored value round-trips
+            // through an RFC3339 string, which doesn't always agree with a
+            // freshly-stat'd mtime to sub-second precision.
+            if let (Some(cur), Some(cached)) = (current_mtime, cached_mtime) {
+                if cur.timestamp() == cached.timestamp() {
+                    continue; // unchanged since last sync — skip the read+parse
+                }
+            }
+
+            match hydrate_item(&folder, local_id, &path).await {
+                Ok(item) => {
+                    if let Err(e) = crate::cache_upsert(&item, current_mtime).await {
+                        warn!("nb todo sync_cache: failed to cache '{}' id {}: {}", folder, local_id, e);
+                    }
+                }
+                Err(e) => warn!("nb todo sync_cache: failed to hydrate '{}' id {}: {}", folder, local_id, e),
+            }
+        }
+    }
+
+    // Remove cache rows for items no longer present in the live listing.
+    if let Ok(cached_ids) = db::todo_cache_get_ids().await {
+        for cached_id in cached_ids {
+            if !seen_ids.contains(&cached_id) {
+                let _ = db::todo_cache_delete(cached_id).await;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Replaces an item wholesale — nb has no in-place structured edit for
@@ -655,7 +732,7 @@ pub async fn get_item(notebook: &str, id: i64) -> TodoLibResult<TodoItem> {
         .map(|(_, p)| p)
         .ok_or(TodoLibError::NotFound(id))?;
 
-    hydrate_item(notebook, &folder, local_id, &path).await
+    hydrate_item(&folder, local_id, &path).await
 }
 
 /// Verifies the `nb` binary is available, mirroring `notes::init()`, and

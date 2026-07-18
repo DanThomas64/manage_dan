@@ -178,6 +178,35 @@ pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
     Ok(items)
 }
 
+/// Reconciles `todo_cache` against Vikunja. `read_items()` is already a
+/// full refresh via two concurrent bulk HTTP calls with no per-item cost
+/// (unlike the `nb` backend's per-item file reads), so unlike that
+/// backend's `sync_cache`, this one has no mtime-skip to make — it's cheap
+/// to just re-fetch and re-cache everything every pass.
+pub async fn sync_cache() -> TodoLibResult {
+    let items = read_items().await?;
+    let mut seen_ids: std::collections::HashSet<i64> = std::collections::HashSet::new();
+
+    for item in &items {
+        if let Some(id) = item.id {
+            seen_ids.insert(id);
+            if let Err(e) = crate::cache_upsert(item, None).await {
+                warn!("vikunja sync_cache: failed to cache item {}: {}", id, e);
+            }
+        }
+    }
+
+    if let Ok(cached_ids) = db::todo_cache_get_ids().await {
+        for cached_id in cached_ids {
+            if !seen_ids.contains(&cached_id) {
+                let _ = db::todo_cache_delete(cached_id).await;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Updates a TodoItem in Vikunja, replacing its subtasks entirely.
 pub async fn update_item(item: TodoItem) -> TodoLibResult {
     let id = item.id.ok_or(TodoLibError::Unknown)?;

@@ -1544,6 +1544,7 @@
           Show Project Items <span class="menu-check" id="notes-show-project-check"></span>
         </button>
         <button class="cat-menu-item" onclick="notesOpenArchive()">&#128193; Archive</button>
+        <button class="cat-menu-item" onclick="notesForceRefresh(this)">&#8635; Refresh</button>
       </div>
     </div>
   </div>
@@ -1703,6 +1704,7 @@
         <button class="cat-menu-item" onclick="todoToggleShowProject()">
           Show Project Items <span class="menu-check" id="todo-show-project-check"></span>
         </button>
+        <button class="cat-menu-item" onclick="todoForceRefresh(this)">&#8635; Refresh</button>
       </div>
     </div>
   </div>
@@ -1913,9 +1915,8 @@
 
   async function loadProjectListGroupIds() {
     try {
-      const r = await fetch(PROJECT_API);
-      const projects = await r.json();
-      projectListGroupIds = new Set(projects.map(p => p.list_group_id));
+      await refreshProjectsList();
+      projectListGroupIds = new Set(projectsList.map(p => p.list_group_id));
     } catch (_) {}
   }
 
@@ -3093,6 +3094,24 @@
     notesShowTab('browse');
   }
 
+  // Forces an immediate cache resync (see notes::sync_cache) rather than
+  // waiting out the background monitor's interval — for right after editing
+  // a note directly via the raw `nb` CLI, bypassing the app entirely.
+  async function notesForceRefresh(btn) {
+    closeAllMenus();
+    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+    try {
+      const r = await fetch(NOTES_API + '/resync', { method: 'POST' });
+      if (!r.ok) throw 0;
+      toast('Notes refreshed');
+      if (notesCurrentTab === 'browse') notesLoadBrowse();
+    } catch (_) {
+      toast('Failed to refresh notes', true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; Refresh'; }
+    }
+  }
+
   // Custom notebook-name autocomplete for the Quick Add form. Native
   // <input list> + <datalist> doesn't reliably show suggestions on mobile
   // browsers (notably iOS Safari), so this builds the dropdown by hand.
@@ -3667,6 +3686,24 @@
     renderTodoList();
   }
 
+  // Forces an immediate cache resync (see todo::sync_cache) rather than
+  // waiting out the background monitor's interval — for right after editing
+  // a todo directly via the raw `nb` CLI, bypassing the app entirely.
+  async function todoForceRefresh(btn) {
+    closeAllMenus();
+    if (btn) { btn.disabled = true; btn.textContent = 'Refreshing…'; }
+    try {
+      const r = await fetch(TODO_API + '/resync', { method: 'POST' });
+      if (!r.ok) throw 0;
+      toast('Todos refreshed');
+      if (todoCurrentTab === 'list') todoLoadList();
+    } catch (_) {
+      toast('Failed to refresh todos', true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; Refresh'; }
+    }
+  }
+
   function renderTodoList() {
     const el = document.getElementById('todo-list');
     let items = todoItems;
@@ -3774,12 +3811,21 @@
     selectCategory(categoryId);
   }
 
+  // Fetches and caches the project list in one place — shared by every
+  // consumer (project-select dropdowns via ensureProjectsLoaded(), Lists'
+  // group-ownership check, and the Projects overlay itself), so a refresh
+  // triggered by any one of them benefits the others too, instead of each
+  // maintaining its own separate fetch+parse of the same endpoint.
+  async function refreshProjectsList() {
+    const r = await fetch(PROJECT_API);
+    if (!r.ok) throw new Error('failed to fetch projects');
+    projectsList = await r.json();
+    projectsLoaded = true;
+  }
+
   async function fetchProjects() {
     try {
-      const r = await fetch(PROJECT_API);
-      if (!r.ok) throw 0;
-      projectsList = await r.json();
-      projectsLoaded = true;
+      await refreshProjectsList();
       renderProjectsList();
     } catch (_) {
       document.getElementById('projects-list').innerHTML = '<div class="empty-state"><span>Failed to load projects</span></div>';
@@ -3852,14 +3898,17 @@
     const el = document.getElementById('project-detail-content');
     el.innerHTML = '<div class="empty-state"><span>Loading…</span></div>';
     try {
-      const p = await (await fetch(PROJECT_API + '/' + id)).json();
-      if (p.archived_at) {
-        renderArchivedProjectDetail(p);
-        return;
-      }
+      // /detail already returns the full project row (including
+      // archived_at) alongside its todos/notes/logs/lists — no need for a
+      // separate fetch just to check archive state first.
       const r = await fetch(PROJECT_API + '/' + id + '/detail');
       if (!r.ok) throw 0;
-      renderProjectDetail(await r.json());
+      const detail = await r.json();
+      if (detail.project.archived_at) {
+        renderArchivedProjectDetail(detail.project);
+        return;
+      }
+      renderProjectDetail(detail);
     } catch (_) {
       el.innerHTML = '<div class="empty-state"><span>Failed to load project</span></div>';
     }
