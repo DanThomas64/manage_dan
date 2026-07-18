@@ -34,6 +34,12 @@ pub struct SystemsStatus {
 pub struct SystemsGoNogo {
     pub gono: Status,
 }
+impl Default for SystemsGoNogo {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SystemsGoNogo {
     /// Creates a new `SystemsGoNogo` instance initialized to `Status::Init`.
     pub fn new() -> SystemsGoNogo {
@@ -68,9 +74,7 @@ impl SystemsGoNogo {
                     Status::Nogo | Status::Degraded => Status::Degraded,
                     _ => Status::Unknown,
                 },
-                Status::Nogo => match x {
-                    _ => Status::Nogo,
-                },
+                Status::Nogo => Status::Nogo,
                 Status::Degraded => match x {
                     Status::Nogo => Status::Nogo,
                     _ => Status::Degraded,
@@ -97,6 +101,12 @@ impl SystemsGoNogo {
                 info!("Overall Status changed: {:?}", self.gono);
             }
         }
+    }
+}
+
+impl Default for SystemsStatus {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -35,7 +35,7 @@ pub enum SummaryLevel {
 
 impl SummaryLevel {
     /// Parses a config string.  Unrecognised values fall back to `Full`.
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_config_str(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
             "minimal"  => Self::Minimal,
             "standard" => Self::Standard,
@@ -228,7 +228,7 @@ pub async fn print_summary(level: SummaryLevel) {
 // Startup guard
 // ---------------------------------------------------------------------------
 
-const LAST_SUMMARY_DATE_KEY: &'static str = "last_summary_date";
+const LAST_SUMMARY_DATE_KEY: &str = "last_summary_date";
 
 /// Checks whether the summary has already been printed on `today`.
 /// If not, atomically marks it as printed and returns `true` (caller should print).
@@ -298,10 +298,11 @@ pub async fn run(hour: u32, level: SummaryLevel) {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
-    use std::sync::Mutex;
+    use tokio::sync::Mutex;
 
     /// Serializes all DB-touching tests so `set_current_dir` doesn't race.
-    static TEST_DB_LOCK: Mutex<()> = Mutex::new(());
+    /// An async-aware `Mutex` since the guard is held across `.await` points.
+    static TEST_DB_LOCK: Mutex<()> = Mutex::const_new(());
 
     fn setup_test_db() {
         let dir = std::env::temp_dir().join("manage_dan_summary_test");
@@ -316,7 +317,7 @@ mod tests {
     /// The summary should only be printed once.
     #[tokio::test]
     async fn same_day_startup_and_scheduler_prints_once() {
-        let _guard = TEST_DB_LOCK.lock().unwrap();
+        let _guard = TEST_DB_LOCK.lock().await;
         setup_test_db();
 
         let day = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
@@ -335,7 +336,7 @@ mod tests {
     /// regardless of how many times the guard is called.
     #[tokio::test]
     async fn each_new_day_triggers_exactly_one_print() {
-        let _guard = TEST_DB_LOCK.lock().unwrap();
+        let _guard = TEST_DB_LOCK.lock().await;
         setup_test_db();
 
         for day_offset in 0..3i64 {

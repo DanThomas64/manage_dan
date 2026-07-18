@@ -236,7 +236,7 @@ pub async fn nb_add(notebook: &str, title: &str, content: &str, tags: &[String])
         .and_then(|s| s.find(']').map(|e| &s[..e]))
         .ok_or_else(|| NotesLibError::Nb(format!("unexpected nb add output: {}", out.trim())))?;
 
-    let id_str = bracket_content.split(':').last().unwrap_or(bracket_content);
+    let id_str = bracket_content.split(':').next_back().unwrap_or(bracket_content);
     id_str.trim().parse::<u64>().map_err(|_| {
         NotesLibError::Nb(format!("cannot parse id from nb add output: {}", out.trim()))
     })

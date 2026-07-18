@@ -103,7 +103,7 @@ pub async fn list(notebook: Option<String>, tag: Option<String>) -> NotesLibResu
         notes.retain(|n| !EXCLUDED_FROM_ALL.contains(&n.notebook.as_str()));
     }
     if let Some(tag_filter) = tag {
-        notes.retain(|n| n.tags.iter().any(|t| *t == tag_filter));
+        notes.retain(|n| n.tags.contains(&tag_filter));
     }
     Ok(notes)
 }

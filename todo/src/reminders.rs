@@ -67,7 +67,7 @@ pub fn config_due_today() -> Vec<RecurringTask> {
 
 /// Vikunja tasks (non-completed) that have at least one reminder falling on
 /// today's local date.
-pub fn vikunja_due_today<'a>(items: &'a [TodoItem]) -> Vec<&'a TodoItem> {
+pub fn vikunja_due_today(items: &[TodoItem]) -> Vec<&TodoItem> {
     let today = Local::now().date_naive();
     items
         .iter()
@@ -105,7 +105,7 @@ pub fn config_due_this_week() -> Vec<(NaiveDate, RecurringTask)> {
 
 /// (date, &TodoItem) for every Vikunja reminder falling within the Mon–Sun of
 /// the current week.  A task with two reminders in the week appears twice.
-pub fn vikunja_due_this_week<'a>(items: &'a [TodoItem]) -> Vec<(NaiveDate, &'a TodoItem)> {
+pub fn vikunja_due_this_week(items: &[TodoItem]) -> Vec<(NaiveDate, &TodoItem)> {
     let (mon, sun) = week_bounds();
     let mut result: Vec<(NaiveDate, &TodoItem)> = items
         .iter()

@@ -27,7 +27,7 @@ pub fn init() -> ListsLibResult {
     info!("initializing lists subsystem");
 
     let conn = rusqlite::Connection::open(db::DB_FILE)
-        .map_err(|e| DbLibError::Sqlite(e))?;
+        .map_err(DbLibError::Sqlite)?;
 
     // ── Create tables ──────────────────────────────────────────────────────
     conn.execute_batch(
@@ -65,7 +65,7 @@ pub fn init() -> ListsLibResult {
         );
         ",
     )
-    .map_err(|e| DbLibError::Sqlite(e))?;
+    .map_err(DbLibError::Sqlite)?;
 
     // ── Seed default groups ────────────────────────────────────────────────
     for name in &["Shopping Lists", "General Lists"] {
@@ -73,7 +73,7 @@ pub fn init() -> ListsLibResult {
             "INSERT OR IGNORE INTO shopping_list_groups (name) VALUES (?1)",
             params![name],
         )
-        .map_err(|e| DbLibError::Sqlite(e))?;
+        .map_err(DbLibError::Sqlite)?;
     }
 
     // ── Migration: add group_id column to existing installs ───────────────
@@ -91,7 +91,7 @@ pub fn init() -> ListsLibResult {
             "ALTER TABLE shopping_categories ADD COLUMN group_id INTEGER \
              REFERENCES shopping_list_groups(id) ON DELETE CASCADE",
         )
-        .map_err(|e| DbLibError::Sqlite(e))?;
+        .map_err(DbLibError::Sqlite)?;
     }
 
     // ── Migration: add has_checkboxes to shopping_categories ─────────────
@@ -108,7 +108,7 @@ pub fn init() -> ListsLibResult {
         conn.execute_batch(
             "ALTER TABLE shopping_categories ADD COLUMN has_checkboxes INTEGER NOT NULL DEFAULT 1",
         )
-        .map_err(|e| DbLibError::Sqlite(e))?;
+        .map_err(DbLibError::Sqlite)?;
     }
 
     // ── Migration: add has_quick_add to shopping_categories ──────────────
@@ -125,7 +125,7 @@ pub fn init() -> ListsLibResult {
         conn.execute_batch(
             "ALTER TABLE shopping_categories ADD COLUMN has_quick_add INTEGER NOT NULL DEFAULT 1",
         )
-        .map_err(|e| DbLibError::Sqlite(e))?;
+        .map_err(DbLibError::Sqlite)?;
     }
 
     // ── Migration: add position to shopping_items ─────────────────────────
@@ -142,10 +142,10 @@ pub fn init() -> ListsLibResult {
         conn.execute_batch(
             "ALTER TABLE shopping_items ADD COLUMN position INTEGER NOT NULL DEFAULT 0",
         )
-        .map_err(|e| DbLibError::Sqlite(e))?;
+        .map_err(DbLibError::Sqlite)?;
         // Seed positions for existing items using their id (preserves creation order).
         conn.execute_batch("UPDATE shopping_items SET position = id WHERE position = 0")
-            .map_err(|e| DbLibError::Sqlite(e))?;
+            .map_err(DbLibError::Sqlite)?;
     }
 
     // ── Migration: assign orphaned categories to "Shopping Lists" ──────────
@@ -155,7 +155,7 @@ pub fn init() -> ListsLibResult {
          WHERE group_id IS NULL",
         [],
     )
-    .map_err(|e| DbLibError::Sqlite(e))?;
+    .map_err(DbLibError::Sqlite)?;
 
     // ── Seed default categories (only when a group has none yet) ───────────
     let shopping_gid: Option<i64> = conn
@@ -165,7 +165,7 @@ pub fn init() -> ListsLibResult {
             |row| row.get(0),
         )
         .optional()
-        .map_err(|e| DbLibError::Sqlite(e))?;
+        .map_err(DbLibError::Sqlite)?;
 
     if let Some(gid) = shopping_gid {
         let count: i64 = conn
@@ -181,7 +181,7 @@ pub fn init() -> ListsLibResult {
                     "INSERT OR IGNORE INTO shopping_categories (group_id, name) VALUES (?1, ?2)",
                     params![gid, name],
                 )
-                .map_err(|e| DbLibError::Sqlite(e))?;
+                .map_err(DbLibError::Sqlite)?;
             }
         }
     }
@@ -193,7 +193,7 @@ pub fn init() -> ListsLibResult {
             |row| row.get(0),
         )
         .optional()
-        .map_err(|e| DbLibError::Sqlite(e))?;
+        .map_err(DbLibError::Sqlite)?;
 
     if let Some(gid) = general_gid {
         let count: i64 = conn
@@ -209,7 +209,7 @@ pub fn init() -> ListsLibResult {
                     "INSERT OR IGNORE INTO shopping_categories (group_id, name) VALUES (?1, ?2)",
                     params![gid, name],
                 )
-                .map_err(|e| DbLibError::Sqlite(e))?;
+                .map_err(DbLibError::Sqlite)?;
             }
         }
     }
@@ -342,7 +342,7 @@ pub async fn list_items(category_id: i64) -> ListsLibResult<Vec<ListItem>> {
         rows
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))
+    .map_err(ListsLibError::Db)
 }
 
 /// Adds an item to a category.  `quantity` is an optional free-text string
@@ -372,7 +372,7 @@ pub async fn add_item(
         Ok((conn.last_insert_rowid(), position))
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))?;
+    .map_err(ListsLibError::Db)?;
 
     Ok(ListItem {
         id,
@@ -396,7 +396,7 @@ pub async fn check_item(id: i64, checked: bool) -> ListsLibResult {
         Ok(())
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))
+    .map_err(ListsLibError::Db)
 }
 
 /// Deletes a single item.
@@ -406,7 +406,7 @@ pub async fn delete_item(id: i64) -> ListsLibResult {
         Ok(())
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))
+    .map_err(ListsLibError::Db)
 }
 
 /// Renames a category.
@@ -419,7 +419,7 @@ pub async fn rename_category(category_id: i64, name: String) -> ListsLibResult {
         Ok(())
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))
+    .map_err(ListsLibError::Db)
 }
 
 /// Sets whether a category uses checkboxes.
@@ -433,7 +433,7 @@ pub async fn set_checkboxes(category_id: i64, has_checkboxes: bool) -> ListsLibR
         Ok(())
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))
+    .map_err(ListsLibError::Db)
 }
 
 /// Sets whether a category shows its "Quick Add" pane of saved common items.
@@ -447,7 +447,7 @@ pub async fn set_quick_add(category_id: i64, has_quick_add: bool) -> ListsLibRes
         Ok(())
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))
+    .map_err(ListsLibError::Db)
 }
 
 /// Reorders items in a category by assigning new positions matching the given id order.
@@ -462,7 +462,7 @@ pub async fn reorder_items(category_id: i64, ids: Vec<i64>) -> ListsLibResult {
         Ok(())
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))
+    .map_err(ListsLibError::Db)
 }
 
 /// Removes all checked items from a category.
@@ -475,7 +475,7 @@ pub async fn clear_checked(category_id: i64) -> ListsLibResult {
         Ok(())
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))
+    .map_err(ListsLibError::Db)
 }
 
 // ---------------------------------------------------------------------------
@@ -536,7 +536,7 @@ pub async fn print_list(category_id: i64) -> ListsLibResult {
         .optional()
     })
     .await
-    .map_err(|e| ListsLibError::Db(e))?
+    .map_err(ListsLibError::Db)?
     .ok_or(ListsLibError::CategoryNotFound(category_id))?;
 
     let items = list_items(category_id).await?;
