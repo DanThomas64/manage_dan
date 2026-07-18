@@ -382,6 +382,19 @@ impl App {
         }
     }
 
+    /// Forces an immediate server-side cache resync against the live todo
+    /// backend before refetching — for right after editing a todo directly
+    /// via the raw `nb` CLI, bypassing the app entirely, rather than waiting
+    /// out the background monitor's interval. Bound to `r` on the Todo
+    /// screen (upgraded from a plain refetch).
+    pub async fn resync_and_fetch_todos(&mut self) {
+        if let Err(e) = self.api_client.resync_todos().await {
+            self.last_error = Some(format!("Failed to resync todos: {}", e));
+            return;
+        }
+        self.fetch_todos().await;
+    }
+
     // --- Lists helpers ---
 
     pub async fn fetch_list_groups(&mut self) {
@@ -716,6 +729,19 @@ impl App {
             Ok(notebooks) => self.notes_notebooks = notebooks,
             Err(_) => {}
         }
+    }
+
+    /// Forces an immediate server-side cache resync against the live `nb`
+    /// notebooks before refetching — for right after editing a note
+    /// directly via the raw `nb` CLI, bypassing the app entirely, rather
+    /// than waiting out the background monitor's interval. Bound to `r` on
+    /// the Notes screen (upgraded from a plain refetch).
+    pub async fn resync_and_fetch_notes(&mut self) {
+        if let Err(e) = self.api_client.resync_notes().await {
+            self.last_error = Some(format!("Failed to resync notes: {}", e));
+            return;
+        }
+        self.fetch_notes_filtered().await;
     }
 
     /// Recomputes the displayed `notes` from the unfiltered `notes_all`
@@ -1095,7 +1121,7 @@ impl App {
                         if let CEvent::Key(key) = event {
                             match key.code {
                                 KeyCode::Char('q') => self.current_screen = Screen::Dashboard,
-                                KeyCode::Char('r') => { self.fetch_todos().await; action_taken = true; }
+                                KeyCode::Char('r') => { self.resync_and_fetch_todos().await; action_taken = true; }
                                 KeyCode::Up | KeyCode::Char('k') => self.move_selection(-1),
                                 KeyCode::Down | KeyCode::Char('j') => self.move_selection(1),
                                 KeyCode::Char('c') => { self.toggle_completed().await; action_taken = true; }
@@ -1169,7 +1195,7 @@ impl App {
                                 self.notes_search_buf.clear();
                             }
                             KeyCode::Char('r') => {
-                                self.fetch_notes_filtered().await;
+                                self.resync_and_fetch_notes().await;
                                 action_taken = true;
                             }
                             KeyCode::Char('d') => {
@@ -1337,6 +1363,15 @@ impl App {
                                     self.project_input_mode = ProjectInputMode::ConfirmDelete;
                                 }
                                 KeyCode::Char('r') => {
+                                    // Project Detail aggregates cached todos/notes — resync
+                                    // both before refetching so the aggregated view is as
+                                    // fresh as a direct visit to the Todo/Notes screens.
+                                    if let Err(e) = self.api_client.resync_todos().await {
+                                        self.last_error = Some(format!("Failed to resync todos: {}", e));
+                                    }
+                                    if let Err(e) = self.api_client.resync_notes().await {
+                                        self.last_error = Some(format!("Failed to resync notes: {}", e));
+                                    }
                                     self.fetch_projects().await;
                                     self.project_load_selected_detail().await;
                                     action_taken = true;
@@ -2497,7 +2532,7 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
 
 
     // --- 3. Footer/Menu ---
-    let footer_text = "Q: Back | R: Refresh | C: Toggle Complete | A: Add New | P: Print | X: Archive | D: Delete";
+    let footer_text = "Q: Back | R: Resync | C: Toggle Complete | A: Add New | P: Print | X: Archive | D: Delete";
     let footer = Paragraph::new(footer_text).style(Style::default().fg(Color::Blue));
     frame.render_widget(footer, footer_area);
     
@@ -3391,7 +3426,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Footer
     let footer_text = match app.notes_mode {
-        NotesMode::List   => "j/k: move  Enter: open  Tab: filter  /: search  n: new  a: advance  d: delete  r: refresh  q: back",
+        NotesMode::List   => "j/k: move  Enter: open  Tab: filter  /: search  n: new  a: advance  d: delete  r: resync  q: back",
         NotesMode::View   => "j/k: scroll  e: edit  a: advance status  p: print  d: delete  q: back to list",
         NotesMode::Search => "Type to search  Enter: run  Esc: cancel",
         NotesMode::Create => "Tab: next field  Ctrl+S: save  Esc: cancel",
@@ -3671,7 +3706,7 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
     // Footer
     let footer_text = match app.project_input_mode {
-        ProjectInputMode::Normal => "j/k: move  a: new  x: archive  u: restore  D: delete  P: (other screens) hide project items  r: refresh  q: back".to_string(),
+        ProjectInputMode::Normal => "j/k: move  a: new  x: archive  u: restore  D: delete  P: (other screens) hide project items  r: resync  q: back".to_string(),
         ProjectInputMode::AddingProject => format!("New project name: {}_  (Enter: create, Esc: cancel)", app.project_input_buffer),
         ProjectInputMode::ConfirmDelete => "y: confirm permanent delete  any other key: cancel".to_string(),
     };
