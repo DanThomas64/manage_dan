@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 use chrono::Local;
 use tracing::{info, warn};
 
-use crate::models::TodoItem;
+use crate::models::{Subtask, TodoItem};
 use crate::todo_error::{TodoLibError, TodoLibResult};
 use printer::PrintJob;
 
@@ -254,28 +254,96 @@ pub(crate) async fn print_ticket_on_creation(item: &mut TodoItem) -> TodoLibResu
 
 // --- CRUD (dispatched to the active backend) ---
 
-/// Creates a new TodoItem and prints a ticket.
-pub async fn create_item(item: TodoItem) -> TodoLibResult<TodoItem> {
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::create_item(item).await,
-        BackendKind::Nb { notebook } => backends::nb::create_item(notebook, item).await,
+/// Converts a cached row back into the API-facing `TodoItem` shape —
+/// `read_items()`'s cache-backed counterpart to [`cache_upsert`].
+fn from_cache_row(row: db::models::TodoCacheRow) -> TodoItem {
+    TodoItem {
+        id: Some(row.id),
+        title: row.title,
+        description: row.description,
+        completed: row.completed,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        completed_at: row.completed_at,
+        printed_at: row.printed_at,
+        subtasks: row
+            .subtasks
+            .into_iter()
+            .map(|s| Subtask { id: s.id, title: s.title, done: s.done })
+            .collect(),
+        archived: row.archived,
+        due_date: row.due_date,
+        priority: row.priority,
+        project_title: row.project_title,
+        labels: row.labels,
+        reminders: row.reminders,
     }
 }
 
-/// Returns all top-level (non-subtask) items across all projects/folders.
-pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::read_items().await,
-        BackendKind::Nb { notebook } => backends::nb::read_items(notebook).await,
+/// Re-fetches a single item live from the backend and upserts it into the
+/// cache — used by the write-path dispatchers below right after a
+/// successful update/complete, since neither backend's `update_item`/
+/// `complete_item` hands back the item's fresh state directly. A single-item
+/// live fetch here is negligible; it's the N-items-per-list-load cost this
+/// cache exists to remove, not a one-off refetch right after a write the
+/// caller is already paying backend-write latency for.
+async fn sync_one(id: i64) -> Option<TodoItem> {
+    match get_item(id).await {
+        Ok(item) => {
+            if let Err(e) = cache_upsert(&item, None).await {
+                warn!("failed to sync cache for todo {}: {}", id, e);
+            }
+            Some(item)
+        }
+        Err(e) => {
+            warn!("failed to refetch todo {} for cache sync: {}", id, e);
+            None
+        }
     }
+}
+
+/// Creates a new TodoItem and prints a ticket.
+pub async fn create_item(item: TodoItem) -> TodoLibResult<TodoItem> {
+    let result = match backend() {
+        BackendKind::Vikunja => backends::vikunja::create_item(item).await,
+        BackendKind::Nb { notebook } => backends::nb::create_item(notebook, item).await,
+    }?;
+    if let Err(e) = cache_upsert(&result, None).await {
+        warn!("create_item: failed to sync cache for todo {:?}: {}", result.id, e);
+    }
+    Ok(result)
+}
+
+/// Returns all top-level (non-subtask) items across all projects/folders —
+/// reads the local cache instead of the live backend; kept fresh by the
+/// write path above and the background sync pass (`todo::monitor`).
+pub async fn read_items() -> TodoLibResult<Vec<TodoItem>> {
+    let rows = db::todo_cache_get_all().await.map_err(|e| TodoLibError::Db(e.to_string()))?;
+    Ok(rows.into_iter().map(from_cache_row).collect())
+}
+
+/// Returns every item belonging to `project_title` — a real indexed SQL
+/// filter (see `idx_todo_cache_project`) rather than `read_items()` plus an
+/// in-Rust filter, used by the `project` crate to scope a Project Detail
+/// page's todos without paying for every other project's items too.
+pub async fn read_items_by_project(project_title: &str) -> TodoLibResult<Vec<TodoItem>> {
+    let rows = db::todo_cache_get_by_project(project_title.to_string())
+        .await
+        .map_err(|e| TodoLibError::Db(e.to_string()))?;
+    Ok(rows.into_iter().map(from_cache_row).collect())
 }
 
 /// Updates a TodoItem, replacing its subtasks entirely.
 pub async fn update_item(item: TodoItem) -> TodoLibResult {
+    let id = item.id;
     match backend() {
         BackendKind::Vikunja => backends::vikunja::update_item(item).await,
         BackendKind::Nb { notebook } => backends::nb::update_item(notebook, item).await,
+    }?;
+    if let Some(id) = id {
+        sync_one(id).await;
     }
+    Ok(())
 }
 
 /// Marks a task as completed or pending without touching any other fields.
@@ -288,6 +356,8 @@ pub async fn complete_item(id: i64, completed: bool) -> TodoLibResult {
         BackendKind::Vikunja => backends::vikunja::complete_item(id, completed).await,
         BackendKind::Nb { notebook } => backends::nb::complete_item(notebook, id, completed).await,
     }?;
+
+    sync_one(id).await;
 
     if completed && !was_completed {
         log_completion(id).await;
@@ -344,18 +414,30 @@ pub async fn archive_item(id: i64) -> TodoLibResult {
     match backend() {
         BackendKind::Vikunja => backends::vikunja::archive_item(id).await,
         BackendKind::Nb { notebook } => backends::nb::archive_item(notebook, id).await,
+    }?;
+    if let Err(e) = db::todo_cache_delete(id).await {
+        warn!("archive_item: failed to remove cache row for todo {}: {}", id, e);
     }
+    Ok(())
 }
 
 /// Moves every todo item belonging to a project into the shared `archive`
 /// notebook, as part of project archiving. No-op under the Vikunja backend —
 /// Vikunja-backend tasks are left untouched by project archiving (see the
-/// `project` crate's archive orchestration for why).
+/// `project` crate's archive orchestration for why). A bulk move like this
+/// affects an unknown-up-front set of items, so rather than tracking exactly
+/// which ones moved, a full `sync_cache()` afterward reconciles everything
+/// in one pass — proportionate given this is already a rare, comparatively
+/// expensive operation (folder moves, zipping), not a hot path.
 pub async fn archive_project_todos(project_slug: &str) -> TodoLibResult {
     match backend() {
         BackendKind::Vikunja => Ok(()),
         BackendKind::Nb { notebook } => backends::nb::archive_project_todos(notebook, project_slug).await,
+    }?;
+    if let Err(e) = sync_cache().await {
+        warn!("archive_project_todos: cache resync failed: {}", e);
     }
+    Ok(())
 }
 
 /// Moves every todo item belonging to a project back out of the shared
@@ -365,7 +447,11 @@ pub async fn restore_project_todos(project_slug: &str) -> TodoLibResult {
     match backend() {
         BackendKind::Vikunja => Ok(()),
         BackendKind::Nb { notebook } => backends::nb::restore_project_todos(notebook, project_slug).await,
+    }?;
+    if let Err(e) = sync_cache().await {
+        warn!("restore_project_todos: cache resync failed: {}", e);
     }
+    Ok(())
 }
 
 /// Deletes a TodoItem and all its subtasks.
@@ -373,7 +459,11 @@ pub async fn delete_item(id: i64) -> TodoLibResult {
     match backend() {
         BackendKind::Vikunja => backends::vikunja::delete_item(id).await,
         BackendKind::Nb { notebook } => backends::nb::delete_item(notebook, id).await,
+    }?;
+    if let Err(e) = db::todo_cache_delete(id).await {
+        warn!("delete_item: failed to remove cache row for todo {}: {}", id, e);
     }
+    Ok(())
 }
 
 /// Fetches a single TodoItem by id.
@@ -381,6 +471,52 @@ pub async fn get_item(id: i64) -> TodoLibResult<TodoItem> {
     match backend() {
         BackendKind::Vikunja => backends::vikunja::get_item(id).await,
         BackendKind::Nb { notebook } => backends::nb::get_item(notebook, id).await,
+    }
+}
+
+/// Builds and upserts the cache row for a freshly-hydrated todo item, used
+/// by both backends' `sync_cache()` passes and, once the write path also
+/// syncs synchronously, by the CRUD dispatchers above. `source_mtime` is
+/// `None` for Vikunja-backed items (no local file to stat) and for anything
+/// upserted right after a write (the write path doesn't yet have a fresh
+/// stat — the next sync pass fills it in).
+pub(crate) async fn cache_upsert(item: &TodoItem, source_mtime: Option<chrono::DateTime<Local>>) -> TodoLibResult {
+    let Some(id) = item.id else {
+        return Ok(()); // nothing to key the cache row by
+    };
+    let row = db::models::TodoCacheRow {
+        id,
+        title: item.title.clone(),
+        description: item.description.clone(),
+        completed: item.completed,
+        created_at: item.created_at,
+        updated_at: item.updated_at,
+        completed_at: item.completed_at,
+        printed_at: item.printed_at,
+        due_date: item.due_date,
+        priority: item.priority,
+        project_title: item.project_title.clone(),
+        labels: item.labels.clone(),
+        subtasks: item
+            .subtasks
+            .iter()
+            .map(|s| db::models::CachedSubtask { id: s.id, title: s.title.clone(), done: s.done })
+            .collect(),
+        reminders: item.reminders.clone(),
+        archived: item.archived,
+        source_mtime,
+        synced_at: Local::now(),
+    };
+    db::todo_cache_upsert(row).await.map_err(|e| TodoLibError::Db(e.to_string()))
+}
+
+/// Reconciles `todo_cache` against the live backend — called on a timer by
+/// the background monitor (`todo::monitor`), and once up front by the write
+/// path right after a create/update/complete/delete.
+pub async fn sync_cache() -> TodoLibResult {
+    match backend() {
+        BackendKind::Vikunja => backends::vikunja::sync_cache().await,
+        BackendKind::Nb { notebook } => backends::nb::sync_cache(notebook).await,
     }
 }
 

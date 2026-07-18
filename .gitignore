@@ -4,6 +4,8 @@
 *.log
 app.sqlite
 app.sqlite-journal
+app.sqlite-wal
+app.sqlite-shm
 .termdbms
 
 # Local config overrides — never commit these

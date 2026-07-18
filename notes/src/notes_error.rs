@@ -24,4 +24,7 @@ pub enum NotesLibError {
 
     #[error("print error: {0}")]
     Print(#[from] printer::printer_error::PrinterLibError),
+
+    #[error("database error: {0}")]
+    Db(String),
 }

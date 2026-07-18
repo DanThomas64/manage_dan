@@ -290,6 +290,15 @@ impl ApiClient {
         Ok(())
     }
 
+    /// Forces an immediate server-side cache resync against the live todo
+    /// backend, rather than waiting out the background monitor's interval
+    /// (e.g. right after editing a todo directly via the raw `nb` CLI).
+    pub async fn resync_todos(&self) -> Result<()> {
+        let url = format!("{}/api/v1/todo/resync", self.base_url);
+        self.client.post(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
     // --- Lists Methods ---
 
     pub async fn fetch_list_groups(&self) -> Result<Vec<ListGroup>> {
@@ -446,6 +455,15 @@ impl ApiClient {
     pub async fn fetch_note_notebooks(&self) -> Result<Vec<String>> {
         let url = format!("{}/api/v1/notes/folders", self.base_url);
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    /// Forces an immediate server-side cache resync against the live `nb`
+    /// notebooks, rather than waiting out the background monitor's interval
+    /// (e.g. right after editing a note directly via the raw `nb` CLI).
+    pub async fn resync_notes(&self) -> Result<()> {
+        let url = format!("{}/api/v1/notes/resync", self.base_url);
+        self.client.post(&url).send().await?.error_for_status()?;
+        Ok(())
     }
 
     // --- Daily Log Methods ---

@@ -208,18 +208,17 @@ pub async fn create_project(name: &str) -> ProjectLibResult<Project> {
 
 /// Returns every todo item scoped to `project`, matched by nb folder / slug
 /// (see the crate-level doc comment on why no `todo`-crate changes are
-/// needed for this).
+/// needed for this) — a real indexed cache lookup (`todo::read_items_by_project`)
+/// rather than fetching every project's todos and filtering in Rust.
 pub async fn project_todos(project: &Project) -> ProjectLibResult<Vec<todo::models::TodoItem>> {
-    let items = todo::read_items().await?;
-    Ok(items
-        .into_iter()
-        .filter(|i| i.project_title.as_deref() == Some(project.slug.as_str()))
-        .collect())
+    Ok(todo::read_items_by_project(&project.slug).await?)
 }
 
-/// Returns every note tagged with `project`'s tag.
+/// Returns every note tagged with `project`'s tag — a real indexed cache
+/// lookup (`notes::list_by_tag`) rather than fetching every note and
+/// filtering in Rust.
 pub async fn project_notes(project: &Project) -> ProjectLibResult<Vec<notes::models::Note>> {
-    Ok(notes::list(None, Some(project.tag.clone())).await?)
+    Ok(notes::list_by_tag(&project.tag).await?)
 }
 
 /// Returns log entries from the last `days` days tagged with `project`'s tag.

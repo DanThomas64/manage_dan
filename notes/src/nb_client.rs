@@ -92,7 +92,7 @@ fn parse_body<'a>(lines: impl Iterator<Item = &'a str>) -> (String, Vec<String>,
     (title, tags, content)
 }
 
-fn parse_note_file(path: &Path, nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
+pub(crate) fn parse_note_file(path: &Path, nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
     let raw = std::fs::read_to_string(path)?;
     let meta = std::fs::metadata(path)?;
 
@@ -181,6 +181,27 @@ fn parse_list_line(line: &str, ctx_notebook: &str) -> Option<(u64, String, Strin
     Some((nb_id, notebook, title.to_string()))
 }
 
+// Parses a `--paths` listing line: `[n] path` or `[notebook:n] path`,
+// possibly with an icon in between (e.g. a folder's 📂 marker) — mirrors
+// `todo::backends::nb::list_paths_in_folder`'s parsing of the same `nb`
+// output shape. Returns (nb_id, notebook, path). One `<notebook>:list
+// --paths` call yields every item's resolved file path directly, so callers
+// can read+parse the file locally instead of a separate `nb show --path`
+// subprocess call per item.
+fn parse_list_path_line(line: &str, ctx_notebook: &str) -> Option<(u64, String, PathBuf)> {
+    let line = line.trim();
+    let rest = line.strip_prefix('[')?;
+    let (ref_part, remainder) = rest.split_once(']')?;
+    let (notebook, id_str) = if let Some((nb, id)) = ref_part.split_once(':') {
+        (nb.to_string(), id.to_string())
+    } else {
+        (ctx_notebook.to_string(), ref_part.to_string())
+    };
+    let nb_id: u64 = id_str.trim().parse().ok()?;
+    let path = remainder.split_whitespace().last()?.to_string();
+    Some((nb_id, notebook, PathBuf::from(path)))
+}
+
 async fn nb_path(notebook: &str, nb_id: u64) -> NotesLibResult<PathBuf> {
     let ref_str = nb_ref(notebook, nb_id);
     let out = run(&["show", &ref_str, "--path"]).await?;
@@ -238,29 +259,49 @@ pub async fn nb_show(notebook: &str, nb_id: u64) -> NotesLibResult<Note> {
         .map_err(|_| NotesLibError::NotFound(nb_ref(notebook, nb_id)))
 }
 
-pub async fn nb_list(notebook: Option<&str>) -> NotesLibResult<Vec<Note>> {
+/// Lists `(nb_id, path)` for every note directly inside `notebook` (one
+/// `<notebook>:list --paths` call) — the shared enumeration step behind
+/// `nb_list`/`nb_tags` and the background sync pass, which additionally
+/// needs each item's path to stat its mtime before deciding whether to
+/// re-parse it.
+pub(crate) async fn nb_list_paths(notebook: &str) -> NotesLibResult<Vec<(u64, PathBuf)>> {
+    let cmd = nb_cmd(notebook, "list");
+    let out = match run(&[&cmd, "--paths"]).await {
+        Ok(o) => o,
+        Err(NotesLibError::Nb(_)) => return Ok(Vec::new()), // empty notebook returns error
+        Err(e) => return Err(e),
+    };
+    Ok(out
+        .lines()
+        .filter(|l| !l.contains('\u{1F4C2}')) // 📂 nested subfolder entry, not a note
+        .filter_map(|l| parse_list_path_line(l, notebook).map(|(id, _nb, path)| (id, path)))
+        .collect())
+}
+
+/// Lists notes, optionally scoped to one notebook. When `notebook` is
+/// `None`, every notebook is enumerated except those named in `exclude` —
+/// applied here, before any note is read, rather than filtering the
+/// hydrated results afterward (the caller doesn't pay to read+parse notes
+/// it's only going to discard). Uses `--paths` to resolve every note's file
+/// path in the same call that lists it, so no separate per-note `nb show
+/// --path` subprocess is needed — each note is parsed from its local file
+/// directly.
+pub async fn nb_list(notebook: Option<&str>, exclude: &[&str]) -> NotesLibResult<Vec<Note>> {
     let notebooks: Vec<String> = if let Some(nb) = notebook {
         vec![nb.to_string()]
     } else {
-        nb_notebooks().await?
+        nb_notebooks()
+            .await?
+            .into_iter()
+            .filter(|n| !exclude.contains(&n.as_str()))
+            .collect()
     };
 
     let mut notes = Vec::new();
     for nb in &notebooks {
-        let cmd = nb_cmd(nb, "list");
-        let out = match run(&[&cmd]).await {
-            Ok(o) => o,
-            Err(NotesLibError::Nb(_)) => continue, // empty notebook returns error
-            Err(e) => return Err(e),
-        };
-
-        for line in out.lines() {
-            if let Some((id, nb_name, _title)) = parse_list_line(line, nb) {
-                match nb_show(&nb_name, id).await {
-                    Ok(note) => notes.push(note),
-                    Err(NotesLibError::NotFound(_)) => {}
-                    Err(e) => return Err(e),
-                }
+        for (id, path) in nb_list_paths(nb).await? {
+            if let Ok(note) = parse_note_file(&path, id, nb) {
+                notes.push(note);
             }
         }
     }
@@ -305,7 +346,12 @@ pub async fn nb_restore_folder(notebook: &str, folder: &str, dest_notebook: &str
 // first. When `tag` is set, only entries carrying that tag are returned.
 pub async fn nb_daily_entries(notebook: &str, days: i64, tag: Option<&str>) -> NotesLibResult<Vec<crate::models::LogEntry>> {
     let cmd = nb_cmd(notebook, "list");
-    let out = match run(&[&cmd]).await {
+    // `--paths` resolves every daily-log file's path in this one call, so the
+    // per-file `nb_path` subprocess spawn below is no longer needed — and
+    // the window cutoff (derived from each file's own name) is applied
+    // before reading any file, so cost no longer grows with how many daily
+    // logs have ever been written, only with how many fall in the window.
+    let out = match run(&[&cmd, "--paths"]).await {
         Ok(o) => o,
         Err(NotesLibError::Nb(_)) => return Ok(Vec::new()), // empty notebook
         Err(e) => return Err(e),
@@ -315,11 +361,7 @@ pub async fn nb_daily_entries(notebook: &str, days: i64, tag: Option<&str>) -> N
 
     let mut entries = Vec::new();
     for line in out.lines() {
-        let Some((id, nb_name, _title)) = parse_list_line(line, notebook) else { continue };
-        let path = match nb_path(&nb_name, id).await {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
+        let Some((_id, _nb_name, path)) = parse_list_path_line(line, notebook) else { continue };
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else { continue };
         let Ok(date) = NaiveDate::parse_from_str(stem, "%Y%m%d") else { continue };
         if date < cutoff {
@@ -430,23 +472,18 @@ pub async fn nb_notebooks() -> NotesLibResult<Vec<String>> {
     Ok(out.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
-pub async fn nb_tags() -> NotesLibResult<Vec<String>> {
-    let notebooks = nb_notebooks().await?;
+pub async fn nb_tags(exclude: &[&str]) -> NotesLibResult<Vec<String>> {
+    let notebooks: Vec<String> = nb_notebooks()
+        .await?
+        .into_iter()
+        .filter(|n| !exclude.contains(&n.as_str()))
+        .collect();
     let mut all_tags = std::collections::HashSet::new();
 
     for nb in &notebooks {
-        let cmd = nb_cmd(nb, "list");
-        let out = match run(&[&cmd]).await {
-            Ok(o) => o,
-            Err(NotesLibError::Nb(_)) => continue,
-            Err(e) => return Err(e),
-        };
-
-        for line in out.lines() {
-            if let Some((id, nb_name, _)) = parse_list_line(line, nb) {
-                if let Ok(note) = nb_show(&nb_name, id).await {
-                    all_tags.extend(note.tags);
-                }
+        for (id, path) in nb_list_paths(nb).await? {
+            if let Ok(note) = parse_note_file(&path, id, nb) {
+                all_tags.extend(note.tags);
             }
         }
     }
