@@ -1326,6 +1326,7 @@
 
     /* Todo cards */
     .todo-card {
+      position: relative;
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -1336,7 +1337,32 @@
       margin-bottom: 8px;
     }
     .todo-card.completed { opacity: 0.6; }
-    .todo-card-top { display: flex; align-items: flex-start; gap: 10px; }
+    /* Same corner "×" used by note cards — one delete affordance/design
+       language across every card/row type instead of a separate pill-shaped
+       "Delete" button just for todos. */
+    .todo-card .todo-delete {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      opacity: 0;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 4px 6px;
+      min-width: 30px;
+      min-height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 4px;
+      transition: opacity 0.15s, color 0.15s;
+    }
+    .todo-card:hover .todo-delete { opacity: 1; }
+    .todo-card .todo-delete:hover { color: var(--red); }
+    .todo-card-top { display: flex; align-items: flex-start; gap: 10px; padding-right: 30px; }
     .todo-checkbox { width: 20px; height: 20px; flex-shrink: 0; margin-top: 2px; cursor: pointer; }
     .todo-card-title { font-weight: 600; font-size: 0.95rem; flex: 1; }
     .todo-card.completed .todo-card-title { text-decoration: line-through; color: var(--text-muted); }
@@ -3651,6 +3677,7 @@
       ? `<div class="todo-subtasks">${i.subtasks.map(s => `<div class="todo-subtask-line ${s.done ? 'done' : ''}">${s.done ? '&#9745;' : '&#9744;'} ${esc(s.title)}</div>`).join('')}</div>`
       : '';
     return `<div class="todo-card ${i.completed ? 'completed' : ''}">
+      <button class="todo-delete" title="Delete todo" onclick="todoDelete(${i.id})">&#215;</button>
       <div class="todo-card-top">
         <input type="checkbox" class="todo-checkbox" ${i.completed ? 'checked' : ''} onchange="todoToggleDone(${i.id}, this.checked)" />
         <div style="flex:1;">
@@ -3666,7 +3693,6 @@
       <div class="todo-actions">
         ${editable ? `<button class="btn-ghost btn-sm" onclick="todoEditTodo(${i.id})">Edit</button>` : ''}
         <button class="btn-ghost btn-sm" onclick="todoPrint(${i.id})">&#128424; Print</button>
-        <button class="btn-danger btn-sm todo-delete" onclick="todoDelete(${i.id})">Delete</button>
       </div>
     </div>`;
   }
