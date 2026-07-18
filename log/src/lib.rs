@@ -128,7 +128,7 @@ pub fn init(log_file: &str) -> LogLibResult {
 
         // ── 3. Stdout layer (suppressible via LOG_STDOUT=false) ───────────────
         let show_stdout = std::env::var("LOG_STDOUT")
-            .map(|v| v.to_ascii_lowercase() != "false")
+            .map(|v| !v.eq_ignore_ascii_case("false"))
             .unwrap_or(true);
 
         // ── 4. Combine layers and initialise the global subscriber ────────────

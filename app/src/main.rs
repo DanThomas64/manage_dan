@@ -3,14 +3,7 @@
 //! This application initializes all necessary subsystems (database, logging, printer, etc.),
 //! monitors their status, and starts the HTTP API server.
 
-use db;
-use log;
 use nogo::{SystemsGoNogo, Status};
-use notes;
-use project;
-use printer;
-use lists;
-use todo;
 
 pub mod config;
 pub mod error;
@@ -141,7 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5c. Print recurring task tickets and the daily summary at startup
     //     (each skipped if already printed today), then schedule the daily run.
     todo::recurring::print_due_today_if_not_printed().await;
-    let summary_level = todo::daily_summary::SummaryLevel::from_str(&AppConfig::get().summary_level);
+    let summary_level = todo::daily_summary::SummaryLevel::from_config_str(&AppConfig::get().summary_level);
     todo::daily_summary::print_summary_if_not_today(summary_level).await;
     let summary_hour = AppConfig::get().summary_hour;
     tokio::spawn(todo::daily_summary::run(summary_hour, summary_level));

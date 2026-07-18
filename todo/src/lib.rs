@@ -579,6 +579,5 @@ mod tests {
     #[test]
     fn it_works() {
         // init() requires a running Vikunja instance or `nb`; tested via integration tests.
-        assert!(true);
     }
 }

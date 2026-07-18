@@ -1135,7 +1135,7 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::param::<i64>())
         .and(warp::put())
         .and(warp::body::json())
-        .and_then(|id, item| update_todo_handler(id, item));
+        .and_then(update_todo_handler);
         
     // PATCH /api/v1/todo/:id/done
     let set_done = todo_base
@@ -1143,7 +1143,7 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path("done"))
         .and(warp::patch())
         .and(warp::body::json())
-        .and_then(|id, body| set_todo_done_handler(id, body));
+        .and_then(set_todo_done_handler);
 
     // POST /api/v1/todo/:id/print
     let print = todo_base
@@ -1243,7 +1243,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
-        .and_then(|gid, body| add_category_handler(gid, body));
+        .and_then(add_category_handler);
 
     // DELETE /api/v1/lists/categories/:id
     let delete_cat = lists
@@ -1270,7 +1270,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
-        .and_then(|id, body| add_item_handler(id, body));
+        .and_then(add_item_handler);
 
     // PATCH /api/v1/lists/items/:id/check
     let check_item = lists
@@ -1280,7 +1280,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::end())
         .and(warp::patch())
         .and(warp::body::json())
-        .and_then(|id, body| check_item_handler(id, body));
+        .and_then(check_item_handler);
 
     // DELETE /api/v1/lists/items/:id
     let delete_item = lists
@@ -1298,7 +1298,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::end())
         .and(warp::patch())
         .and(warp::body::json())
-        .and_then(|id, body| rename_category_handler(id, body));
+        .and_then(rename_category_handler);
 
     // PATCH /api/v1/lists/categories/:id/checkboxes
     let set_checkboxes = lists
@@ -1308,7 +1308,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::end())
         .and(warp::patch())
         .and(warp::body::json())
-        .and_then(|id, body| set_checkboxes_handler(id, body));
+        .and_then(set_checkboxes_handler);
 
     // PATCH /api/v1/lists/categories/:id/quick-add
     let set_quick_add = lists
@@ -1318,7 +1318,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::end())
         .and(warp::patch())
         .and(warp::body::json())
-        .and_then(|id, body| set_quick_add_handler(id, body));
+        .and_then(set_quick_add_handler);
 
     // POST /api/v1/lists/categories/:id/reorder
     let reorder = lists
@@ -1328,7 +1328,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
-        .and_then(|id, body| reorder_items_handler(id, body));
+        .and_then(reorder_items_handler);
 
     // POST /api/v1/lists/categories/:id/clear
     let clear = lists
@@ -1367,7 +1367,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
-        .and_then(|id, body| add_common_item_handler(id, body));
+        .and_then(add_common_item_handler);
 
     // DELETE /api/v1/lists/common/:id
     let delete_common = lists
@@ -1486,7 +1486,7 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(warp::put())
         .and(query::<NoteIdQuery>())
         .and(warp::body::json())
-        .and_then(|id, q, req| update_note_handler(id, q, req));
+        .and_then(update_note_handler);
 
     // DELETE /api/v1/notes/:id?notebook=
     let delete = notes_seg
@@ -1494,7 +1494,7 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(warp::path::end())
         .and(warp::delete())
         .and(query::<NoteIdQuery>())
-        .and_then(|id, q| delete_note_handler(id, q));
+        .and_then(delete_note_handler);
 
     // POST /api/v1/notes/:id/print?notebook=
     let print = notes_seg
@@ -1503,7 +1503,7 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(warp::path::end())
         .and(warp::post())
         .and(query::<NoteIdQuery>())
-        .and_then(|id, q| print_note_handler(id, q));
+        .and_then(print_note_handler);
 
     search.or(folders).or(tags).or(resync).or(list).or(create).or(create_log).or(list_log).or(print).or(get_one).or(update).or(delete)
 }
@@ -1583,7 +1583,7 @@ fn project_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Cl
         .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
-        .and_then(|id, item| create_project_todo_handler(id, item));
+        .and_then(create_project_todo_handler);
 
     // GET /api/v1/project/:id/notes
     let notes = project_seg
@@ -1600,7 +1600,7 @@ fn project_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Cl
         .and(warp::path::end())
         .and(warp::get())
         .and(query::<DailyLogQuery>())
-        .and_then(|id, q| project_logs_handler(id, q));
+        .and_then(project_logs_handler);
 
     // GET /api/v1/project/:id/lists
     let lists = project_seg

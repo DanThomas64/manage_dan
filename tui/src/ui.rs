@@ -90,6 +90,7 @@ pub enum NotesCreateFocus {
     Tags,
     Notebook,
     Content,
+    Submit,
 }
 
 /// Which sub-mode the Log screen is in.
@@ -105,6 +106,7 @@ pub enum LogCreateFocus {
     Title,
     Tags,
     Content,
+    Submit,
 }
 
 /// Represents which field is currently focused in the floating input form.
@@ -730,9 +732,8 @@ impl App {
             }
             Err(e) => self.last_error = Some(format!("Notes error: {}", e)),
         }
-        match self.api_client.fetch_note_notebooks().await {
-            Ok(notebooks) => self.notes_notebooks = notebooks,
-            Err(_) => {}
+        if let Ok(notebooks) = self.api_client.fetch_note_notebooks().await {
+            self.notes_notebooks = notebooks;
         }
     }
 
@@ -1095,16 +1096,22 @@ impl App {
 
     /// Permanently deletes the currently-selected (archived) project. Called
     /// only after `ProjectInputMode::ConfirmDelete` confirmation.
-    pub async fn project_delete_selected(&mut self) {
+    /// Returns whether the delete succeeded, so the confirm dialog can stay
+    /// open (showing the error) on failure instead of silently closing.
+    pub async fn project_delete_selected(&mut self) -> bool {
         let Some(p) = self.project_list_state.selected().and_then(|i| self.projects.get(i)).cloned() else {
-            return;
+            return false;
         };
         match self.api_client.delete_project(p.id).await {
             Ok(_) => {
                 self.fetch_projects().await;
                 self.project_load_selected_detail().await;
+                true
             }
-            Err(e) => self.last_error = Some(format!("Delete failed: {}", e)),
+            Err(e) => {
+                self.last_error = Some(format!("Delete failed: {}", e));
+                false
+            }
         }
     }
 
@@ -1216,6 +1223,7 @@ impl App {
                             }
                             KeyCode::Char('d') => {
                                 self.notes_mode = NotesMode::ConfirmDelete;
+                                self.last_error = None;
                             }
                             KeyCode::Char('n') => {
                                 self.notes_mode = NotesMode::Create;
@@ -1240,50 +1248,50 @@ impl App {
                                         NotesCreateFocus::Title => NotesCreateFocus::Notebook,
                                         NotesCreateFocus::Notebook => NotesCreateFocus::Tags,
                                         NotesCreateFocus::Tags => NotesCreateFocus::Content,
-                                        NotesCreateFocus::Content => NotesCreateFocus::Title,
+                                        NotesCreateFocus::Content => NotesCreateFocus::Submit,
+                                        NotesCreateFocus::Submit => NotesCreateFocus::Title,
                                     };
                                 }
                                 KeyCode::BackTab => {
                                     self.notes_create_focus = match self.notes_create_focus {
-                                        NotesCreateFocus::Title => NotesCreateFocus::Content,
+                                        NotesCreateFocus::Title => NotesCreateFocus::Submit,
                                         NotesCreateFocus::Notebook => NotesCreateFocus::Title,
                                         NotesCreateFocus::Tags => NotesCreateFocus::Notebook,
                                         NotesCreateFocus::Content => NotesCreateFocus::Tags,
+                                        NotesCreateFocus::Submit => NotesCreateFocus::Content,
                                     };
                                 }
-                                KeyCode::Char('s') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                                    self.notes_submit_create().await;
-                                    action_taken = true;
-                                }
                                 KeyCode::Enter => {
-                                    if self.notes_create_focus == NotesCreateFocus::Content {
-                                        self.notes_create_content.push('\n');
-                                    } else {
-                                        self.notes_create_focus = match self.notes_create_focus {
-                                            NotesCreateFocus::Title => NotesCreateFocus::Notebook,
-                                            NotesCreateFocus::Notebook => NotesCreateFocus::Tags,
-                                            NotesCreateFocus::Tags => NotesCreateFocus::Content,
-                                            NotesCreateFocus::Content => NotesCreateFocus::Content,
-                                        };
+                                    match self.notes_create_focus {
+                                        NotesCreateFocus::Content => self.notes_create_content.push('\n'),
+                                        NotesCreateFocus::Submit => {
+                                            self.notes_submit_create().await;
+                                            action_taken = true;
+                                        }
+                                        NotesCreateFocus::Title => self.notes_create_focus = NotesCreateFocus::Notebook,
+                                        NotesCreateFocus::Notebook => self.notes_create_focus = NotesCreateFocus::Tags,
+                                        NotesCreateFocus::Tags => self.notes_create_focus = NotesCreateFocus::Content,
                                     }
                                 }
                                 KeyCode::Backspace => {
                                     let buf = match self.notes_create_focus {
-                                        NotesCreateFocus::Title => &mut self.notes_create_title,
-                                        NotesCreateFocus::Tags => &mut self.notes_create_tags,
-                                        NotesCreateFocus::Notebook => &mut self.notes_create_notebook,
-                                        NotesCreateFocus::Content => &mut self.notes_create_content,
+                                        NotesCreateFocus::Title => Some(&mut self.notes_create_title),
+                                        NotesCreateFocus::Tags => Some(&mut self.notes_create_tags),
+                                        NotesCreateFocus::Notebook => Some(&mut self.notes_create_notebook),
+                                        NotesCreateFocus::Content => Some(&mut self.notes_create_content),
+                                        NotesCreateFocus::Submit => None,
                                     };
-                                    buf.pop();
+                                    if let Some(buf) = buf { buf.pop(); }
                                 }
                                 KeyCode::Char(c) => {
                                     let buf = match self.notes_create_focus {
-                                        NotesCreateFocus::Title => &mut self.notes_create_title,
-                                        NotesCreateFocus::Tags => &mut self.notes_create_tags,
-                                        NotesCreateFocus::Notebook => &mut self.notes_create_notebook,
-                                        NotesCreateFocus::Content => &mut self.notes_create_content,
+                                        NotesCreateFocus::Title => Some(&mut self.notes_create_title),
+                                        NotesCreateFocus::Tags => Some(&mut self.notes_create_tags),
+                                        NotesCreateFocus::Notebook => Some(&mut self.notes_create_notebook),
+                                        NotesCreateFocus::Content => Some(&mut self.notes_create_content),
+                                        NotesCreateFocus::Submit => None,
                                     };
-                                    buf.push(c);
+                                    if let Some(buf) = buf { buf.push(c); }
                                 }
                                 _ => {}
                             }
@@ -1305,6 +1313,7 @@ impl App {
                             }
                             KeyCode::Char('d') => {
                                 self.notes_mode = NotesMode::ConfirmDelete;
+                                self.last_error = None;
                             }
                             KeyCode::Char('p') => {
                                 if let Some(ref note) = self.notes_view_note.clone() {
@@ -1379,6 +1388,7 @@ impl App {
                                 }
                                 KeyCode::Char('D') => {
                                     self.project_input_mode = ProjectInputMode::ConfirmDelete;
+                                    self.last_error = None;
                                 }
                                 KeyCode::Char('r') => {
                                     // Project Detail aggregates cached todos/notes — resync
@@ -1415,12 +1425,14 @@ impl App {
                         }
                         ProjectInputMode::ConfirmDelete => match key.code {
                             KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                self.project_delete_selected().await;
-                                self.project_input_mode = ProjectInputMode::Normal;
+                                if self.project_delete_selected().await {
+                                    self.project_input_mode = ProjectInputMode::Normal;
+                                }
                                 action_taken = true;
                             }
                             _ => {
                                 self.project_input_mode = ProjectInputMode::Normal;
+                                self.last_error = None;
                             }
                         },
                     }
@@ -1629,46 +1641,46 @@ impl App {
                                     self.daily_log_create_focus = match self.daily_log_create_focus {
                                         LogCreateFocus::Title => LogCreateFocus::Tags,
                                         LogCreateFocus::Tags => LogCreateFocus::Content,
-                                        LogCreateFocus::Content => LogCreateFocus::Title,
+                                        LogCreateFocus::Content => LogCreateFocus::Submit,
+                                        LogCreateFocus::Submit => LogCreateFocus::Title,
                                     };
                                 }
                                 KeyCode::BackTab => {
                                     self.daily_log_create_focus = match self.daily_log_create_focus {
-                                        LogCreateFocus::Title => LogCreateFocus::Content,
+                                        LogCreateFocus::Title => LogCreateFocus::Submit,
                                         LogCreateFocus::Tags => LogCreateFocus::Title,
                                         LogCreateFocus::Content => LogCreateFocus::Tags,
+                                        LogCreateFocus::Submit => LogCreateFocus::Content,
                                     };
                                 }
-                                KeyCode::Char('s') if key.modifiers.contains(crossterm::event::KeyModifiers::CONTROL) => {
-                                    self.daily_log_submit_create().await;
-                                    action_taken = true;
-                                }
                                 KeyCode::Enter => {
-                                    if self.daily_log_create_focus == LogCreateFocus::Content {
-                                        self.daily_log_create_content.push('\n');
-                                    } else {
-                                        self.daily_log_create_focus = match self.daily_log_create_focus {
-                                            LogCreateFocus::Title => LogCreateFocus::Tags,
-                                            LogCreateFocus::Tags => LogCreateFocus::Content,
-                                            LogCreateFocus::Content => LogCreateFocus::Content,
-                                        };
+                                    match self.daily_log_create_focus {
+                                        LogCreateFocus::Content => self.daily_log_create_content.push('\n'),
+                                        LogCreateFocus::Submit => {
+                                            self.daily_log_submit_create().await;
+                                            action_taken = true;
+                                        }
+                                        LogCreateFocus::Title => self.daily_log_create_focus = LogCreateFocus::Tags,
+                                        LogCreateFocus::Tags => self.daily_log_create_focus = LogCreateFocus::Content,
                                     }
                                 }
                                 KeyCode::Backspace => {
                                     let buf = match self.daily_log_create_focus {
-                                        LogCreateFocus::Title => &mut self.daily_log_create_title,
-                                        LogCreateFocus::Tags => &mut self.daily_log_create_tags,
-                                        LogCreateFocus::Content => &mut self.daily_log_create_content,
+                                        LogCreateFocus::Title => Some(&mut self.daily_log_create_title),
+                                        LogCreateFocus::Tags => Some(&mut self.daily_log_create_tags),
+                                        LogCreateFocus::Content => Some(&mut self.daily_log_create_content),
+                                        LogCreateFocus::Submit => None,
                                     };
-                                    buf.pop();
+                                    if let Some(buf) = buf { buf.pop(); }
                                 }
                                 KeyCode::Char(c) => {
                                     let buf = match self.daily_log_create_focus {
-                                        LogCreateFocus::Title => &mut self.daily_log_create_title,
-                                        LogCreateFocus::Tags => &mut self.daily_log_create_tags,
-                                        LogCreateFocus::Content => &mut self.daily_log_create_content,
+                                        LogCreateFocus::Title => Some(&mut self.daily_log_create_title),
+                                        LogCreateFocus::Tags => Some(&mut self.daily_log_create_tags),
+                                        LogCreateFocus::Content => Some(&mut self.daily_log_create_content),
+                                        LogCreateFocus::Submit => None,
                                     };
-                                    buf.push(c);
+                                    if let Some(buf) = buf { buf.push(c); }
                                 }
                                 _ => {}
                             }
@@ -1795,12 +1807,6 @@ impl App {
                     }
                 }
                 InputMode::Insert => {
-                    // Check for Ctrl+C (Exit Insert Mode)
-                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                        self.input_mode = InputMode::Normal;
-                        return;
-                    }
-                    
                     match key.code {
                         KeyCode::Esc => {
                             self.input_mode = InputMode::Normal;
@@ -1936,11 +1942,11 @@ impl App {
                     buffer.push(c);
                 }
             }
-            KeyCode::Enter => {
-                // Handle Enter for newline insertion in Subtasks field (since we are in Insert mode)
-                if self.todo_input_focus == TodoInputFocus::Subtasks || self.todo_input_focus == TodoInputFocus::Description {
-                    buffer.push('\n');
-                }
+            // Handle Enter for newline insertion in Subtasks/Description (since we are in Insert mode)
+            KeyCode::Enter
+                if self.todo_input_focus == TodoInputFocus::Subtasks || self.todo_input_focus == TodoInputFocus::Description =>
+            {
+                buffer.push('\n');
             }
             _ => {}
         }
@@ -2197,6 +2203,10 @@ impl Tui {
     pub fn draw(&mut self, app: &mut App) -> io::Result<()> {
         self.terminal.draw(|frame| {
             let area = frame.size();
+            if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+                draw_too_small(frame, area);
+                return;
+            }
             match app.current_screen {
                 Screen::Dashboard => draw_dashboard(frame, app, area),
                 Screen::Todo => draw_todo_screen(frame, app, area),
@@ -2212,6 +2222,28 @@ impl Tui {
         })?;
         Ok(())
     }
+}
+
+// --- Minimum terminal size ---
+
+const MIN_WIDTH: u16 = 80;
+const MIN_HEIGHT: u16 = 24;
+
+/// Renders a plain "resize me" message instead of the normal layout when the
+/// terminal is below the 80x24 floor every screen in this app is designed
+/// for — panels below that size would just truncate and overlap unreadably.
+fn draw_too_small(frame: &mut ratatui::Frame, area: Rect) {
+    let msg = format!(
+        "Terminal too small ({}x{}).\nResize to at least {}x{}.",
+        area.width, area.height, MIN_WIDTH, MIN_HEIGHT
+    );
+    frame.render_widget(
+        Paragraph::new(msg)
+            .style(Style::default().fg(Color::Yellow))
+            .alignment(ratatui::layout::Alignment::Center)
+            .wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 // --- Help popup ---
@@ -2268,7 +2300,7 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                     ("Tab / Shift+Tab", "Move between fields"),
                     ("i or Enter", "Enter Insert mode on the focused field"),
                     ("</>", "Navigate months (when the calendar is focused)"),
-                    ("Ctrl+S", "Save"),
+                    ("Tab to Submit, Enter", "Save"),
                 ],
             ),
         },
@@ -2313,8 +2345,7 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                 vec![
                     ("Esc", "Cancel"),
                     ("Tab / Shift+Tab", "Move between fields"),
-                    ("Enter", "Next field (or newline, in Content)"),
-                    ("Ctrl+S", "Save"),
+                    ("Enter", "Next field (or newline, in Content; save, on Submit)"),
                 ],
             ),
             NotesMode::ConfirmDelete => (
@@ -2415,8 +2446,7 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                 vec![
                     ("Esc", "Cancel"),
                     ("Tab / Shift+Tab", "Move between fields"),
-                    ("Enter", "Next field (or newline, in Content)"),
-                    ("Ctrl+S", "Save"),
+                    ("Enter", "Next field (or newline, in Content; save, on Submit)"),
                 ],
             ),
         },
@@ -2575,7 +2605,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
             .collect();
 
         // Order by created_at (ascending, oldest first)
-        items.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        items.sort_by_key(|item| item.created_at);
 
         items.into_iter()
             .take(5)
@@ -2937,7 +2967,7 @@ fn draw_floating_input(frame: &mut ratatui::Frame, app: &mut App, parent_area: R
 
     let mode_indicator = match app.input_mode {
         InputMode::Normal => "NORMAL (i/Enter: Insert | j/k/h/l: Navigate | </>: Month Nav)",
-        InputMode::Insert => "INSERT (Esc/Ctrl+C: Normal | Enter: Newline in Subtasks)",
+        InputMode::Insert => "INSERT (Esc: Normal | Enter: Newline in Subtasks)",
     };
 
     let title = format!("Add New Todo Item | {}", mode_indicator);
@@ -3510,6 +3540,7 @@ fn draw_notes_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             Constraint::Length(3), // tags
             Constraint::Length(3), // folder
             Constraint::Min(5),    // content
+            Constraint::Length(1), // submit button
             Constraint::Length(1), // footer
         ])
         .split(area);
@@ -3558,11 +3589,24 @@ fn draw_notes_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         chunks[3],
     );
 
+    // Submit
+    let submit_style = if app.notes_create_focus == NotesCreateFocus::Submit {
+        Style::default().fg(Color::Black).bg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Yellow)
+    };
+    frame.render_widget(
+        Paragraph::new(" [ SUBMIT ] ")
+            .style(submit_style)
+            .alignment(ratatui::layout::Alignment::Center),
+        chunks[4],
+    );
+
     // Footer
     frame.render_widget(
-        Paragraph::new("Tab: next field  Ctrl+S: save  Esc: cancel")
+        Paragraph::new("Tab: next field  Enter on Submit: save  Esc: cancel")
             .style(Style::default().fg(Color::Rgb(160, 160, 160))),
-        chunks[4],
+        chunks[5],
     );
 }
 
@@ -3701,7 +3745,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         NotesMode::List   => "j/k: move  Enter: open  Tab: filter  q: back  ?: help",
         NotesMode::View   => "j/k: scroll  q: back to list  ?: help",
         NotesMode::Search => "Type to search  Enter: run  Esc: cancel",
-        NotesMode::Create => "Tab: next field  Ctrl+S: save  Esc: cancel",
+        NotesMode::Create => "Tab: next field  Enter on Submit: save  Esc: cancel",
         NotesMode::ConfirmDelete => "y: confirm delete  any other key: cancel",
     };
     frame.render_widget(
@@ -3709,7 +3753,12 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         footer_area,
     );
 
-    // Delete confirmation overlay
+    // Delete confirmation overlay — shows `last_error` in place of the
+    // prompt when a previous confirm attempt failed (e.g. server
+    // unreachable), so a failed delete doesn't look identical to an
+    // unconfirmed one: the dialog would otherwise sit there unchanged and
+    // `y` would appear to do nothing, with only a non-`y` key (cancel)
+    // visibly responding.
     if app.notes_mode == NotesMode::ConfirmDelete {
         let popup = Rect {
             x: area.width.saturating_sub(50) / 2,
@@ -3717,9 +3766,13 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             width: 50.min(area.width),
             height: 5.min(area.height),
         };
+        let text = match &app.last_error {
+            Some(err) => format!("Delete failed: {}\n\ny: try again, any other key: cancel", err),
+            None => "Delete this note? (y = confirm, any other key = cancel)".to_string(),
+        };
         frame.render_widget(Clear, popup);
         frame.render_widget(
-            Paragraph::new("Delete this note? (y = confirm, any other key = cancel)")
+            Paragraph::new(text)
                 .block(Block::default().borders(Borders::ALL).title(" Delete Note ")
                     .border_style(Style::default().fg(Color::Red)))
                 .wrap(Wrap { trim: true }),
@@ -3735,6 +3788,7 @@ fn draw_log_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             Constraint::Length(3), // title
             Constraint::Length(3), // tags
             Constraint::Min(5),    // content
+            Constraint::Length(1), // submit button
             Constraint::Length(1), // footer
         ])
         .split(area);
@@ -3775,11 +3829,24 @@ fn draw_log_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         chunks[2],
     );
 
+    // Submit
+    let submit_style = if app.daily_log_create_focus == LogCreateFocus::Submit {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
+    frame.render_widget(
+        Paragraph::new(" [ SUBMIT ] ")
+            .style(submit_style)
+            .alignment(ratatui::layout::Alignment::Center),
+        chunks[3],
+    );
+
     // Footer
     frame.render_widget(
-        Paragraph::new("Tab: next field  Ctrl+S: save  Esc: cancel")
+        Paragraph::new("Tab: next field  Enter on Submit: save  Esc: cancel")
             .style(Style::default().fg(Color::Rgb(160, 160, 160))),
-        chunks[3],
+        chunks[4],
     );
 }
 
@@ -3875,7 +3942,7 @@ fn draw_log_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // Footer
     let footer_text = match app.daily_log_mode {
         LogScreenMode::List => "j/k: move  Tab: days filter  q: back  ?: help",
-        LogScreenMode::Create => "Tab: next field  Ctrl+S: save  Esc: cancel",
+        LogScreenMode::Create => "Tab: next field  Enter on Submit: save  Esc: cancel",
     };
     frame.render_widget(
         Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan)),
@@ -3995,9 +4062,13 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             width: 56.min(area.width),
             height: 5.min(area.height),
         };
+        let text = match &app.last_error {
+            Some(err) => format!("Delete failed: {}\n\ny: try again, any other key: cancel", err),
+            None => "Permanently delete this project? This cannot be undone. (y = confirm, any other key = cancel)".to_string(),
+        };
         frame.render_widget(Clear, popup);
         frame.render_widget(
-            Paragraph::new("Permanently delete this project? This cannot be undone. (y = confirm, any other key = cancel)")
+            Paragraph::new(text)
                 .block(Block::default().borders(Borders::ALL).title(" Delete Project ")
                     .border_style(Style::default().fg(Color::Red)))
                 .wrap(Wrap { trim: true }),
@@ -4010,10 +4081,28 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
 impl Drop for Tui {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = stdout().execute(LeaveAlternateScreen);
-        let _ = self.terminal.show_cursor();
+        restore_terminal();
     }
+}
+
+/// Disables raw mode and leaves the alternate screen. Shared by normal
+/// shutdown (`Tui::drop`) and the panic hook below, since a panic bypasses
+/// `Drop` when unwinding is disabled and must not leave the terminal wedged.
+fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = stdout().execute(LeaveAlternateScreen);
+    let _ = stdout().execute(crossterm::cursor::Show);
+}
+
+/// Installs a panic hook that restores the terminal *before* the default
+/// hook prints the panic message — otherwise the message (and any prompt
+/// after it) is rendered into raw mode + the alt screen and never seen.
+fn install_panic_hook() {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        restore_terminal();
+        default_hook(info);
+    }));
 }
 
 /// Runs the main TUI loop.
@@ -4025,6 +4114,7 @@ impl Drop for Tui {
 ///   Running against local server:  (no env var needed)
 ///   Running against deploy.sh (nginx on port 80): MANAGE_API_URL=http://localhost cargo run -p tui
 pub async fn run_tui() -> Result<()> {
+    install_panic_hook();
     let mut tui = Tui::new()?;
     let api_url = std::env::var("MANAGE_API_URL")
         .unwrap_or_else(|_| "http://localhost".to_string());
@@ -4060,4 +4150,75 @@ pub async fn run_tui() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    fn app() -> App {
+        App::new(ApiClient::new("http://localhost"))
+    }
+
+    #[test]
+    fn too_small_message_renders_below_floor() {
+        let backend = TestBackend::new(60, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| draw_too_small(frame, frame.size()))
+            .unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("Terminal too small"));
+        assert!(text.contains("60x20"));
+    }
+
+    #[test]
+    fn notes_create_has_submit_button_and_no_reserved_keybind() {
+        let backend = TestBackend::new(MIN_WIDTH, MIN_HEIGHT);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut a = app();
+        a.notes_create_focus = NotesCreateFocus::Submit;
+        terminal
+            .draw(|frame| draw_notes_create(frame, &mut a, frame.size()))
+            .unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("SUBMIT"));
+        assert!(!text.contains("Ctrl+S"));
+    }
+
+    #[test]
+    fn log_create_has_submit_button_and_no_reserved_keybind() {
+        let backend = TestBackend::new(MIN_WIDTH, MIN_HEIGHT);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut a = app();
+        a.daily_log_create_focus = LogCreateFocus::Submit;
+        terminal
+            .draw(|frame| draw_log_create(frame, &mut a, frame.size()))
+            .unwrap();
+        let text = buffer_text(&terminal);
+        assert!(text.contains("SUBMIT"));
+        assert!(!text.contains("Ctrl+S"));
+    }
+
+    #[tokio::test]
+    async fn tab_cycles_notes_create_focus_through_submit() {
+        let mut a = app();
+        a.current_screen = Screen::Notes;
+        a.notes_create_focus = NotesCreateFocus::Content;
+        a.notes_mode = NotesMode::Create;
+        a.handle_input(CEvent::Key(crossterm::event::KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)))
+            .await;
+        assert_eq!(a.notes_create_focus, NotesCreateFocus::Submit);
+    }
 }

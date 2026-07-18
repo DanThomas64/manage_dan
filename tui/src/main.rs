@@ -75,7 +75,7 @@ fn init_logging(log_file: &str) {
     // Stdout logging is off by default — the TUI owns the terminal.
     // Set LOG_STDOUT=true to echo INFO+ events to stdout (useful before the TUI starts).
     let show_stdout = std::env::var("LOG_STDOUT")
-        .map(|v| v.to_ascii_lowercase() == "true")
+        .map(|v| v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
 
     let stdout_layer = if show_stdout {
