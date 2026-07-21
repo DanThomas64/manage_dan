@@ -198,7 +198,17 @@ fn parse_list_path_line(line: &str, ctx_notebook: &str) -> Option<(u64, String, 
         (ctx_notebook.to_string(), ref_part.to_string())
     };
     let nb_id: u64 = id_str.trim().parse().ok()?;
-    let path = remainder.split_whitespace().last()?.to_string();
+    // In `--paths` mode a line is exactly `[id] <path>` with nothing else
+    // after it, so the whole trimmed remainder *is* the path — it must not
+    // be split on whitespace, since a file moved with a literal-space
+    // filename (`nb_move`/`nb_restore_folder`'s destination naming reuses a
+    // note's title verbatim rather than sanitizing it like `nb add` does)
+    // would otherwise have everything before the last space silently
+    // dropped.
+    let path = remainder.trim().to_string();
+    if path.is_empty() {
+        return None;
+    }
     Some((nb_id, notebook, PathBuf::from(path)))
 }
 
@@ -333,9 +343,17 @@ pub async fn nb_restore_folder(notebook: &str, folder: &str, dest_notebook: &str
         let Some(rest) = line.trim().strip_prefix('[') else { continue };
         let Some((ref_part, title)) = rest.split_once("] ") else { continue };
         let path_part = ref_part.rsplit_once(':').map(|(_, p)| p).unwrap_or(ref_part);
-        let selector = format!("{}:{}", notebook, path_part);
+        // `<notebook>:move` as the subcommand itself, rather than bare
+        // `move` plus a separate `notebook:path` source selector — the
+        // installed `nb` CLI's own top-level argument dispatcher mishandles
+        // the latter shape for `move`/`rename` (hits an internal "Not
+        // found" error before ever reaching the actual move), confirmed via
+        // a minimal repro; the notebook-prefixed-subcommand shape (already
+        // used by `todo::backends::nb::archive_project_todos`) sidesteps it
+        // entirely.
+        let cmd = nb_cmd(notebook, "move");
         let dest = format!("{}:{}", dest_notebook, title.trim());
-        run(&["move", &selector, &dest, "--force"]).await?;
+        run(&[&cmd, path_part, &dest, "--force"]).await?;
         moved += 1;
     }
     Ok(moved)
@@ -416,9 +434,12 @@ pub async fn nb_ensure_notebook(name: &str) -> NotesLibResult<()> {
 
 /// Moves a note into `dest` (a `notebook:path` destination, e.g.
 /// `archive:test-project/note-title`) — used by project archiving.
+/// `<notebook>:move` as the subcommand itself, not bare `move` plus a
+/// separate `notebook:id` source selector — see `nb_restore_folder`'s doc
+/// comment on the same convention for why.
 pub async fn nb_move(src_notebook: &str, nb_id: u64, dest: &str) -> NotesLibResult<()> {
-    let ref_str = nb_ref(src_notebook, nb_id);
-    run(&["move", &ref_str, dest, "--force"]).await?;
+    let cmd = nb_cmd(src_notebook, "move");
+    run(&[&cmd, &nb_id.to_string(), dest, "--force"]).await?;
     Ok(())
 }
 

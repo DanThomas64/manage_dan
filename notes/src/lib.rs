@@ -179,13 +179,19 @@ pub async fn archive_note(note: &Note, dest_path: &str) -> NotesLibResult {
 
 /// Moves every note archived under `archive:<folder>/` back into
 /// `dest_notebook`'s root — the reverse of `archive_note`, used when
-/// restoring a project. Returns the number of notes moved. Cache rows for
-/// the moved notes (stale under `archive`, missing under `dest_notebook`)
-/// are left for the next background sync pass rather than reconciled here —
-/// this only ever runs during the rare, deliberate "restore a project"
-/// action, and both notebooks get fully re-synced within one interval.
+/// restoring a project. Returns the number of notes moved. Triggers a full
+/// `sync_cache()` afterward (best-effort) rather than tracking individual
+/// rows, matching `todo::restore_project_todos`'s equivalent bulk-move
+/// pattern — this only ever runs during the rare, deliberate "restore a
+/// project" action, so a full resync isn't a hot-path concern, and callers
+/// (e.g. `project::restore_project`) shouldn't have to wait out the
+/// background monitor's interval to see the restored notes.
 pub async fn restore_archived_notes(folder: &str, dest_notebook: &str) -> NotesLibResult<usize> {
-    nb_client::nb_restore_folder(ARCHIVE_NOTEBOOK, folder, dest_notebook).await
+    let moved = nb_client::nb_restore_folder(ARCHIVE_NOTEBOOK, folder, dest_notebook).await?;
+    if let Err(e) = sync_cache().await {
+        warn!("restore_archived_notes: cache resync failed: {}", e);
+    }
+    Ok(moved)
 }
 
 /// Ensures the shared `archive` notebook exists — call before any

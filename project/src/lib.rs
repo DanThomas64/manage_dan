@@ -290,6 +290,12 @@ pub async fn archive_project(id: i64) -> ProjectLibResult<Project> {
         let dest = format!("{}/{}", project.slug, note.title);
         notes::archive_note(note, &dest).await?;
     }
+    // One resync after the whole loop, not per note (`archive_note` itself
+    // only clears the stale old-location cache row) — matches
+    // `todo::archive_project_todos`'s own post-bulk-move `sync_cache()` call.
+    if let Err(e) = notes::sync_cache().await {
+        warn!("archive_project: notes cache resync failed: {}", e);
+    }
 
     todo::archive_project_todos(&project.slug).await?;
 
