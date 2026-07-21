@@ -1274,6 +1274,7 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
 
     // GET /api/v1/todo
     let read_all = todo_base
+        .and(warp::path::end())
         .and(warp::get())
         .and_then(read_todos_handler);
 
