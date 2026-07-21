@@ -40,7 +40,7 @@ pub struct ProjectConfig {
 
 /// File logging configuration.
 ///
-/// Override with `APP_LOGGING_FILE=/path/to/app.log` env var, or set
+/// Override with `APP_LOGGING__FILE=/path/to/app.log` env var, or set
 /// `[logging] file = "..."` in a config TOML file.
 #[derive(Debug, Deserialize, Clone)]
 pub struct LoggingConfig {
@@ -56,6 +56,10 @@ pub struct AppConfig {
     pub printer: PrinterConfig,
     pub todo: TodoConfig,
     pub project: ProjectConfig,
+    /// TCP port the HTTP API server listens on. Overridable per-run (e.g. via
+    /// `APP_API_PORT`) so a scratch/test instance can run alongside the real
+    /// deployed service without a port conflict.
+    pub api_port: u16,
     /// How often the background monitor polls `nb` for changed todos/notes (seconds).
     pub monitor_interval_secs: u64,
     /// Local hour (0–23) at which the daily summary is printed.
@@ -90,6 +94,7 @@ impl AppConfig {
 
             .set_default("todo.nb_notebook", "todo")?
             .set_default("project.base_dir", "~/projects")?
+            .set_default("api_port", 8080u64)?
             .set_default("monitor_interval_secs", 30u64)?
             .set_default("summary_hour", 8u64)?
             .set_default("summary_level", "full")?
@@ -106,8 +111,21 @@ impl AppConfig {
             // 4. Load local overrides — gitignored, never committed (put secrets here)
             .add_source(File::with_name(&format!("{}/local", cfg_dir)).required(false))
 
-            // 5. Override with environment variables (e.g., APP_PRINTER_MODE)
-            .add_source(Environment::with_prefix("APP").separator("_"));
+            // 5. Override with environment variables (e.g., APP_PRINTER_MODE,
+            // APP_TODO__NB_NOTEBOOK) — "__" (double underscore) is the
+            // nesting separator, not "_", since most field names (nb_notebook,
+            // api_port, monitor_interval_secs, ...) contain a literal
+            // underscore themselves; a single-underscore separator would
+            // misparse those and silently fail to override them. The prefix
+            // separator (between "APP" and the rest) must be set explicitly
+            // to "_" too — `Environment` otherwise defaults it to match
+            // `separator` ("__"), which would require "APP__PRINTER_MODE"
+            // instead of the documented "APP_PRINTER_MODE".
+            .add_source(
+                Environment::with_prefix("APP")
+                    .prefix_separator("_")
+                    .separator("__"),
+            );
 
         let settings = config_builder.build()?;
         let app_config: AppConfig = settings.try_deserialize()?;
@@ -135,6 +153,14 @@ impl AppConfig {
 mod tests {
     use super::*;
 
+    // `cargo test` runs tests in parallel threads within one process, but
+    // `std::env::set_var`/`remove_var` mutate process-global state — every
+    // test below sets `APP_CONFIG_DIR` (some also set other `APP_*` vars), so
+    // without serializing them, one test's env vars can leak into another's
+    // concurrently-running `AppConfig::load()` call. Each test acquires this
+    // lock for its full duration.
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // Regression test for a bug where `summary_hour`/`completed_summary_hour`/
     // `monitor_interval_secs`/`summary_level`/`completed_summary_enabled` were
     // nested under `[printer]` in the TOML files, but read here as top-level
@@ -144,6 +170,7 @@ mod tests {
     // config, so this doesn't depend on — or mutate — the process cwd.
     #[test]
     fn top_level_keys_load_from_default_and_local_toml() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let scratch = std::env::temp_dir().join(format!("app_config_test_{}", std::process::id()));
         std::fs::create_dir_all(&scratch).expect("create scratch config dir");
 
@@ -196,5 +223,61 @@ mod tests {
         assert_eq!(config.completed_summary_hour, 22);
         // Sanity check: [printer]-nested keys still work as before.
         assert_eq!(config.printer.mode, "usb");
+    }
+
+    // Regression test for the env var override mechanism itself: most field
+    // names contain a literal underscore (nb_notebook, api_port,
+    // monitor_interval_secs, ...), so a single "_" separator can't
+    // distinguish "nesting" underscores from "part of the field name"
+    // underscores — it silently fails to apply the override instead of
+    // erroring. "__" (double underscore) is the actual nesting separator.
+    #[test]
+    fn env_var_override_works_for_underscored_field_names() {
+        let _guard = ENV_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let scratch = std::env::temp_dir().join(format!("app_config_env_test_{}", std::process::id()));
+        std::fs::create_dir_all(&scratch).expect("create scratch config dir");
+        std::fs::write(
+            scratch.join("default.toml"),
+            r#"
+                environment = "development"
+                api_port = 8080
+                monitor_interval_secs = 30
+                summary_hour = 8
+                summary_level = "full"
+                completed_summary_enabled = true
+                completed_summary_hour = 20
+
+                [printer]
+                vendor_id = 4070
+                product_id = 33054
+                mode = "terminal"
+                characters_per_line = 42
+
+                [logging]
+                file = "data/logs/app.log"
+
+                [todo]
+                nb_notebook = "todo"
+
+                [project]
+                base_dir = "~/projects"
+            "#,
+        )
+        .expect("write default.toml");
+
+        std::env::set_var("APP_CONFIG_DIR", &scratch);
+        std::env::set_var("APP_API_PORT", "9191");
+        std::env::set_var("APP_TODO__NB_NOTEBOOK", "scratch_notebook");
+        std::env::set_var("APP_PRINTER__MODE", "usb");
+        let config = AppConfig::load().expect("load config");
+        std::env::remove_var("APP_CONFIG_DIR");
+        std::env::remove_var("APP_API_PORT");
+        std::env::remove_var("APP_TODO__NB_NOTEBOOK");
+        std::env::remove_var("APP_PRINTER__MODE");
+        std::fs::remove_dir_all(&scratch).ok();
+
+        assert_eq!(config.api_port, 9191, "APP_API_PORT should override a top-level underscored field");
+        assert_eq!(config.todo.nb_notebook, "scratch_notebook", "APP_TODO__NB_NOTEBOOK should override a nested underscored field");
+        assert_eq!(config.printer.mode, "usb", "APP_PRINTER__MODE should override a nested field whose leaf name has no underscore");
     }
 }

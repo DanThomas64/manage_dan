@@ -3,6 +3,11 @@
 # Application environment (used for environment-specific config loading)
 environment = "development"
 
+# TCP port the HTTP API server listens on. Override (e.g. in config/local.toml
+# or via APP_API_PORT) to run a scratch/test instance alongside the real
+# deployed service without a port conflict.
+api_port = 8080
+
 # How often the background monitor polls nb for changed todos/notes (seconds).
 monitor_interval_secs = 30
 

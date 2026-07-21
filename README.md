@@ -94,10 +94,11 @@ All configuration lives in `config/`. Files are layered in this order (later fil
 | `config/default.toml` | Defaults — committed to the repo, do not edit |
 | `config/local.toml` | Your local overrides — **gitignored**, put secrets here |
 
-You can also override any setting with an environment variable prefixed `APP_`, e.g.:
+You can also override any setting with an environment variable prefixed `APP_`. A top-level field is `APP_<FIELD>` (e.g. `APP_API_PORT`); a field nested under a `[section]` needs a **double** underscore between the section and field name — `APP_<SECTION>__<FIELD>` — since a single underscore can't be told apart from an underscore that's part of the field's own name (e.g. `nb_notebook`):
 
 ```bash
-APP_PRINTER_MODE=usb cargo run -p app
+APP_API_PORT=8099 cargo run -p app
+APP_PRINTER__MODE=usb cargo run -p app
 APP_TODO__NB_NOTEBOOK=work cargo run -p app
 ```
 
@@ -105,6 +106,10 @@ APP_TODO__NB_NOTEBOOK=work cargo run -p app
 
 ```toml
 environment = "development"
+
+# TCP port the HTTP API server listens on. Change this (or override with
+# APP_API_PORT) to run a second, scratch/test instance alongside the real one.
+api_port = 8080
 
 [printer]
 # "usb" to send to a physical printer, "terminal" to render to stdout
@@ -318,6 +323,7 @@ PATCH  /api/v1/todo/:id/done          Set completed state  { "done": true }
 POST   /api/v1/todo/:id/print         Print ticket
 POST   /api/v1/todo/:id/archive       Archive task
 GET    /api/v1/todo/summary           Summary statistics
+GET    /todo/:id                      Task detail page — edit/complete a task (what a printed ticket's QR code opens)
 ```
 
 ### Notes
@@ -332,7 +338,7 @@ GET    /api/v1/notes/:id              Get single note (JSON)  (?notebook=work)
 PUT    /api/v1/notes/:id              Update note  (?notebook=work)
 DELETE /api/v1/notes/:id              Delete note  (?notebook=work)
 POST   /api/v1/notes/:id/print        Print note  (?notebook=work)
-GET    /notes/:id                     HTML viewer (markdown rendered in browser)  (?notebook=work)
+GET    /notes/:id                     HTML viewer (markdown rendered in browser) — what a printed note's QR code opens  (?notebook=work)
 ```
 
 ### Log
@@ -352,6 +358,7 @@ POST   /api/v1/lists/groups                         Create group  { "name": "...
 DELETE /api/v1/lists/groups/:id                     Delete group + all categories
 GET    /api/v1/lists/groups/:id/categories          List categories in group
 POST   /api/v1/lists/groups/:id/categories          Create category  { "name": "..." }
+GET    /api/v1/lists/categories/:id                 Get single category (JSON)
 DELETE /api/v1/lists/categories/:id                 Delete category + all items
 GET    /api/v1/lists/categories/:id/items           List items
 POST   /api/v1/lists/categories/:id/items           Add item  { "name": "...", "quantity": "..." }
@@ -363,6 +370,7 @@ POST   /api/v1/lists/common/:id/add                 Add common item to active li
 DELETE /api/v1/lists/common/:id                     Delete common-item template
 PATCH  /api/v1/lists/items/:id/check                Toggle check  { "checked": true }
 DELETE /api/v1/lists/items/:id                      Delete item
+GET    /list/:id                                    List viewer page — tap items to check them off, what a printed list's QR code opens
 ```
 
 ---

@@ -293,7 +293,7 @@ pub async fn print(nb_id: u64, notebook: &str) -> NotesLibResult {
     ));
 
     printer::PrintJob::new(origin, title, lines)
-        .with_qr(format!("manage-dan://notes/{}:{}", note.notebook, nb_id))
+        .with_qr(format!("manage-dan://notes/{}?notebook={}", nb_id, note.notebook))
         .execute(0, 0)
         .await?;
 
