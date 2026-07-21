@@ -295,6 +295,34 @@ pub async fn list_categories(group_id: i64) -> ListsLibResult<Vec<ListCategory>>
     .map_err(ListsLibError::Db)
 }
 
+/// Returns a single category by id — used by the QR-linked list viewer page
+/// (`GET /list/:id`), which needs a category's own name/flags without
+/// already knowing its group.
+pub async fn get_category(id: i64) -> ListsLibResult<ListCategory> {
+    db::execute_async(move |conn| {
+        conn.query_row(
+            "SELECT id, group_id, name, has_checkboxes, has_quick_add FROM shopping_categories
+             WHERE id = ?1",
+            params![id],
+            |row| {
+                let has_checkboxes: i64 = row.get(3)?;
+                let has_quick_add: i64 = row.get(4)?;
+                Ok(ListCategory {
+                    id: row.get(0)?,
+                    group_id: row.get(1)?,
+                    name: row.get(2)?,
+                    has_checkboxes: has_checkboxes != 0,
+                    has_quick_add: has_quick_add != 0,
+                })
+            },
+        )
+        .optional()
+    })
+    .await
+    .map_err(ListsLibError::Db)?
+    .ok_or(ListsLibError::CategoryNotFound(id))
+}
+
 /// Creates a new category in the given group and returns it.
 pub async fn add_category(group_id: i64, name: &str) -> ListsLibResult<ListCategory> {
     let name = name.to_string();
@@ -578,6 +606,7 @@ pub async fn print_list(category_id: i64) -> ListsLibResult {
     let title = format!("LIST: {}", category_name.to_uppercase());
 
     printer::PrintJob::new(origin, title, lines)
+        .with_qr(format!("manage-dan://list/{}", category_id))
         .execute(0, 0)
         .await
         .map_err(ListsLibError::Print)

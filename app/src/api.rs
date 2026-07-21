@@ -166,62 +166,63 @@ pub async fn get_todo_page_handler(id: i64) -> Result<impl Reply, Rejection> {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content='#17140f'>
 <title>Task #{id}</title>
 <style>
-:root{{--bg:#111318;--surface:#1f2227;--surface2:#22252b;--surface3:#262930;--border:#41474d;--accent:#a8c7fa;--accent-on:#0a305f;--accent-dim:#284777;--accent-cont:#d6e3ff;--secondary-cont:#3e4759;--secondary-on:#dae2f9;--green:#6dd58c;--green-cont:#005227;--green-on:#89f3a7;--red-cont:#93000a;--red-on:#ffdad6;--text:#e2e2e6;--text-dim:#c1c7ce;--radius:12px;--shadow:0 2px 6px rgba(0,0,0,0.45);}}
+:root{{color-scheme:dark;--bg:#17140f;--surface:#211c15;--surface2:#2a2319;--surface3:#332b1e;--border:#4a4030;--accent:#e8a33d;--accent-on:#2b1c05;--accent-dim:#4a3418;--accent-cont:#ffd899;--secondary-cont:#3a3428;--secondary-on:#ded4b8;--green:#7fb069;--green-cont:#1f3016;--green-on:#b9dba0;--red-cont:#3d1c10;--red-on:#f0b49a;--text:#ede6d8;--text-dim:#a89e88;--font-sans:'Segoe UI',system-ui,sans-serif;--font-mono:ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace;--radius:10px;--radius-sm:6px;--shadow:0 2px 6px rgba(0,0,0,0.45);}}
 *{{box-sizing:border-box;margin:0;padding:0;}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:600px;margin:0 auto;}}
-.card{{background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);padding:20px;margin-bottom:12px;box-shadow:var(--shadow);}}
-.task-id{{color:var(--text-dim);font-size:12px;margin-bottom:8px;}}
+body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:600px;margin:0 auto;}}
+.card{{background:var(--surface);border-radius:var(--radius);border:1px dashed var(--border);padding:20px;margin-bottom:12px;box-shadow:var(--shadow);}}
+.task-id{{font-family:var(--font-mono);color:var(--text-dim);font-size:12px;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em;}}
 .task-title{{font-size:22px;font-weight:500;margin-bottom:12px;line-height:1.3;letter-spacing:.01em;}}
 .meta-row{{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px;}}
-.badge{{display:inline-block;padding:4px 10px;border-radius:50px;font-size:12px;font-weight:500;background:var(--surface2);border:1px solid var(--border);}}
+.badge{{display:inline-block;padding:3px 9px;border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;background:var(--surface2);border:1px solid var(--border);}}
 .badge.project{{background:var(--accent-dim);color:var(--accent-cont);border-color:transparent;}}
 .badge.due{{background:var(--secondary-cont);color:var(--secondary-on);border-color:transparent;}}
-.badge.label{{background:var(--green-cont);color:var(--green-on);border-color:transparent;}}
+.badge.label{{background:transparent;color:var(--text-dim);border-color:var(--border);}}
 .badge.p1{{background:var(--green-cont);color:var(--green-on);border-color:transparent;}}
-.badge.p2,.badge.p3{{background:var(--secondary-cont);color:#ffb76b;border-color:transparent;}}
+.badge.p2,.badge.p3{{background:var(--secondary-cont);color:var(--accent);border-color:transparent;}}
 .badge.p4,.badge.p5{{background:var(--red-cont);color:var(--red-on);border-color:transparent;}}
-.section-label{{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px;}}
+.badge.overdue{{background:var(--red-cont);color:var(--red-on);border-color:transparent;}}
+.section-label{{font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}}
 .description{{line-height:1.6;white-space:pre-wrap;}}
-.subtask{{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);}}
+.subtask{{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border);}}
 .subtask:last-child{{border-bottom:none;}}
 .check{{width:18px;height:18px;border-radius:4px;border:2px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;}}
 .check.done{{background:var(--accent);border-color:var(--accent);}}
 .check.done::after{{content:'✓';color:var(--accent-on);font-size:11px;}}
 .sub-title.done{{text-decoration:line-through;color:var(--text-dim);}}
-.btn{{width:100%;padding:16px;background:var(--accent);color:var(--accent-on);border:none;border-radius:50px;font-size:16px;font-weight:600;cursor:pointer;margin-top:4px;transition:filter .2s,transform .1s;letter-spacing:.01em;}}
-.btn:hover{{filter:brightness(1.1);}}
-.btn:active{{transform:scale(.98);filter:brightness(.95);}}
+.btn{{width:100%;padding:14px;background:var(--accent);color:var(--accent-on);border:none;border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;margin-top:4px;transition:filter .15s,transform .1s;letter-spacing:.01em;}}
+.btn:hover{{filter:brightness(1.12);}}
+.btn:active{{transform:scale(.96);filter:brightness(.9);}}
 .btn:disabled{{background:var(--surface2);color:var(--text-dim);cursor:not-allowed;filter:none;}}
 .btn.done{{background:var(--green-cont);color:var(--green-on);}}
-.msg{{text-align:center;padding:12px;border-radius:8px;margin-top:8px;font-weight:600;display:none;}}
+.msg{{text-align:center;padding:12px;border-radius:var(--radius-sm);margin-top:8px;font-weight:600;display:none;}}
 .msg.ok{{background:var(--green-cont);color:var(--green-on);display:block;}}
 .msg.err{{background:var(--red-cont);color:var(--red-on);display:block;}}
 #loading{{text-align:center;padding:60px;color:var(--text-dim);}}
 #err{{text-align:center;padding:60px;color:var(--red-on);display:none;}}
 #app{{display:none;}}
-.badge.overdue{{background:var(--red-cont);color:var(--red-on);border-color:transparent;}}
-.task-info-row{{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:13px;margin-top:8px;}}
+.task-info-row{{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--border);font-size:13px;margin-top:8px;}}
 .task-info-row:last-child{{border-bottom:none;}}
 .task-info-label{{color:var(--text-dim);}}
 .task-info-value{{font-weight:500;max-width:60%;text-align:right;}}
-.history-item{{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:13px;}}
+.history-item{{display:flex;justify-content:space-between;align-items:baseline;padding:8px 0;border-bottom:1px dashed var(--border);font-size:13px;}}
 .history-item:last-child{{border-bottom:none;}}
 .history-label{{color:var(--text-dim);}}
 .history-val{{text-align:right;}}
 .history-abs{{font-weight:500;}}
 .history-rel{{color:var(--text-dim);font-size:11px;}}
 .reminder-list{{display:flex;flex-direction:column;gap:6px;}}
-.reminder-item{{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;}}
-.completed-banner{{background:var(--green-cont);border-radius:8px;padding:12px 16px;margin-bottom:12px;color:var(--green-on);font-weight:600;font-size:13px;}}
-.btn-secondary{{width:100%;padding:16px;background:transparent;color:var(--accent);border:1px solid var(--border);border-radius:50px;font-size:16px;font-weight:600;cursor:pointer;margin-top:8px;letter-spacing:.01em;}}
+.reminder-item{{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;background:var(--surface2);border:1px dashed var(--border);border-radius:var(--radius-sm);}}
+.completed-banner{{background:var(--green-cont);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:12px;color:var(--green-on);font-weight:600;font-size:13px;}}
+.btn-secondary{{width:100%;padding:14px;background:transparent;color:var(--accent);border:1px dashed var(--border);border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;margin-top:8px;letter-spacing:.01em;}}
 .btn-secondary:hover{{background:var(--surface2);}}
 .btn-row{{display:flex;gap:8px;margin-top:8px;}}
 .btn-row .btn,.btn-row .btn-secondary{{margin-top:0;}}
 .field{{margin-bottom:14px;}}
-.field label{{display:block;font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}}
-.field input,.field textarea,.field select{{width:100%;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:15px;font-family:inherit;}}
+.field label{{display:block;font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}}
+.field input,.field textarea,.field select{{width:100%;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:15px;font-family:var(--font-sans);}}
 .field textarea{{resize:vertical;min-height:70px;}}
 .field-row{{display:flex;gap:10px;}}
 .field-row .field{{flex:1;}}
@@ -548,6 +549,18 @@ pub async fn delete_category_handler(id: i64) -> Result<impl Reply, Rejection> {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
             error!("Failed to delete category {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ListsOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/lists/categories/:id — single category (name/flags)
+pub async fn get_category_handler(id: i64) -> Result<impl Reply, Rejection> {
+    match lists::get_category(id).await {
+        Ok(cat) => Ok(warp::reply::json(&cat)),
+        Err(lists::lists_error::ListsLibError::CategoryNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to get category {}: {}", id, e);
             Err(warp::reject::custom(ApiError::ListsOperationFailed))
         }
     }
@@ -914,39 +927,40 @@ pub async fn get_note_page_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content='#17140f'>
 <title>Note</title>
 <style>
-:root{{--bg:#1a1a2e;--surface:#16213e;--surface2:#0f3460;--accent:#e94560;--text:#eaeaea;--text-dim:#9a9ab0;--radius:12px;}}
+:root{{color-scheme:dark;--bg:#17140f;--surface:#211c15;--surface2:#2a2319;--border:#4a4030;--accent:#e8a33d;--accent-cont:#ffd899;--accent-dim:#4a3418;--secondary-cont:#3a3428;--secondary-on:#ded4b8;--text:#ede6d8;--text-dim:#a89e88;--font-sans:'Segoe UI',system-ui,sans-serif;--font-mono:ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace;--radius:10px;--radius-sm:6px;}}
 *{{box-sizing:border-box;margin:0;padding:0;}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:800px;margin:0 auto;}}
-.meta-bar{{background:var(--surface);border-radius:var(--radius);padding:14px 18px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;}}
+body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:800px;margin:0 auto;}}
+.meta-bar{{background:var(--surface);border-radius:var(--radius);border:1px dashed var(--border);padding:14px 18px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;}}
 .title{{font-size:24px;font-weight:700;margin-bottom:4px;}}
-.badge{{display:inline-block;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;}}
-.badge.notebook{{background:#2a2a1a;color:#ffd54f;}}
-.badge.tag{{background:var(--surface2);color:var(--text);}}
-.dates{{font-size:11px;color:var(--text-dim);margin-left:auto;}}
-.content-card{{background:var(--surface);border-radius:var(--radius);padding:20px 24px;}}
+.badge{{display:inline-block;padding:3px 9px;border-radius:var(--radius-sm);font-family:var(--font-mono);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;}}
+.badge.notebook{{background:var(--accent-dim);color:var(--accent-cont);}}
+.badge.tag{{background:transparent;color:var(--text-dim);border:1px solid var(--border);}}
+.dates{{font-family:var(--font-mono);font-size:11px;color:var(--text-dim);margin-left:auto;}}
+.content-card{{background:var(--surface);border-radius:var(--radius);border:1px dashed var(--border);padding:20px 24px;}}
 .markdown-body h1,.markdown-body h2,.markdown-body h3{{color:var(--text);margin:1em 0 .5em;line-height:1.3;}}
-.markdown-body h1{{font-size:1.8em;border-bottom:1px solid rgba(255,255,255,.1);padding-bottom:.3em;}}
+.markdown-body h1{{font-size:1.8em;border-bottom:1px dashed var(--border);padding-bottom:.3em;}}
 .markdown-body h2{{font-size:1.4em;}}
 .markdown-body h3{{font-size:1.2em;}}
 .markdown-body p{{margin:.75em 0;line-height:1.7;}}
 .markdown-body ul,.markdown-body ol{{padding-left:1.5em;margin:.75em 0;}}
 .markdown-body li{{margin:.3em 0;line-height:1.6;}}
-.markdown-body code{{background:rgba(255,255,255,.1);padding:2px 6px;border-radius:4px;font-family:monospace;font-size:.9em;}}
-.markdown-body pre{{background:#0d1117;border-radius:8px;padding:16px;overflow-x:auto;margin:1em 0;}}
+.markdown-body code{{background:var(--surface2);padding:2px 6px;border-radius:4px;font-family:var(--font-mono);font-size:.9em;}}
+.markdown-body pre{{background:var(--surface2);border-radius:8px;padding:16px;overflow-x:auto;margin:1em 0;border:1px dashed var(--border);}}
 .markdown-body pre code{{background:none;padding:0;}}
 .markdown-body blockquote{{border-left:3px solid var(--accent);padding-left:1em;color:var(--text-dim);margin:1em 0;}}
-.markdown-body a{{color:#64b5f6;text-decoration:none;}}
+.markdown-body a{{color:var(--accent);text-decoration:none;}}
 .markdown-body a:hover{{text-decoration:underline;}}
-.markdown-body hr{{border:none;border-top:1px solid rgba(255,255,255,.1);margin:1.5em 0;}}
+.markdown-body hr{{border:none;border-top:1px dashed var(--border);margin:1.5em 0;}}
 .markdown-body table{{width:100%;border-collapse:collapse;margin:1em 0;}}
-.markdown-body th,.markdown-body td{{padding:8px 12px;border:1px solid rgba(255,255,255,.1);text-align:left;}}
+.markdown-body th,.markdown-body td{{padding:8px 12px;border:1px dashed var(--border);text-align:left;}}
 .markdown-body th{{background:var(--surface2);}}
 .actions{{display:flex;gap:8px;margin-top:12px;}}
-.btn{{padding:10px 18px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;transition:opacity .2s;}}
-.btn-back{{background:var(--surface2);color:var(--text);}}
-.btn:hover{{opacity:.85;}}
+.btn{{padding:9px 18px;border:none;border-radius:var(--radius-sm);font-size:14px;font-weight:600;cursor:pointer;transition:filter .15s;letter-spacing:.01em;}}
+.btn-back{{background:transparent;color:var(--accent);border:1px dashed var(--border);}}
+.btn:hover{{filter:brightness(1.12);}}
 #loading{{text-align:center;padding:60px;color:var(--text-dim);}}
 #app{{display:none;}}
 </style>
@@ -991,6 +1005,117 @@ load();
 </script>
 </body>
 </html>"#, id = id, notebook = notebook);
+    Ok(warp::reply::html(html))
+}
+
+/// GET /list/:id - list/category viewer page (the page a printed list's QR
+/// code opens to), matching the QR ticket page's theme/CSS (see
+/// `get_todo_page_handler`'s doc comment in CLAUDE.md for why they share
+/// custom properties/class names rather than a shared stylesheet — each is
+/// a standalone page, not part of the `frontend/` SPA).
+pub async fn get_list_page_handler(id: i64) -> Result<impl Reply, Rejection> {
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content='#17140f'>
+<title>List</title>
+<style>
+:root{{color-scheme:dark;--bg:#17140f;--surface:#211c15;--surface2:#2a2319;--surface3:#332b1e;--border:#4a4030;--accent:#e8a33d;--accent-on:#2b1c05;--accent-dim:#4a3418;--accent-cont:#ffd899;--secondary-cont:#3a3428;--secondary-on:#ded4b8;--green:#7fb069;--green-cont:#1f3016;--green-on:#b9dba0;--red-cont:#3d1c10;--red-on:#f0b49a;--text:#ede6d8;--text-dim:#a89e88;--font-sans:'Segoe UI',system-ui,sans-serif;--font-mono:ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace;--radius:10px;--radius-sm:6px;--shadow:0 2px 6px rgba(0,0,0,0.45);}}
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:600px;margin:0 auto;}}
+.card{{background:var(--surface);border-radius:var(--radius);border:1px dashed var(--border);padding:20px;margin-bottom:12px;box-shadow:var(--shadow);}}
+.list-title{{font-size:22px;font-weight:500;margin-bottom:4px;line-height:1.3;letter-spacing:.01em;}}
+.list-sub{{font-family:var(--font-mono);color:var(--text-dim);font-size:12px;text-transform:uppercase;letter-spacing:.05em;}}
+.section-label{{font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}}
+.item-row{{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px dashed var(--border);cursor:pointer;}}
+.item-row:last-child{{border-bottom:none;}}
+.check{{width:20px;height:20px;border-radius:4px;border:2px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;}}
+.check.done{{background:var(--accent);border-color:var(--accent);}}
+.check.done::after{{content:'✓';color:var(--accent-on);font-size:12px;}}
+.item-name{{flex:1;}}
+.item-name.done{{text-decoration:line-through;color:var(--text-dim);}}
+.item-qty{{color:var(--text-dim);font-size:13px;font-family:var(--font-mono);}}
+.btn-secondary{{width:100%;padding:14px;background:transparent;color:var(--accent);border:1px dashed var(--border);border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;margin-top:8px;letter-spacing:.01em;}}
+.btn-secondary:hover{{background:var(--surface2);}}
+#loading{{text-align:center;padding:60px;color:var(--text-dim);}}
+#err{{text-align:center;padding:60px;color:var(--red-on);display:none;}}
+#app{{display:none;}}
+.empty{{color:var(--text-dim);padding:8px 0;}}
+</style>
+</head>
+<body>
+<div id="loading">Loading list&hellip;</div>
+<div id="err">List not found</div>
+<div id="app">
+  <div class="card">
+    <div class="list-title" id="title"></div>
+    <div class="list-sub" id="summary"></div>
+  </div>
+  <div class="card" id="pending-card" style="display:none">
+    <div class="section-label">Remaining</div>
+    <div id="pending"></div>
+  </div>
+  <div class="card" id="done-card" style="display:none">
+    <div class="section-label">Already Obtained</div>
+    <div id="done"></div>
+  </div>
+  <button class="btn-secondary" onclick="window.location.href='/'">Dashboard</button>
+</div>
+<script>
+const ID={id};
+async function load(){{
+  try{{
+    const [catRes,itemsRes]=await Promise.all([
+      fetch('/api/v1/lists/categories/'+ID),
+      fetch('/api/v1/lists/categories/'+ID+'/items'),
+    ]);
+    if(!catRes.ok||!itemsRes.ok)throw 0;
+    render(await catRes.json(), await itemsRes.json());
+  }}catch{{
+    document.getElementById('loading').style.display='none';
+    document.getElementById('err').style.display='block';
+  }}
+}}
+function itemRow(i){{
+  const qty=i.quantity?`<span class="item-qty">${{i.quantity}}</span>`:'';
+  return `<div class="item-row" onclick="toggle(${{i.id}}, ${{!i.checked}})">
+    <div class="check ${{i.checked?'done':''}}"></div>
+    <span class="item-name ${{i.checked?'done':''}}">${{i.name}}</span>
+    ${{qty}}
+  </div>`;
+}}
+function render(cat, items){{
+  document.title='List: '+(cat.name||'Untitled');
+  document.getElementById('title').textContent=cat.name||'Untitled';
+  const pending=items.filter(i=>!i.checked);
+  const done=items.filter(i=>i.checked);
+  document.getElementById('summary').textContent=`${{pending.length}} of ${{items.length}} remaining`;
+  const pc=document.getElementById('pending');pc.innerHTML='';
+  document.getElementById('pending-card').style.display=pending.length?'block':'none';
+  pending.forEach(i=>pc.innerHTML+=itemRow(i));
+  const dc=document.getElementById('done');dc.innerHTML='';
+  document.getElementById('done-card').style.display=done.length?'block':'none';
+  done.forEach(i=>dc.innerHTML+=itemRow(i));
+  if(!items.length){{
+    document.getElementById('pending-card').style.display='block';
+    pc.innerHTML='<div class="empty">No items yet.</div>';
+  }}
+  document.getElementById('loading').style.display='none';
+  document.getElementById('app').style.display='block';
+}}
+async function toggle(itemId, checked){{
+  try{{
+    const r=await fetch('/api/v1/lists/items/'+itemId+'/check',{{method:'PATCH',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{checked}})}});
+    if(!r.ok)throw 0;
+    load();
+  }}catch{{}}
+}}
+load();
+</script>
+</body>
+</html>"#, id = id);
     Ok(warp::reply::html(html))
 }
 
@@ -1401,6 +1526,15 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::delete())
         .and_then(delete_category_handler);
 
+    // GET /api/v1/lists/categories/:id — single category (name/flags), used
+    // by the QR-linked list viewer page (GET /list/:id)
+    let get_cat = lists
+        .and(categories)
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(get_category_handler);
+
     // GET /api/v1/lists/categories/:id/items
     let list_items = lists
         .and(categories)
@@ -1540,6 +1674,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .or(list_cats)
         .or(add_cat)
         .or(delete_cat)
+        .or(get_cat)
         .or(list_items)
         .or(add_item)
         .or(check_item)
@@ -1809,7 +1944,14 @@ pub fn routes(
         .and(query::<NoteIdQuery>())
         .and_then(get_note_page_handler);
 
-    task_page.or(note_page).or(
+    // List viewer page — outside /api/v1/ for clean URLs.
+    let list_page = warp::path("list")
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(get_list_page_handler);
+
+    task_page.or(note_page).or(list_page).or(
         api_v1.and(
             status_routes(systems_status, go_nogo_status)
             .or(todo_routes())

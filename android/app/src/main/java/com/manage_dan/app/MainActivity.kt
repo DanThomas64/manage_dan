@@ -358,9 +358,23 @@ class MainActivity : AppCompatActivity() {
                 "$serverUrl/todo/$taskId"
             }
             "notes" -> {
-                val uuid = uri.pathSegments.firstOrNull() ?: return null
-                if (uuid.isBlank()) return null
-                "$serverUrl/notes/$uuid"
+                // manage-dan://notes/:id?notebook=:notebook — note ids are
+                // scoped per-notebook (nb's own per-notebook numbering), so
+                // the notebook has to travel with the id, as a query param
+                // matching the real GET /notes/:id?notebook= route's own
+                // shape (previously this took the whole "notebook:id" path
+                // segment as an opaque uuid, a leftover from before notes
+                // switched to nb-backed numeric ids — that never matched the
+                // actual route, so scanning a note's QR code silently 404'd).
+                val noteId = uri.pathSegments.firstOrNull() ?: return null
+                noteId.toLongOrNull() ?: return null
+                val notebook = uri.getQueryParameter("notebook") ?: return null
+                "$serverUrl/notes/$noteId?notebook=$notebook"
+            }
+            "list" -> {
+                val listId = uri.pathSegments.firstOrNull() ?: return null
+                listId.toLongOrNull() ?: return null
+                "$serverUrl/list/$listId"
             }
             else -> null
         }
