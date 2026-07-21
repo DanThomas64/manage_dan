@@ -1,6 +1,6 @@
 # manage_dan
 
-A personal management system built in Rust. Integrates with a self-hosted [Vikunja](https://vikunja.io) instance to manage todos, prints physical tickets to a USB thermal printer, maintains shopping lists, manages markdown notes, and exposes everything through an HTTP API, a terminal UI, a web frontend, and an Android app.
+A personal management system built in Rust. Manages todos (backed by [nb](https://xwmx.github.io/nb/)), prints physical tickets to a USB thermal printer, maintains shopping lists, manages markdown notes, and exposes everything through an HTTP API, a terminal UI, a web frontend, and an Android app.
 
 ---
 
@@ -8,7 +8,7 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 
 | Feature | Description |
 |---|---|
-| **Todo management** | Create, edit, and complete tasks backed by Vikunja. New tasks automatically print a ticket. |
+| **Todo management** | Create, edit, and complete tasks backed by `nb`. New tasks automatically print a ticket. |
 | **Physical printing** | Sends formatted receipts to a USB ESC/POS thermal printer (or renders to stdout for testing). |
 | **Daily summary** | Prints an overdue/high-priority/upcoming task summary at a configurable hour each morning. |
 | **End-of-day summary** | Prints tasks completed during the day at a configurable evening hour. |
@@ -28,8 +28,7 @@ A personal management system built in Rust. Integrates with a self-hosted [Vikun
 | Requirement | Notes |
 |---|---|
 | [Rust](https://rustup.rs) ≥ 1.87 | For building from source |
-| A self-hosted [Vikunja](https://vikunja.io/docs/installing/) instance | For todo storage |
-| [nb](https://xwmx.github.io/nb/) | For notes — the `notes` subsystem will show `Nogo` without it |
+| [nb](https://xwmx.github.io/nb/) | For todos and notes — the `todo`/`notes` subsystems will show `Nogo` without it |
 | nb's `daily` plugin | For the Log feature — install with `nb plugin install https://github.com/xwmx/nb/blob/master/plugins/daily.nb-plugin` |
 | A USB ESC/POS thermal printer | Optional — the app runs fine without one in `terminal` mode |
 | nginx | Only needed if deploying as a service (see [Deploy as a service](#deploy-as-a-service)) |
@@ -60,7 +59,7 @@ sudo pacman -S pkgconf systemd-libs openssl
 git clone https://github.com/DanThomas64/manage_dan.git
 cd manage_dan
 cp config/default.toml config/local.toml
-# Edit config/local.toml with your Vikunja URL and API token (see above)
+# Edit config/local.toml for your printer/notebook setup (see Configuration below)
 ```
 
 ### 4. Run the backend server
@@ -99,7 +98,7 @@ You can also override any setting with an environment variable prefixed `APP_`, 
 
 ```bash
 APP_PRINTER_MODE=usb cargo run -p app
-APP_VIKUNJA__API_TOKEN=your_token cargo run -p app
+APP_TODO__NB_NOTEBOOK=work cargo run -p app
 ```
 
 ### Full config reference
@@ -118,7 +117,7 @@ product_id = 33054  # 0x811e
 # Characters per line on the physical receipt (check your printer's spec sheet)
 characters_per_line = 42
 
-# How often (seconds) to poll Vikunja for tasks to print
+# How often (seconds) the background monitor polls nb for changed todos/notes
 monitor_interval_secs = 30
 
 # Hour of day (0–23) to print the daily summary
@@ -140,10 +139,9 @@ completed_summary_hour = 20
 # Path to the log file (relative to working directory, or absolute)
 file = "data/logs/app.log"
 
-[vikunja]
-base_url  = "http://localhost:3456"
-api_token = ""
-project_id = 1
+[todo]
+# nb notebook name todos are stored in
+nb_notebook = "todo"
 
 ```
 
@@ -377,8 +375,7 @@ manage_dan/
 ├── db/           SQLite access layer (logs, print records, lists, notes index)
 ├── log/          Logging subsystem initialisation
 ├── printer/      ESC/POS USB printer + terminal renderer
-├── todo/         Todo business logic, Vikunja integration, print monitor, summaries
-├── vikunja/      Vikunja HTTP client
+├── todo/         Todo business logic, nb backend, print monitor, summaries
 ├── lists/        Shopping list CRUD and printing
 ├── notes/        Markdown notes — nb CLI backend, full-text search via nb, printing
 ├── project/      Project subsystem (stub)
@@ -394,7 +391,7 @@ manage_dan/
 ## Troubleshooting
 
 **The server starts but todos don't load**
-Check that your Vikunja `base_url` and `api_token` are correct in `config/local.toml`. The system status endpoint (`GET /api/v1/status`) will show `todo: Nogo` if initialisation failed.
+Check that `nb` is installed and on `PATH`. The system status endpoint (`GET /api/v1/status`) will show `todo: Nogo` if initialisation failed.
 
 **USB printer not found**
 Run `lsusb` to confirm the printer is detected. Check that the udev rule is installed and that your user is in the `lp` group (or `plugdev`, if running via `deploy.sh`). Verify the VID/PID in `config/local.toml` matches your printer.

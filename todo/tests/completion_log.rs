@@ -44,7 +44,7 @@ async fn completing_a_todo_logs_an_entry() {
     db::init().expect("db init");
     printer::init(0, 0, "terminal", 42).expect("printer init");
     notes::init().expect("notes init");
-    todo::init("nb", "", "", 0, TEST_NOTEBOOK).expect("todo init");
+    todo::init(TEST_NOTEBOOK).expect("todo init");
 
     // Plain (non-project) todo — its completion log should carry only the
     // `todo-complete` tag.

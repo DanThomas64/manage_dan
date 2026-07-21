@@ -58,7 +58,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "app"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -75,7 +75,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "vikunja",
  "warp",
 ]
 
@@ -527,7 +526,7 @@ checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
 name = "db"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3083,7 +3082,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "todo"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3095,7 +3094,6 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
- "vikunja",
 ]
 
 [[package]]
@@ -3557,20 +3555,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "vikunja"
-version = "0.4.0"
-dependencies = [
- "anyhow",
- "chrono",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
 
 [[package]]
 name = "want"

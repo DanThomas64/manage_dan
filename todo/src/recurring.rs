@@ -1,6 +1,6 @@
 //! Recurring task support — loaded from `config/recurring.toml`.
 //!
-//! Recurring tasks are never pushed to Vikunja or shown in the GUI/TUI.
+//! Recurring tasks are never stored as todo items or shown in the GUI/TUI.
 //! Each day that a task is due, a dedicated physical ticket is printed once
 //! (idempotent via the `recurring_printed` DB table) and the task appears in
 //! the daily summary.

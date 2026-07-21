@@ -1,7 +1,7 @@
 # Reminders configuration.
 #
 # Reminders defined here appear in the daily summary under "REMINDERS TODAY"
-# and in the Monday weekly overview ticket.  They are never stored in Vikunja
+# and in the Monday weekly overview ticket.  They are never stored as todo items
 # and never printed as individual tickets (unlike recurring tasks).
 #
 # Schedule syntax is identical to recurring.toml:

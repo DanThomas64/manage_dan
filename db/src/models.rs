@@ -25,10 +25,10 @@ pub struct CachedSubtask {
 }
 
 /// A local mirror of a `todo::models::TodoItem`, fast to read/write locally
-/// (SQLite) instead of round-tripping through `nb`/Vikunja on every read.
-/// `nb`/Vikunja remain the source of truth — this is a cache, kept in sync
-/// by the write path (upserted right after a successful create/update) and
-/// a periodic background reconciliation pass (see `todo::monitor`).
+/// (SQLite) instead of round-tripping through `nb` on every read. `nb`
+/// remains the source of truth — this is a cache, kept in sync by the write
+/// path (upserted right after a successful create/update) and a periodic
+/// background reconciliation pass (see `todo::monitor`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoCacheRow {
     pub id: i64,
@@ -46,10 +46,8 @@ pub struct TodoCacheRow {
     pub subtasks: Vec<CachedSubtask>,
     pub reminders: Vec<DateTime<Local>>,
     pub archived: bool,
-    /// Source file's mtime at last sync (`nb` backend only) — lets the
-    /// background sync pass skip re-reading/re-parsing files that haven't
-    /// changed since. `None` for Vikunja-backed rows, which have no local
-    /// file to stat and are cheap to fully refresh every sync pass anyway.
+    /// Source file's mtime at last sync — lets the background sync pass
+    /// skip re-reading/re-parsing files that haven't changed since.
     pub source_mtime: Option<DateTime<Local>>,
     pub synced_at: DateTime<Local>,
 }

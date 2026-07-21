@@ -23,20 +23,10 @@ pub struct PrinterConfig {
     pub characters_per_line: u8,
 }
 
-/// Configuration for the Vikunja task management backend.
-#[derive(Debug, Deserialize, Clone)]
-pub struct VikunjaConfig {
-    pub base_url: String,
-    pub api_token: String,
-    pub project_id: i64,
-}
-
-/// Configuration for which todo backend is active.
+/// Configuration for the todo subsystem.
 #[derive(Debug, Deserialize, Clone)]
 pub struct TodoConfig {
-    /// "vikunja" or "nb".
-    pub backend: String,
-    /// nb notebook name used when `backend = "nb"`.
+    /// nb notebook name todo items are stored in.
     pub nb_notebook: String,
 }
 
@@ -64,10 +54,9 @@ pub struct LoggingConfig {
 pub struct AppConfig {
     pub environment: String,
     pub printer: PrinterConfig,
-    pub vikunja: VikunjaConfig,
     pub todo: TodoConfig,
     pub project: ProjectConfig,
-    /// How often the print monitor polls Vikunja for labelled tasks (seconds).
+    /// How often the background monitor polls `nb` for changed todos/notes (seconds).
     pub monitor_interval_secs: u64,
     /// Local hour (0–23) at which the daily summary is printed.
     pub summary_hour: u32,
@@ -99,11 +88,6 @@ impl AppConfig {
             .set_default("printer.mode", "terminal")?
             .set_default("printer.characters_per_line", 42u64)?
 
-            // Vikunja defaults
-            .set_default("vikunja.base_url", "http://localhost:3456")?
-            .set_default("vikunja.api_token", "")?
-            .set_default("vikunja.project_id", 1i64)?
-            .set_default("todo.backend", "vikunja")?
             .set_default("todo.nb_notebook", "todo")?
             .set_default("project.base_dir", "~/projects")?
             .set_default("monitor_interval_secs", 30u64)?
@@ -122,7 +106,7 @@ impl AppConfig {
             // 4. Load local overrides — gitignored, never committed (put secrets here)
             .add_source(File::with_name(&format!("{}/local", cfg_dir)).required(false))
 
-            // 5. Override with environment variables (e.g., APP_VIKUNJA_API_TOKEN)
+            // 5. Override with environment variables (e.g., APP_PRINTER_MODE)
             .add_source(Environment::with_prefix("APP").separator("_"));
 
         let settings = config_builder.build()?;
@@ -182,13 +166,7 @@ mod tests {
                 [logging]
                 file = "data/logs/app.log"
 
-                [vikunja]
-                base_url = "http://localhost:3456"
-                api_token = ""
-                project_id = 1
-
                 [todo]
-                backend = "vikunja"
                 nb_notebook = "todo"
 
                 [project]

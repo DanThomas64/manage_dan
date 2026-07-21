@@ -1,14 +1,10 @@
 //! Business logic layer for Todo item management.
 //!
-//! Persistence is delegated to one of two configurable backends (see
-//! [`BackendKind`]): a self-hosted Vikunja instance via the `vikunja` crate,
-//! or the `nb` CLI (same tool the `notes` crate shells out to). Only one
-//! backend is active per process, selected at `init()` time. Every public
-//! CRUD/read function below is a thin dispatcher so callers (and the
-//! background monitor/summary tasks) don't need to know which backend is
-//! active. The only local SQLite usage besides backend-specific bookkeeping
-//! is the lightweight `printed_tasks` table (managed by the `db` crate)
-//! which tracks when a physical ticket was last printed for each task.
+//! Persistence is delegated to the `nb` CLI (same tool the `notes` crate
+//! shells out to), storing items as files in a configurable notebook (see
+//! [`init`]). The only local SQLite usage besides that is the lightweight
+//! `printed_tasks` table (managed by the `db` crate) which tracks when a
+//! physical ticket was last printed for each task.
 
 pub mod todo_error;
 pub mod todo_prelude;
@@ -29,16 +25,11 @@ use crate::models::{Subtask, TodoItem};
 use crate::todo_error::{TodoLibError, TodoLibResult};
 use printer::PrintJob;
 
-/// Which storage backend is active for this process. Set once by [`init`].
-enum BackendKind {
-    Vikunja,
-    Nb { notebook: String },
-}
+/// The nb notebook todo items are stored in. Set once by [`init`].
+static NOTEBOOK: OnceLock<String> = OnceLock::new();
 
-static BACKEND: OnceLock<BackendKind> = OnceLock::new();
-
-fn backend() -> &'static BackendKind {
-    BACKEND.get().expect("todo backend not initialized")
+fn notebook() -> &'static str {
+    NOTEBOOK.get().expect("todo backend not initialized")
 }
 
 // --- Summary ---
@@ -50,66 +41,6 @@ pub struct TodoSummary {
     pub high_priority_pending: usize,
     pub due_today: usize,
     pub overdue: usize,
-}
-
-// --- HTML stripping ---
-
-/// Converts an HTML description (as stored by Vikunja's rich-text editor) to
-/// plain text suitable for printing.
-///
-/// Block-level closing tags become newlines; all remaining markup is removed;
-/// common HTML entities are decoded; consecutive blank lines are collapsed.
-fn strip_html(html: &str) -> String {
-    // Block elements that should become line breaks.
-    let s = html
-        .replace("</p>",          "\n")
-        .replace("</div>",        "\n")
-        .replace("</li>",         "\n")
-        .replace("</h1>",         "\n")
-        .replace("</h2>",         "\n")
-        .replace("</h3>",         "\n")
-        .replace("</h4>",         "\n")
-        .replace("</blockquote>", "\n")
-        .replace("<br>",          "\n")
-        .replace("<br/>",         "\n")
-        .replace("<br />",        "\n");
-
-    // Strip all remaining tags.
-    let mut plain = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _   => if !in_tag { plain.push(c) },
-        }
-    }
-
-    // Decode common HTML entities.
-    let plain = plain
-        .replace("&amp;",  "&")
-        .replace("&lt;",   "<")
-        .replace("&gt;",   ">")
-        .replace("&nbsp;", " ")
-        .replace("&quot;", "\"")
-        .replace("&#39;",  "'")
-        .replace("&apos;", "'");
-
-    // Collapse runs of blank lines and trim each line.
-    let mut out: Vec<&str> = Vec::new();
-    let mut last_blank = false;
-    for line in plain.lines() {
-        let t = line.trim();
-        if t.is_empty() {
-            if !last_blank { out.push(""); }
-            last_blank = true;
-        } else {
-            out.push(t);
-            last_blank = false;
-        }
-    }
-
-    out.join("\n").trim().to_string()
 }
 
 // --- Printing ---
@@ -132,7 +63,7 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
     // Header line 2: task title (shown as origin)
     let origin = item.title.clone();
 
-    // Priority: Vikunja uses 0=Unset, 1=Low, 2=Medium, 3=High, 4=Urgent, 5=Do Now
+    // Priority: 0=Unset, 1=Low, 2=Medium, 3=High, 4=Urgent, 5=Do Now
     let pri_label = match item.priority {
         1 => "LOW",
         2 => "MEDIUM",
@@ -304,10 +235,7 @@ async fn sync_one(id: i64) -> Option<TodoItem> {
 
 /// Creates a new TodoItem and prints a ticket.
 pub async fn create_item(item: TodoItem) -> TodoLibResult<TodoItem> {
-    let result = match backend() {
-        BackendKind::Vikunja => backends::vikunja::create_item(item).await,
-        BackendKind::Nb { notebook } => backends::nb::create_item(notebook, item).await,
-    }?;
+    let result = backends::nb::create_item(notebook(), item).await?;
     if let Err(e) = cache_upsert(&result, None).await {
         warn!("create_item: failed to sync cache for todo {:?}: {}", result.id, e);
     }
@@ -336,10 +264,7 @@ pub async fn read_items_by_project(project_title: &str) -> TodoLibResult<Vec<Tod
 /// Updates a TodoItem, replacing its subtasks entirely.
 pub async fn update_item(item: TodoItem) -> TodoLibResult {
     let id = item.id;
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::update_item(item).await,
-        BackendKind::Nb { notebook } => backends::nb::update_item(notebook, item).await,
-    }?;
+    backends::nb::update_item(notebook(), item).await?;
     if let Some(id) = id {
         sync_one(id).await;
     }
@@ -352,10 +277,7 @@ pub async fn update_item(item: TodoItem) -> TodoLibResult {
 pub async fn complete_item(id: i64, completed: bool) -> TodoLibResult {
     let was_completed = get_item(id).await.map(|i| i.completed).unwrap_or(false);
 
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::complete_item(id, completed).await,
-        BackendKind::Nb { notebook } => backends::nb::complete_item(notebook, id, completed).await,
-    }?;
+    backends::nb::complete_item(notebook(), id, completed).await?;
 
     sync_one(id).await;
 
@@ -403,18 +325,12 @@ async fn log_completion(id: i64) {
 
 /// Manually prints a ticket for a TodoItem by ID.
 pub async fn print_item(id: i64) -> TodoLibResult {
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::print_item(id).await,
-        BackendKind::Nb { notebook } => backends::nb::print_item(notebook, id).await,
-    }
+    backends::nb::print_item(notebook(), id).await
 }
 
-/// Archives a TodoItem (deletes it — neither backend has a native archive concept).
+/// Archives a TodoItem (deletes it — nb has no native archive concept).
 pub async fn archive_item(id: i64) -> TodoLibResult {
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::archive_item(id).await,
-        BackendKind::Nb { notebook } => backends::nb::archive_item(notebook, id).await,
-    }?;
+    backends::nb::archive_item(notebook(), id).await?;
     if let Err(e) = db::todo_cache_delete(id).await {
         warn!("archive_item: failed to remove cache row for todo {}: {}", id, e);
     }
@@ -422,18 +338,13 @@ pub async fn archive_item(id: i64) -> TodoLibResult {
 }
 
 /// Moves every todo item belonging to a project into the shared `archive`
-/// notebook, as part of project archiving. No-op under the Vikunja backend —
-/// Vikunja-backend tasks are left untouched by project archiving (see the
-/// `project` crate's archive orchestration for why). A bulk move like this
-/// affects an unknown-up-front set of items, so rather than tracking exactly
-/// which ones moved, a full `sync_cache()` afterward reconciles everything
-/// in one pass — proportionate given this is already a rare, comparatively
-/// expensive operation (folder moves, zipping), not a hot path.
+/// notebook, as part of project archiving. A bulk move like this affects an
+/// unknown-up-front set of items, so rather than tracking exactly which ones
+/// moved, a full `sync_cache()` afterward reconciles everything in one pass —
+/// proportionate given this is already a rare, comparatively expensive
+/// operation (folder moves, zipping), not a hot path.
 pub async fn archive_project_todos(project_slug: &str) -> TodoLibResult {
-    match backend() {
-        BackendKind::Vikunja => Ok(()),
-        BackendKind::Nb { notebook } => backends::nb::archive_project_todos(notebook, project_slug).await,
-    }?;
+    backends::nb::archive_project_todos(notebook(), project_slug).await?;
     if let Err(e) = sync_cache().await {
         warn!("archive_project_todos: cache resync failed: {}", e);
     }
@@ -441,13 +352,9 @@ pub async fn archive_project_todos(project_slug: &str) -> TodoLibResult {
 }
 
 /// Moves every todo item belonging to a project back out of the shared
-/// `archive` notebook, as part of un-archiving (restoring) a project. No-op
-/// under the Vikunja backend, matching `archive_project_todos`.
+/// `archive` notebook, as part of un-archiving (restoring) a project.
 pub async fn restore_project_todos(project_slug: &str) -> TodoLibResult {
-    match backend() {
-        BackendKind::Vikunja => Ok(()),
-        BackendKind::Nb { notebook } => backends::nb::restore_project_todos(notebook, project_slug).await,
-    }?;
+    backends::nb::restore_project_todos(notebook(), project_slug).await?;
     if let Err(e) = sync_cache().await {
         warn!("restore_project_todos: cache resync failed: {}", e);
     }
@@ -456,10 +363,7 @@ pub async fn restore_project_todos(project_slug: &str) -> TodoLibResult {
 
 /// Deletes a TodoItem and all its subtasks.
 pub async fn delete_item(id: i64) -> TodoLibResult {
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::delete_item(id).await,
-        BackendKind::Nb { notebook } => backends::nb::delete_item(notebook, id).await,
-    }?;
+    backends::nb::delete_item(notebook(), id).await?;
     if let Err(e) = db::todo_cache_delete(id).await {
         warn!("delete_item: failed to remove cache row for todo {}: {}", id, e);
     }
@@ -468,18 +372,14 @@ pub async fn delete_item(id: i64) -> TodoLibResult {
 
 /// Fetches a single TodoItem by id.
 pub async fn get_item(id: i64) -> TodoLibResult<TodoItem> {
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::get_item(id).await,
-        BackendKind::Nb { notebook } => backends::nb::get_item(notebook, id).await,
-    }
+    backends::nb::get_item(notebook(), id).await
 }
 
 /// Builds and upserts the cache row for a freshly-hydrated todo item, used
-/// by both backends' `sync_cache()` passes and, once the write path also
-/// syncs synchronously, by the CRUD dispatchers above. `source_mtime` is
-/// `None` for Vikunja-backed items (no local file to stat) and for anything
-/// upserted right after a write (the write path doesn't yet have a fresh
-/// stat — the next sync pass fills it in).
+/// by `sync_cache()` and, once the write path also syncs synchronously, by
+/// the CRUD dispatchers above. `source_mtime` is `None` for anything upserted
+/// right after a write (the write path doesn't yet have a fresh stat — the
+/// next sync pass fills it in).
 pub(crate) async fn cache_upsert(item: &TodoItem, source_mtime: Option<chrono::DateTime<Local>>) -> TodoLibResult {
     let Some(id) = item.id else {
         return Ok(()); // nothing to key the cache row by
@@ -510,18 +410,15 @@ pub(crate) async fn cache_upsert(item: &TodoItem, source_mtime: Option<chrono::D
     db::todo_cache_upsert(row).await.map_err(|e| TodoLibError::Db(e.to_string()))
 }
 
-/// Reconciles `todo_cache` against the live backend — called on a timer by
-/// the background monitor (`todo::monitor`), and once up front by the write
-/// path right after a create/update/complete/delete.
+/// Reconciles `todo_cache` against the live `nb` notebook — called on a timer
+/// by the background monitor (`todo::monitor`), and once up front by the
+/// write path right after a create/update/complete/delete.
 pub async fn sync_cache() -> TodoLibResult {
-    match backend() {
-        BackendKind::Vikunja => backends::vikunja::sync_cache().await,
-        BackendKind::Nb { notebook } => backends::nb::sync_cache(notebook).await,
-    }
+    backends::nb::sync_cache(notebook()).await
 }
 
-/// Returns summary statistics for pending todo items. Backend-agnostic —
-/// only depends on the dispatched `read_items()`.
+/// Returns summary statistics for pending todo items — only depends on
+/// `read_items()`.
 pub async fn get_summary() -> TodoLibResult<TodoSummary> {
     let items = read_items().await?;
     let now = Local::now();
@@ -555,22 +452,15 @@ pub async fn get_summary() -> TodoLibResult<TodoSummary> {
     })
 }
 
-/// Initializes the Todo subsystem: verifies/connects to whichever backend
-/// `backend_name` selects ("nb" or anything else defaulting to "vikunja")
-/// and records it as the active [`BackendKind`] for the rest of the process.
-pub fn init(backend_name: &str, base_url: &str, api_token: &str, project_id: i64, nb_notebook: &str) -> TodoLibResult {
-    info!("initializing todo (backend: {})", backend_name);
+/// Initializes the Todo subsystem: verifies `nb` is installed and records
+/// `nb_notebook` as the active notebook for the rest of the process.
+pub fn init(nb_notebook: &str) -> TodoLibResult {
+    info!("initializing todo (nb notebook: {})", nb_notebook);
 
-    let kind = if backend_name == "nb" {
-        backends::nb::check_nb_installed(nb_notebook)?;
-        BackendKind::Nb { notebook: nb_notebook.to_string() }
-    } else {
-        vikunja::init(base_url, api_token, project_id).map_err(TodoLibError::Vikunja)?;
-        BackendKind::Vikunja
-    };
+    backends::nb::check_nb_installed(nb_notebook)?;
 
-    BACKEND
-        .set(kind)
+    NOTEBOOK
+        .set(nb_notebook.to_string())
         .map_err(|_| TodoLibError::CannotInitialize("todo backend already initialized".to_string()))
 }
 
@@ -578,6 +468,6 @@ pub fn init(backend_name: &str, base_url: &str, api_token: &str, project_id: i64
 mod tests {
     #[test]
     fn it_works() {
-        // init() requires a running Vikunja instance or `nb`; tested via integration tests.
+        // init() requires `nb`; tested via integration tests.
     }
 }

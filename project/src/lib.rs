@@ -253,9 +253,9 @@ pub async fn project_detail(id: i64) -> ProjectLibResult<ProjectDetail> {
         project_lists(&project),
     );
 
-    // Each section is best-effort: one backend being unreachable (e.g. the
-    // todo backend's Vikunja instance) shouldn't blank out the rest of an
-    // otherwise-healthy project page.
+    // Each section is best-effort: one backend being unreachable (e.g. `nb`
+    // not being installed) shouldn't blank out the rest of an otherwise-
+    // healthy project page.
     Ok(ProjectDetail {
         project,
         todos: todos.unwrap_or_else(|e| { warn!("project_detail: todos fetch failed: {}", e); Vec::new() }),

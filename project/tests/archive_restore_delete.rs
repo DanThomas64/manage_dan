@@ -29,7 +29,7 @@ async fn archive_then_restore_then_delete() {
     db::init().expect("db init");
     notes::init().expect("notes init");
     printer::init(0, 0, "terminal", 42).expect("printer init");
-    todo::init("nb", "", "", 0, TEST_NOTEBOOK).expect("todo init");
+    todo::init(TEST_NOTEBOOK).expect("todo init");
     lists::init().expect("lists init");
     project::init("./projects").expect("project init");
 
