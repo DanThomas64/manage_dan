@@ -215,38 +215,100 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-ser
 .reminder-list{{display:flex;flex-direction:column;gap:6px;}}
 .reminder-item{{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 8px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;}}
 .completed-banner{{background:var(--green-cont);border-radius:8px;padding:12px 16px;margin-bottom:12px;color:var(--green-on);font-weight:600;font-size:13px;}}
+.btn-secondary{{width:100%;padding:16px;background:transparent;color:var(--accent);border:1px solid var(--border);border-radius:50px;font-size:16px;font-weight:600;cursor:pointer;margin-top:8px;letter-spacing:.01em;}}
+.btn-secondary:hover{{background:var(--surface2);}}
+.btn-row{{display:flex;gap:8px;margin-top:8px;}}
+.btn-row .btn,.btn-row .btn-secondary{{margin-top:0;}}
+.field{{margin-bottom:14px;}}
+.field label{{display:block;font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px;}}
+.field input,.field textarea,.field select{{width:100%;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:15px;font-family:inherit;}}
+.field textarea{{resize:vertical;min-height:70px;}}
+.field-row{{display:flex;gap:10px;}}
+.field-row .field{{flex:1;}}
 </style>
 </head>
 <body>
 <div id="loading">Loading task&hellip;</div>
 <div id="err">Task not found</div>
 <div id="app">
-  <div class="card">
-    <div class="task-id" id="tid"></div>
-    <div class="task-title" id="title"></div>
-    <div id="task-info"></div>
-    <div class="meta-row" id="meta"></div>
+  <div id="view-mode">
+    <div class="card">
+      <div class="task-id" id="tid"></div>
+      <div class="task-title" id="title"></div>
+      <div id="task-info"></div>
+      <div class="meta-row" id="meta"></div>
+    </div>
+    <div class="card" id="desc-card" style="display:none">
+      <div class="section-label">Description</div>
+      <div class="description" id="desc"></div>
+    </div>
+    <div class="card" id="subs-card" style="display:none">
+      <div class="section-label" id="subs-label"></div>
+      <div id="subs"></div>
+    </div>
+    <div class="card" id="rem-card" style="display:none">
+      <div class="section-label">Reminders</div>
+      <div class="reminder-list" id="rems"></div>
+    </div>
+    <div class="card" id="hist-card" style="display:none">
+      <div class="section-label">History</div>
+      <div id="hist"></div>
+    </div>
+    <div class="completed-banner" id="comp-banner" style="display:none"></div>
+    <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
+    <div class="msg" id="msg"></div>
+    <div class="btn-row">
+      <button class="btn-secondary" id="edit-btn" onclick="toggleEdit(true)">Edit Task</button>
+      <button class="btn-secondary" id="close-btn" onclick="window.location.href='/'">Dashboard</button>
+    </div>
   </div>
-  <div class="card" id="desc-card" style="display:none">
-    <div class="section-label">Description</div>
-    <div class="description" id="desc"></div>
+  <div id="edit-mode" style="display:none">
+    <div class="card">
+      <div class="section-label">Edit Task</div>
+      <div class="field">
+        <label for="edit-title">Title</label>
+        <input type="text" id="edit-title" />
+      </div>
+      <div class="field">
+        <label for="edit-desc">Description</label>
+        <textarea id="edit-desc"></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="edit-due-date">Due date</label>
+          <input type="date" id="edit-due-date" />
+        </div>
+        <div class="field">
+          <label for="edit-due-time">Due time</label>
+          <input type="time" id="edit-due-time" />
+        </div>
+      </div>
+      <div class="field">
+        <label for="edit-priority">Priority</label>
+        <select id="edit-priority">
+          <option value="0">0 - Unset</option>
+          <option value="1">1 - Low</option>
+          <option value="2">2 - Medium</option>
+          <option value="3">3 - High</option>
+          <option value="4">4 - Urgent</option>
+          <option value="5">5 - Do Now</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="edit-labels">Labels (comma separated)</label>
+        <input type="text" id="edit-labels" placeholder="e.g. work, urgent" />
+      </div>
+      <div class="field">
+        <label for="edit-subtasks">Subtasks (one per line, prefix "[x] " for done)</label>
+        <textarea id="edit-subtasks" placeholder="first step&#10;[x] already done step"></textarea>
+      </div>
+      <div class="msg" id="edit-msg"></div>
+      <div class="btn-row">
+        <button class="btn" id="save-btn" onclick="saveEdit()">Save Changes</button>
+        <button class="btn-secondary" onclick="toggleEdit(false)">Cancel</button>
+      </div>
+    </div>
   </div>
-  <div class="card" id="subs-card" style="display:none">
-    <div class="section-label" id="subs-label"></div>
-    <div id="subs"></div>
-  </div>
-  <div class="card" id="rem-card" style="display:none">
-    <div class="section-label">Reminders</div>
-    <div class="reminder-list" id="rems"></div>
-  </div>
-  <div class="card" id="hist-card" style="display:none">
-    <div class="section-label">History</div>
-    <div id="hist"></div>
-  </div>
-  <div class="completed-banner" id="comp-banner" style="display:none"></div>
-  <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
-  <div class="msg" id="msg"></div>
-  <button class="btn" id="close-btn" onclick="window.location.href='/'" style="margin-top:8px;background:transparent;color:var(--accent);border:1px solid var(--border);">Go to Dashboard</button>
 </div>
 <script>
 const ID={id};
@@ -263,18 +325,23 @@ async function load(){{
     document.getElementById('err').style.display='block';
   }}
 }}
+let CURRENT=null;
 function render(t){{
+  CURRENT=t;
   document.getElementById('tid').textContent='TODO #'+(t.id||ID);
   document.getElementById('title').textContent=t.title||('Task #'+ID);
-  const ti=document.getElementById('task-info');
+  const ti=document.getElementById('task-info');ti.innerHTML='';
   if(t.project_title)ti.innerHTML+=`<div class="task-info-row"><span class="task-info-label">&#128193; Project</span><span class="task-info-value">${{t.project_title}}</span></div>`;
   if(t.created_at)ti.innerHTML+=`<div class="task-info-row"><span class="task-info-label">&#128197; Created</span><span class="task-info-value">${{fmtDate(t.created_at)}}</span></div>`;
-  const m=document.getElementById('meta');
+  const m=document.getElementById('meta');m.innerHTML='';
   if(t.due_date){{const ov=!t.completed&&new Date(t.due_date)<new Date();m.innerHTML+=`<span class="badge due${{ov?' overdue':''}}">${{ov?'&#9888;':'&#128197;'}} ${{fmtDate(t.due_date)}}</span>`;}}
 
   if(t.priority>0)m.innerHTML+=`<span class="badge p${{t.priority}}">&#9873; ${{PRI[Math.min(t.priority,5)]}}</span>`;
   (t.labels||[]).forEach(l=>m.innerHTML+=`<span class="badge label">${{l}}</span>`);
+  document.getElementById('desc-card').style.display='none';
   if(t.description){{document.getElementById('desc').textContent=t.description;document.getElementById('desc-card').style.display='block';}}
+  document.getElementById('subs').innerHTML='';
+  document.getElementById('subs-card').style.display='none';
   const subs=t.subtasks||[];
   if(subs.length){{
     const done=subs.filter(s=>s.done).length;
@@ -284,10 +351,12 @@ function render(t){{
     document.getElementById('subs-card').style.display='block';
   }}
   document.title=t.title||('Task #'+ID);
-  const hist=document.getElementById('hist');
+  const hist=document.getElementById('hist');hist.innerHTML='';
   if(t.updated_at)hist.innerHTML+=`<div class="history-item"><span class="history-label">&#9998; Updated</span><div class="history-val"><div class="history-abs">${{fmtDate(t.updated_at)}}</div><div class="history-rel">${{fmtRel(t.updated_at)}}</div></div></div>`;
   if(t.printed_at)hist.innerHTML+=`<div class="history-item"><span class="history-label">&#128438; Printed</span><div class="history-val"><div class="history-abs">${{fmtDate(t.printed_at)}}</div><div class="history-rel">${{fmtRel(t.printed_at)}}</div></div></div>`;
   document.getElementById('hist-card').style.display='block';
+  document.getElementById('rems').innerHTML='';
+  document.getElementById('rem-card').style.display='none';
   const rems=t.reminders||[];
   if(rems.length){{
     const rc=document.getElementById('rems');
@@ -298,6 +367,7 @@ function render(t){{
     }});
     document.getElementById('rem-card').style.display='block';
   }}
+  document.getElementById('comp-banner').style.display='none';
   if(t.completed&&t.completed_at){{
     const cb=document.getElementById('comp-banner');
     cb.textContent='✓ Completed on '+fmtDate(t.completed_at);
@@ -305,8 +375,85 @@ function render(t){{
   }}
   const btn=document.getElementById('btn');
   if(t.completed){{btn.textContent='Already Completed';btn.classList.add('done');btn.disabled=true;}}
+  else{{btn.textContent='Mark Complete';btn.classList.remove('done');btn.disabled=false;}}
+  document.getElementById('msg').className='msg';document.getElementById('msg').textContent='';
   document.getElementById('loading').style.display='none';
   document.getElementById('app').style.display='block';
+}}
+function toggleEdit(show){{
+  document.getElementById('view-mode').style.display=show?'none':'block';
+  document.getElementById('edit-mode').style.display=show?'block':'none';
+  const emsg=document.getElementById('edit-msg');emsg.className='msg';emsg.textContent='';
+  if(show)populateEdit();
+}}
+function populateEdit(){{
+  document.getElementById('edit-title').value=CURRENT.title||'';
+  document.getElementById('edit-desc').value=CURRENT.description||'';
+  if(CURRENT.due_date){{
+    const d=new Date(CURRENT.due_date);
+    const pad=n=>String(n).padStart(2,'0');
+    document.getElementById('edit-due-date').value=`${{d.getFullYear()}}-${{pad(d.getMonth()+1)}}-${{pad(d.getDate())}}`;
+    document.getElementById('edit-due-time').value=`${{pad(d.getHours())}}:${{pad(d.getMinutes())}}`;
+  }}else{{
+    document.getElementById('edit-due-date').value='';
+    document.getElementById('edit-due-time').value='';
+  }}
+  document.getElementById('edit-priority').value=String(CURRENT.priority||0);
+  document.getElementById('edit-labels').value=(CURRENT.labels||[]).join(', ');
+  document.getElementById('edit-subtasks').value=(CURRENT.subtasks||[]).map(s=>(s.done?'[x] ':'')+s.title).join('\n');
+}}
+function parseSubtasks(buf){{
+  return buf.split('\n').map(l=>l.trim()).filter(Boolean).map(line=>{{
+    if(line.startsWith('[x] '))return{{id:null,title:line.slice(4).trim(),done:true}};
+    if(line.startsWith('[ ] '))return{{id:null,title:line.slice(4).trim(),done:false}};
+    return{{id:null,title:line,done:false}};
+  }});
+}}
+async function saveEdit(){{
+  const emsg=document.getElementById('edit-msg');
+  const title=document.getElementById('edit-title').value.trim();
+  if(!title){{emsg.textContent='Title is required';emsg.className='msg err';return;}}
+  const description=document.getElementById('edit-desc').value.trim();
+  const dueDateStr=document.getElementById('edit-due-date').value;
+  let due_date=null;
+  if(dueDateStr){{
+    const timeStr=document.getElementById('edit-due-time').value||'00:00';
+    const local=new Date(`${{dueDateStr}}T${{timeStr}}:00`);
+    if(isNaN(local.getTime())){{emsg.textContent='Invalid due date/time';emsg.className='msg err';return;}}
+    due_date=local.toISOString();
+  }}
+  const priority=parseInt(document.getElementById('edit-priority').value,10)||0;
+  const labels=document.getElementById('edit-labels').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const subtasks=parseSubtasks(document.getElementById('edit-subtasks').value);
+  const payload={{
+    id:CURRENT.id,
+    title,
+    description,
+    completed:CURRENT.completed,
+    created_at:CURRENT.created_at,
+    updated_at:new Date().toISOString(),
+    completed_at:CURRENT.completed_at,
+    printed_at:CURRENT.printed_at,
+    subtasks,
+    archived:CURRENT.archived,
+    due_date,
+    priority,
+    project_title:CURRENT.project_title||null,
+    labels,
+    reminders:CURRENT.reminders||[],
+  }};
+  const btn=document.getElementById('save-btn');
+  btn.disabled=true;btn.textContent='Saving…';
+  try{{
+    const r=await fetch('/api/v1/todo/'+ID,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}});
+    if(!r.ok)throw 0;
+    await load();
+    toggleEdit(false);
+  }}catch{{
+    emsg.textContent='Failed to save changes. Please try again.';emsg.className='msg err';
+  }}finally{{
+    btn.disabled=false;btn.textContent='Save Changes';
+  }}
 }}
 async function complete(){{
   const btn=document.getElementById('btn'),msg=document.getElementById('msg');
@@ -1674,10 +1821,13 @@ pub fn routes(
     .recover(handle_rejection)
 }
 
-/// Starts the HTTP server.
+/// Starts the HTTP server on the configured `api_port` (default 8080) — a
+/// non-default port lets a scratch/test instance run alongside the real
+/// deployed service without a port conflict.
 pub async fn start_server(systems_status: SystemsStatus, go_nogo_status: SystemsGoNogo) {
     let routes = routes(systems_status, go_nogo_status);
-    let addr = ([0, 0, 0, 0], 8080);
-    info!("Starting API server on http://0.0.0.0:8080");
+    let port = AppConfig::get().api_port;
+    let addr = ([0, 0, 0, 0], port);
+    info!("Starting API server on http://0.0.0.0:{}", port);
     warp::serve(routes).run(addr).await;
 }

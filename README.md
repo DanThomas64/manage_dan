@@ -94,10 +94,11 @@ All configuration lives in `config/`. Files are layered in this order (later fil
 | `config/default.toml` | Defaults — committed to the repo, do not edit |
 | `config/local.toml` | Your local overrides — **gitignored**, put secrets here |
 
-You can also override any setting with an environment variable prefixed `APP_`, e.g.:
+You can also override any setting with an environment variable prefixed `APP_`. A top-level field is `APP_<FIELD>` (e.g. `APP_API_PORT`); a field nested under a `[section]` needs a **double** underscore between the section and field name — `APP_<SECTION>__<FIELD>` — since a single underscore can't be told apart from an underscore that's part of the field's own name (e.g. `nb_notebook`):
 
 ```bash
-APP_PRINTER_MODE=usb cargo run -p app
+APP_API_PORT=8099 cargo run -p app
+APP_PRINTER__MODE=usb cargo run -p app
 APP_TODO__NB_NOTEBOOK=work cargo run -p app
 ```
 
@@ -105,6 +106,10 @@ APP_TODO__NB_NOTEBOOK=work cargo run -p app
 
 ```toml
 environment = "development"
+
+# TCP port the HTTP API server listens on. Change this (or override with
+# APP_API_PORT) to run a second, scratch/test instance alongside the real one.
+api_port = 8080
 
 [printer]
 # "usb" to send to a physical printer, "terminal" to render to stdout
