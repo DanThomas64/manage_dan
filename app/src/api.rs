@@ -930,7 +930,7 @@ pub async fn get_note_page_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply
 <meta name="theme-color" content='#17140f'>
 <title>Note</title>
 <style>
-:root{{color-scheme:dark;--bg:#17140f;--surface:#211c15;--surface2:#2a2319;--border:#4a4030;--accent:#e8a33d;--accent-cont:#ffd899;--accent-dim:#4a3418;--secondary-cont:#3a3428;--secondary-on:#ded4b8;--text:#ede6d8;--text-dim:#a89e88;--font-sans:'Segoe UI',system-ui,sans-serif;--font-mono:ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace;--radius:10px;--radius-sm:6px;}}
+:root{{color-scheme:dark;--bg:#17140f;--surface:#211c15;--surface2:#2a2319;--border:#4a4030;--accent:#e8a33d;--accent-on:#2b1c05;--accent-cont:#ffd899;--accent-dim:#4a3418;--secondary-cont:#3a3428;--secondary-on:#ded4b8;--red-cont:#3d1c10;--red-on:#f0b49a;--text:#ede6d8;--text-dim:#a89e88;--font-sans:'Segoe UI',system-ui,sans-serif;--font-mono:ui-monospace,'SFMono-Regular',Menlo,Consolas,'Liberation Mono',monospace;--radius:10px;--radius-sm:6px;}}
 *{{box-sizing:border-box;margin:0;padding:0;}}
 body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-height:100vh;padding:16px;max-width:800px;margin:0 auto;}}
 .meta-bar{{background:var(--surface);border-radius:var(--radius);border:1px dashed var(--border);padding:14px 18px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;}}
@@ -960,36 +960,69 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
 .actions{{display:flex;gap:8px;margin-top:12px;}}
 .btn{{padding:9px 18px;border:none;border-radius:var(--radius-sm);font-size:14px;font-weight:600;cursor:pointer;transition:filter .15s;letter-spacing:.01em;}}
 .btn-back{{background:transparent;color:var(--accent);border:1px dashed var(--border);}}
+.btn-primary{{background:var(--accent);color:var(--accent-on);}}
 .btn:hover{{filter:brightness(1.12);}}
 #loading{{text-align:center;padding:60px;color:var(--text-dim);}}
 #app{{display:none;}}
+.field{{margin-bottom:14px;}}
+.field label{{display:block;font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}}
+.field input,.field textarea{{width:100%;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:15px;font-family:var(--font-sans);}}
+.field textarea{{resize:vertical;min-height:200px;font-family:var(--font-mono);font-size:13px;}}
+.msg{{text-align:center;padding:12px;border-radius:var(--radius-sm);margin-top:8px;font-weight:600;display:none;}}
+.msg.err{{background:var(--red-cont);color:var(--red-on);display:block;}}
 </style>
 </head>
 <body>
 <div id="loading">Loading note&hellip;</div>
 <div id="app">
-  <div class="meta-bar">
-    <div>
-      <div class="title" id="title"></div>
-      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;" id="badges"></div>
+  <div id="view-mode">
+    <div class="meta-bar">
+      <div>
+        <div class="title" id="title"></div>
+        <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:6px;" id="badges"></div>
+      </div>
+      <div class="dates" id="dates"></div>
     </div>
-    <div class="dates" id="dates"></div>
+    <div class="content-card markdown-body" id="content"></div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="toggleEdit(true)">Edit</button>
+      <button class="btn btn-back" onclick="window.location.href='/'">Dashboard</button>
+    </div>
   </div>
-  <div class="content-card markdown-body" id="content"></div>
-  <div class="actions">
-    <button class="btn btn-back" onclick="history.back()">Back</button>
+  <div id="edit-mode" style="display:none">
+    <div class="content-card">
+      <div class="field">
+        <label for="edit-title">Title</label>
+        <input type="text" id="edit-title" />
+      </div>
+      <div class="field">
+        <label for="edit-tags">Tags (comma separated)</label>
+        <input type="text" id="edit-tags" placeholder="e.g. work, rust" />
+      </div>
+      <div class="field">
+        <label for="edit-content">Content (markdown)</label>
+        <textarea id="edit-content"></textarea>
+      </div>
+      <div class="msg" id="edit-msg"></div>
+      <div class="actions">
+        <button class="btn btn-primary" id="save-btn" onclick="saveEdit()">Save Changes</button>
+        <button class="btn btn-back" onclick="toggleEdit(false)">Cancel</button>
+      </div>
+    </div>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <script>
 const NB_ID={id};
 const NOTEBOOK="{notebook}";
+let CURRENT=null;
 function fmtDate(d){{return new Date(d).toLocaleDateString('en-GB',{{day:'numeric',month:'short',year:'numeric'}});}}
 async function load(){{
   try{{
     const r=await fetch('/api/v1/notes/'+NB_ID+'?notebook='+NOTEBOOK);
     if(!r.ok)throw 0;
     const n=await r.json();
+    CURRENT=n;
     document.title='Note: '+(n.title||'Untitled');
     document.getElementById('title').textContent=n.title||'Untitled';
     const b=document.getElementById('badges');
@@ -1000,6 +1033,36 @@ async function load(){{
     document.getElementById('loading').style.display='none';
     document.getElementById('app').style.display='block';
   }}catch{{document.getElementById('loading').textContent='Note not found';}}
+}}
+function toggleEdit(show){{
+  document.getElementById('view-mode').style.display=show?'none':'block';
+  document.getElementById('edit-mode').style.display=show?'block':'none';
+  const emsg=document.getElementById('edit-msg');emsg.className='msg';emsg.textContent='';
+  if(show)populateEdit();
+}}
+function populateEdit(){{
+  document.getElementById('edit-title').value=CURRENT.title||'';
+  document.getElementById('edit-tags').value=(CURRENT.tags||[]).join(', ');
+  document.getElementById('edit-content').value=CURRENT.content||'';
+}}
+async function saveEdit(){{
+  const emsg=document.getElementById('edit-msg');
+  const title=document.getElementById('edit-title').value.trim();
+  if(!title){{emsg.textContent='Title is required';emsg.className='msg err';return;}}
+  const tags=document.getElementById('edit-tags').value.split(',').map(s=>s.trim()).filter(Boolean);
+  const content=document.getElementById('edit-content').value;
+  const btn=document.getElementById('save-btn');
+  btn.disabled=true;btn.textContent='Saving…';
+  try{{
+    const r=await fetch('/api/v1/notes/'+NB_ID+'?notebook='+NOTEBOOK,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{title,content,tags}})}});
+    if(!r.ok)throw 0;
+    await load();
+    toggleEdit(false);
+  }}catch{{
+    emsg.textContent='Failed to save changes. Please try again.';emsg.className='msg err';
+  }}finally{{
+    btn.disabled=false;btn.textContent='Save Changes';
+  }}
 }}
 load();
 </script>
@@ -1039,10 +1102,18 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
 .item-qty{{color:var(--text-dim);font-size:13px;font-family:var(--font-mono);}}
 .btn-secondary{{width:100%;padding:14px;background:transparent;color:var(--accent);border:1px dashed var(--border);border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;margin-top:8px;letter-spacing:.01em;}}
 .btn-secondary:hover{{background:var(--surface2);}}
+.btn-primary{{width:100%;padding:14px;background:var(--accent);color:var(--accent-on);border:none;border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;letter-spacing:.01em;}}
+.btn-primary:hover{{filter:brightness(1.12);}}
 #loading{{text-align:center;padding:60px;color:var(--text-dim);}}
 #err{{text-align:center;padding:60px;color:var(--red-on);display:none;}}
 #app{{display:none;}}
 .empty{{color:var(--text-dim);padding:8px 0;}}
+.add-row{{display:flex;gap:8px;}}
+.add-row input{{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:15px;padding:10px 12px;font-family:var(--font-sans);}}
+.add-row input#new-item-name{{flex:2;}}
+.add-row input#new-item-qty{{flex:1;}}
+.msg{{text-align:center;padding:10px;border-radius:var(--radius-sm);margin-top:8px;font-weight:600;display:none;font-size:13px;}}
+.msg.err{{background:var(--red-cont);color:var(--red-on);display:block;}}
 </style>
 </head>
 <body>
@@ -1060,6 +1131,15 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
   <div class="card" id="done-card" style="display:none">
     <div class="section-label">Already Obtained</div>
     <div id="done"></div>
+  </div>
+  <div class="card">
+    <div class="section-label">Add Item</div>
+    <div class="add-row">
+      <input type="text" id="new-item-name" placeholder="Item name" />
+      <input type="text" id="new-item-qty" placeholder="Qty (optional)" />
+    </div>
+    <button class="btn-primary" style="margin-top:10px;" onclick="addItem()">Add</button>
+    <div class="msg" id="add-msg"></div>
   </div>
   <button class="btn-secondary" onclick="window.location.href='/'">Dashboard</button>
 </div>
@@ -1112,6 +1192,25 @@ async function toggle(itemId, checked){{
     load();
   }}catch{{}}
 }}
+async function addItem(){{
+  const nameEl=document.getElementById('new-item-name');
+  const qtyEl=document.getElementById('new-item-qty');
+  const msg=document.getElementById('add-msg');
+  const name=nameEl.value.trim();
+  if(!name){{msg.textContent='Item name is required';msg.className='msg err';return;}}
+  const quantity=qtyEl.value.trim()||null;
+  try{{
+    const r=await fetch('/api/v1/lists/categories/'+ID+'/items',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{name,quantity}})}});
+    if(!r.ok)throw 0;
+    nameEl.value='';
+    qtyEl.value='';
+    msg.className='msg';
+    load();
+  }}catch{{
+    msg.textContent='Failed to add item. Please try again.';msg.className='msg err';
+  }}
+}}
+document.getElementById('new-item-name').addEventListener('keydown',e=>{{if(e.key==='Enter')addItem();}});
 load();
 </script>
 </body>

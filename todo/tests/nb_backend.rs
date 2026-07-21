@@ -1,17 +1,23 @@
 //! End-to-end exercise of the nb-backed todo backend against a scratch nb
-//! notebook and a scratch working directory (so it never touches the real
-//! `app.sqlite`, the real `todo` notebook, or the live systemd service).
+//! notebook, a fully isolated `nb` data directory (via `NB_DIR`), and a
+//! scratch working directory — so it never touches the real `app.sqlite`,
+//! the real `todo` notebook, or the live systemd service.
+//!
+//! `NB_DIR` isolation matters here specifically because of `complete_item`'s
+//! `todo::log_completion`: completing a todo always logs a daily-log
+//! entry to the hardcoded, global `log` notebook regardless of which todo
+//! notebook was used — a scratch *notebook name* alone doesn't isolate that
+//! side effect, only redirecting `nb`'s entire data directory does. This
+//! test used to skip `NB_DIR` (only isolating the todo notebook by name),
+//! which for a long time silently wrote a real "Completed: Integration test
+//! todo" entry into the real, live daily log on every test run — see
+//! `scripts/dev/clean_test_pollution.sh` for the cleanup and detection this
+//! caused.
 
 use chrono::{Duration, Local};
 use todo::models::{Subtask, TodoItem};
 
 const TEST_NOTEBOOK: &str = "zz_test_todo";
-
-fn cleanup_notebook() {
-    let _ = std::process::Command::new("nb")
-        .args(["notebooks", "delete", TEST_NOTEBOOK, "--force"])
-        .output();
-}
 
 #[tokio::test]
 async fn nb_backend_end_to_end() {
@@ -19,13 +25,26 @@ async fn nb_backend_end_to_end() {
     std::fs::create_dir_all(&scratch).expect("create scratch dir");
     std::env::set_current_dir(&scratch).expect("cd into scratch dir");
 
-    cleanup_notebook();
+    let nb_dir = std::env::temp_dir().join(format!("todo_nb_test_nbdir_{}", std::process::id()));
+    std::fs::create_dir_all(&nb_dir).expect("create scratch NB_DIR");
+    std::env::set_var("NB_DIR", &nb_dir);
+
+    // First real `nb` invocation on a fresh NB_DIR triggers a one-time
+    // "Welcome" onboarding flow instead of doing what's asked — dismiss it
+    // before doing anything real (same as completion_log.rs).
+    let _ = std::process::Command::new("nb").arg("notebooks").output();
 
     db::init().expect("db init");
     printer::init(0, 0, "terminal", 42).expect("printer init");
+    notes::init().expect("notes init");
     todo::init(TEST_NOTEBOOK).expect("todo init");
 
-    let mut item = TodoItem::new("Integration test todo".to_string(), "desc line one".to_string());
+    // "zz_test:" prefix makes this identifiable as test data even outside
+    // this test's own NB_DIR isolation (e.g. if a future change reintroduces
+    // an un-isolated side effect) — see the tagging convention this
+    // establishes, documented in CLAUDE.md and enforced by
+    // scripts/dev/clean_test_pollution.sh.
+    let mut item = TodoItem::new("zz_test: Integration test todo".to_string(), "desc line one".to_string());
     item.priority = 3;
     item.due_date = Some(Local::now() + Duration::days(2));
     item.labels = vec!["urgent".to_string()];
@@ -35,7 +54,7 @@ async fn nb_backend_end_to_end() {
     ];
 
     let created = todo::create_item(item).await.expect("create_item");
-    assert_eq!(created.title, "Integration test todo");
+    assert_eq!(created.title, "zz_test: Integration test todo");
     assert_eq!(created.description, "desc line one");
     assert_eq!(created.priority, 3);
     assert!(!created.completed);
@@ -84,14 +103,14 @@ async fn nb_backend_end_to_end() {
 
     let mut updated = fetched.clone();
     updated.completed = false;
-    updated.title = "Updated title".to_string();
+    updated.title = "zz_test: Updated title".to_string();
     updated.priority = 1;
     updated.project_title = Some("work".to_string());
     todo::update_item(updated).await.expect("update_item");
 
     let after_update = todo::get_item(id).await.expect("get_item after update");
     assert_eq!(after_update.id, Some(id), "id must stay stable across update");
-    assert_eq!(after_update.title, "Updated title");
+    assert_eq!(after_update.title, "zz_test: Updated title");
     assert_eq!(after_update.priority, 1);
     assert!(!after_update.completed);
     assert_eq!(after_update.project_title, Some("work".to_string()));
@@ -104,5 +123,6 @@ async fn nb_backend_end_to_end() {
     let items_after_delete = todo::read_items().await.expect("read_items after delete");
     assert!(!items_after_delete.iter().any(|i| i.id == Some(id)));
 
-    cleanup_notebook();
+    std::fs::remove_dir_all(&nb_dir).ok();
+    std::env::remove_var("NB_DIR");
 }

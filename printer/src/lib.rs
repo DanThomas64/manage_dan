@@ -253,6 +253,40 @@ pub fn line_width() -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// Emoji stripping
+// ---------------------------------------------------------------------------
+
+/// True for code points in the common emoji blocks (pictographs, emoticons,
+/// transport, misc symbols, dingbats, flag/regional indicators, variation
+/// selectors, and the zero-width joiner used to build compound emoji).
+/// Deliberately narrower than "any non-ASCII character" — box-drawing
+/// (`─`), bullets (`•`), em dashes, and accented Latin letters are all
+/// outside these ranges and print fine; only glyphs the ESC/POS thermal
+/// printer's font can't render (or renders as a garbled placeholder box)
+/// are covered.
+fn is_emoji(c: char) -> bool {
+    matches!(c as u32,
+        0x200D
+        | 0xFE0F
+        | 0x1F1E6..=0x1F1FF
+        | 0x1F300..=0x1F5FF
+        | 0x1F600..=0x1F64F
+        | 0x1F680..=0x1F6FF
+        | 0x1F900..=0x1F9FF
+        | 0x1FA70..=0x1FAFF
+        | 0x2600..=0x27BF
+    )
+}
+
+/// Strips emoji from `s` — see [`is_emoji`]. Used by [`PrintJob::new`] so
+/// every ticket gets this treatment regardless of whether the text was
+/// typed by a user (a note/task/list-item's own content) or built by this
+/// app's own ticket-formatting code.
+fn strip_emoji(s: &str) -> String {
+    s.chars().filter(|&c| !is_emoji(c)).collect()
+}
+
+// ---------------------------------------------------------------------------
 // PrintJob
 // ---------------------------------------------------------------------------
 
@@ -264,8 +298,18 @@ pub struct PrintJob {
 }
 
 impl PrintJob {
+    /// `origin`/`title`/`lines` are stripped of emoji before being stored —
+    /// see [`strip_emoji`]. This runs once here rather than at each call
+    /// site, so it covers both user-typed content (a todo/note/list item's
+    /// own text) and this app's own ticket-formatting strings uniformly,
+    /// regardless of which crate built them.
     pub fn new(origin: String, title: String, lines: Vec<String>) -> Self {
-        PrintJob { origin, title, lines, qr_url: None }
+        PrintJob {
+            origin: strip_emoji(&origin),
+            title: strip_emoji(&title),
+            lines: lines.iter().map(|l| strip_emoji(l)).collect(),
+            qr_url: None,
+        }
     }
 
     /// Attaches a URL to be printed as a QR code at the top of the ticket.
@@ -333,5 +377,33 @@ mod tests {
             vec!["Line 1".into(), "Line 2".into()],
         );
         assert!(mgr.execute_job(job).is_ok());
+    }
+
+    #[test]
+    fn strip_emoji_removes_common_emoji_but_keeps_other_symbols() {
+        assert_eq!(strip_emoji("Buy milk 🥛 today"), "Buy milk  today");
+        assert_eq!(strip_emoji("Great job! 🎉🎊"), "Great job! ");
+        assert_eq!(strip_emoji("👨‍👩‍👧 family"), " family"); // ZWJ sequence
+        assert_eq!(strip_emoji("❤️ love"), " love"); // base char + variation selector
+        assert_eq!(strip_emoji("🇺🇸 flag"), " flag"); // regional indicators
+        // Box-drawing, bullets, em dashes, and accented Latin must survive —
+        // these are legitimate ticket-formatting characters, not emoji.
+        assert_eq!(strip_emoji("── separator ──"), "── separator ──");
+        assert_eq!(strip_emoji("tag1  •  tag2"), "tag1  •  tag2");
+        assert_eq!(strip_emoji("café — noté"), "café — noté");
+        assert_eq!(strip_emoji("plain ascii text"), "plain ascii text");
+    }
+
+    #[test]
+    fn print_job_new_strips_emoji_from_all_fields() {
+        let job = PrintJob::new(
+            "origin 😀".into(),
+            "TITLE 🎉".into(),
+            vec!["line with emoji 🥛".into(), "plain line".into()],
+        );
+        assert_eq!(job.origin, "origin ");
+        assert_eq!(job.title, "TITLE ");
+        assert_eq!(job.lines[0], "line with emoji ");
+        assert_eq!(job.lines[1], "plain line");
     }
 }
