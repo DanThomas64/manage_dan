@@ -10,8 +10,6 @@ import android.os.Bundle
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -23,7 +21,6 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.Toolbar
 
 class MainActivity : AppCompatActivity() {
 
@@ -56,14 +53,29 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Exposed to JavaScript as `window.AndroidBridge`. Pull-to-reload on the
+     * dashboard calls [reload]; the "cannot reach server" page's
+     * "Change Server URL" button calls [changeServerUrl] — the only two
+     * places a URL change or reload can be triggered from the page itself.
+     */
+    private inner class AndroidBridge {
+        @JavascriptInterface
+        fun reload() {
+            runOnUiThread { webView.reload() }
+        }
+
+        @JavascriptInterface
+        fun changeServerUrl() {
+            runOnUiThread { promptForUrl() }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         setContentView(R.layout.activity_main)
-        val toolbar = findViewById<Toolbar>(R.id.toolbar)
-        setSupportActionBar(toolbar)
-        supportActionBar?.title = "manage_dan"
         webView = findViewById(R.id.webview)
 
         webView.settings.apply {
@@ -87,6 +99,9 @@ class MainActivity : AppCompatActivity() {
 
         // Expose native vibration so navigator.vibrate() works inside the page.
         webView.addJavascriptInterface(VibrationBridge(), "AndroidVibrator")
+        // Expose reload/change-URL so the page can trigger them (pull-to-reload,
+        // the "cannot reach server" page's Change Server URL button).
+        webView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView, url: String) {
@@ -129,6 +144,65 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
                         }, { passive: true });
+
+                        // 3. Swipe down on the dashboard (Home view), starting from
+                        //    the top of the page, reloads the app. The indicator banner
+                        //    stays up a beat, then the screen blanks momentarily before
+                        //    the actual reload fires, so the refresh reads as deliberate
+                        //    rather than an abrupt jump cut.
+                        var _reloading = false;
+                        function triggerReload() {
+                            if (_reloading) return;
+                            _reloading = true;
+
+                            if (!document.getElementById('android-reload-style')) {
+                                var style = document.createElement('style');
+                                style.id = 'android-reload-style';
+                                style.textContent = '@keyframes android-spin { to { transform: rotate(360deg); } }';
+                                document.head.appendChild(style);
+                            }
+                            var el = document.createElement('div');
+                            el.id = 'android-reload-indicator';
+                            el.style.cssText = 'position:fixed;top:0;left:0;right:0;display:flex;' +
+                                'align-items:center;justify-content:center;gap:8px;padding:10px;' +
+                                'background:#1a1d27;color:#e4e8f0;font-family:sans-serif;font-size:0.9rem;' +
+                                'z-index:999999;transform:translateY(-100%);transition:transform 0.2s ease-out;';
+                            el.innerHTML = '<span style="display:inline-block;width:14px;height:14px;' +
+                                'border:2px solid #7a82a0;border-top-color:#5b8dee;border-radius:50%;' +
+                                'animation:android-spin 0.6s linear infinite"></span><span>Reloading…</span>';
+                            document.body.appendChild(el);
+                            requestAnimationFrame(function() { el.style.transform = 'translateY(0)'; });
+
+                            // Let the banner register with the user, then blank the
+                            // screen (indicator stays on top of the blank layer),
+                            // then actually reload.
+                            setTimeout(function() {
+                                var blank = document.createElement('div');
+                                blank.id = 'android-reload-blank';
+                                blank.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;' +
+                                    'background:#0f1117;z-index:999998;';
+                                document.body.appendChild(blank);
+                                setTimeout(function() {
+                                    window.AndroidBridge.reload();
+                                }, 400);
+                            }, 900);
+                        }
+                        var _dsx = 0, _dsy = 0, _dOk = false;
+                        document.addEventListener('touchstart', function(e) {
+                            var home = document.getElementById('home-overlay');
+                            var atTop = (document.scrollingElement || document.documentElement).scrollTop <= 0;
+                            _dOk = !!(home && home.classList.contains('active') && atTop);
+                            _dsx = e.touches[0].clientX;
+                            _dsy = e.touches[0].clientY;
+                        }, { passive: true });
+                        document.addEventListener('touchend', function(e) {
+                            if (!_dOk) return;
+                            var dx = e.changedTouches[0].clientX - _dsx;
+                            var dy = e.changedTouches[0].clientY - _dsy;
+                            if (dy > 80 && dy > Math.abs(dx) * 1.5 && typeof window.AndroidBridge !== 'undefined') {
+                                triggerReload();
+                            }
+                        }, { passive: true });
                     })();
                     """.trimIndent(), null
                 )
@@ -150,6 +224,11 @@ class MainActivity : AppCompatActivity() {
                             style="margin-top:8px;background:#5b8dee;color:#fff;border:none;
                                    border-radius:10px;padding:14px 28px;font-size:1rem;cursor:pointer">
                             Retry
+                          </button>
+                          <button onclick="AndroidBridge.changeServerUrl()"
+                            style="background:transparent;color:#7a82a0;border:1px solid #7a82a0;
+                                   border-radius:10px;padding:14px 28px;font-size:1rem;cursor:pointer">
+                            Change Server URL
                           </button>
                         </body></html>
                     """.trimIndent()
@@ -263,19 +342,6 @@ class MainActivity : AppCompatActivity() {
             .apply { if (!firstRun) setNegativeButton("Cancel", null) }
             .setCancelable(!firstRun)
             .show()
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.main_menu, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.action_reload -> { webView.reload(); true }
-            R.id.action_settings -> { promptForUrl(); true }
-            else -> super.onOptionsItemSelected(item)
-        }
     }
 
     @Deprecated("Deprecated in Java")
