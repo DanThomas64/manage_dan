@@ -1,4 +1,4 @@
-//! Reminder support — Vikunja task reminders and config-based reminders.
+//! Reminder support — todo item reminders and config-based reminders.
 //!
 //! Config reminders are loaded from `$APP_CONFIG_DIR/reminders.toml` using the
 //! same schedule syntax and struct as `recurring.toml`.  They appear only in
@@ -7,10 +7,10 @@
 //! Two outputs are produced:
 //!
 //! - **Daily summary section** — "REMINDERS TODAY": all config reminders due
-//!   today + all Vikunja tasks whose `reminder_dates` include today.
+//!   today + all todo items whose `reminder_dates` include today.
 //!
 //! - **Weekly overview ticket** — printed once every Monday: every reminder
-//!   (config + Vikunja) falling within the Mon–Sun of the current week,
+//!   (config + todo item) falling within the Mon–Sun of the current week,
 //!   grouped by day.
 
 use chrono::{Datelike, Duration, IsoWeek, Local, NaiveDate, Weekday};
@@ -65,9 +65,9 @@ pub fn config_due_today() -> Vec<RecurringTask> {
     load_config().into_iter().filter(|t| t.is_due_on(today)).collect()
 }
 
-/// Vikunja tasks (non-completed) that have at least one reminder falling on
+/// Todo items (non-completed) that have at least one reminder falling on
 /// today's local date.
-pub fn vikunja_due_today(items: &[TodoItem]) -> Vec<&TodoItem> {
+pub fn todo_due_today(items: &[TodoItem]) -> Vec<&TodoItem> {
     let today = Local::now().date_naive();
     items
         .iter()
@@ -103,9 +103,9 @@ pub fn config_due_this_week() -> Vec<(NaiveDate, RecurringTask)> {
     result
 }
 
-/// (date, &TodoItem) for every Vikunja reminder falling within the Mon–Sun of
-/// the current week.  A task with two reminders in the week appears twice.
-pub fn vikunja_due_this_week(items: &[TodoItem]) -> Vec<(NaiveDate, &TodoItem)> {
+/// (date, &TodoItem) for every todo item reminder falling within the Mon–Sun
+/// of the current week.  A task with two reminders in the week appears twice.
+pub fn todo_due_this_week(items: &[TodoItem]) -> Vec<(NaiveDate, &TodoItem)> {
     let (mon, sun) = week_bounds();
     let mut result: Vec<(NaiveDate, &TodoItem)> = items
         .iter()
@@ -175,7 +175,7 @@ pub async fn print_weekly_summary(items: &[TodoItem]) {
     let origin = format!("{} \u{2013} {}", mon.format("%d %b"), sun.format("%d %b %Y"));
 
     let cfg_week = config_due_this_week();
-    let vjk_week = vikunja_due_this_week(items);
+    let todo_week = todo_due_this_week(items);
 
     let mut lines = vec![sep.clone(), String::new()];
 
@@ -186,15 +186,15 @@ pub async fn print_weekly_summary(items: &[TodoItem]) {
             .filter(|(d, _)| *d == day)
             .map(|(_, t)| t)
             .collect();
-        let vjk_day: Vec<_> = vjk_week.iter()
+        let todo_day: Vec<_> = todo_week.iter()
             .filter(|(d, _)| *d == day)
             .map(|(_, i)| *i)
             .collect();
 
-        if !cfg_day.is_empty() || !vjk_day.is_empty() {
+        if !cfg_day.is_empty() || !todo_day.is_empty() {
             any = true;
             lines.push(day.format("%a %d %b").to_string().to_uppercase());
-            for item in &vjk_day {
+            for item in &todo_day {
                 let id_tag = item.id.map(|id| format!(" [#{}]", id)).unwrap_or_default();
                 let proj = item.project_title.as_deref()
                     .filter(|s| !s.is_empty())

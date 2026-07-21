@@ -187,14 +187,14 @@ pub async fn print_summary(level: SummaryLevel) {
 
     // --- Reminders today ---
     let cfg_reminders = crate::reminders::config_due_today();
-    let vjk_reminders = crate::reminders::vikunja_due_today(&items);
-    let total_reminders = cfg_reminders.len() + vjk_reminders.len();
+    let todo_reminders = crate::reminders::todo_due_today(&items);
+    let total_reminders = cfg_reminders.len() + todo_reminders.len();
     lines.push(String::new());
     lines.push(format!("REMINDERS TODAY ({}):", total_reminders));
     if total_reminders == 0 {
         lines.push("  None".to_string());
     } else {
-        for item in &vjk_reminders {
+        for item in &todo_reminders {
             let id_tag = item.id.map(|id| format!(" [#{}]", id)).unwrap_or_default();
             let proj = item.project_title.as_deref()
                 .filter(|s| !s.is_empty())

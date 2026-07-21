@@ -16,7 +16,7 @@ mod nogo_tests {
 
     /// A fully-healthy baseline: every subsystem `Go`. Used instead of
     /// `SystemsStatus::init()`, which would run every subsystem's *real*
-    /// `init()` (DB, printer, Vikunja/nb, ...) and requires `AppConfig` to
+    /// `init()` (DB, printer, todo/nb, ...) and requires `AppConfig` to
     /// already be loaded — neither of which this pure-logic unit test sets up.
     fn all_go() -> SystemsStatus {
         let mut systems = SystemsStatus::new();

@@ -1,9 +1,7 @@
-//! Backend implementations for todo persistence.
+//! Backend implementation for todo persistence.
 //!
-//! `todo::lib` dispatches every public CRUD/read function to one of these
-//! based on the configured [`crate::BackendKind`]. Each backend module owns
-//! its own mapping between [`crate::models::TodoItem`] and its storage
-//! representation.
+//! `todo::lib` dispatches every public CRUD/read function to this module,
+//! which owns the mapping between [`crate::models::TodoItem`] and its `nb`
+//! file representation.
 
 pub mod nb;
-pub mod vikunja;

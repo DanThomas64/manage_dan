@@ -1,19 +1,17 @@
 //! `nb`-backed todo storage.
 //!
 //! Todos live in a single dedicated `nb` notebook (configured name, default
-//! `"todo"`). Vikunja's per-task `project_id` is approximated by one
-//! subfolder per project inside that notebook (`todo:work/`,
-//! `todo:personal/`, ...) — a stepping stone toward a future system where
-//! each project gets its own notebook with its own `todo/` folder. All
-//! folder-name <-> project-title mapping lives behind
-//! [`resolve_project_folder`] / [`folder_to_project_title`] so that future
-//! migration only touches this module.
+//! `"todo"`). Per-project association is approximated by one subfolder per
+//! project inside that notebook (`todo:work/`, `todo:personal/`, ...) — a
+//! stepping stone toward a future system where each project gets its own
+//! notebook with its own `todo/` folder. All folder-name <-> project-title
+//! mapping lives behind [`resolve_project_folder`] / [`folder_to_project_title`]
+//! so that future migration only touches this module.
 //!
 //! `nb` assigns todo ids *per folder*, not notebook-wide (two different
 //! project folders can each have a local id `1`). A small SQLite table
 //! (`db::todo_nb_index_*`) maps each `(folder, local_id)` pair to a stable
-//! synthetic `i64` so this backend can hand out ids exactly like the
-//! Vikunja backend does.
+//! synthetic `i64` so this backend can hand out a single, notebook-wide id.
 //!
 //! Priority has no native `nb` field, so it's encoded as a custom metadata
 //! header — an HTML comment `<!-- priority: N -->` appended below nb's own
@@ -644,8 +642,7 @@ pub async fn print_item(notebook: &str, id: i64) -> TodoLibResult {
     }
 }
 
-/// Archives a TodoItem — deletes it (no native archive concept, same
-/// simplification as the Vikunja backend).
+/// Archives a TodoItem — deletes it (nb has no native archive concept).
 pub async fn archive_item(notebook: &str, id: i64) -> TodoLibResult {
     info!("Archiving (deleting) nb todo item ID: {}", id);
     delete_item(notebook, id).await

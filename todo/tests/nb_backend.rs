@@ -23,7 +23,7 @@ async fn nb_backend_end_to_end() {
 
     db::init().expect("db init");
     printer::init(0, 0, "terminal", 42).expect("printer init");
-    todo::init("nb", "", "", 0, TEST_NOTEBOOK).expect("todo init");
+    todo::init(TEST_NOTEBOOK).expect("todo init");
 
     let mut item = TodoItem::new("Integration test todo".to_string(), "desc line one".to_string());
     item.priority = 3;

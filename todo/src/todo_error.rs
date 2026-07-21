@@ -1,5 +1,4 @@
 use thiserror::Error;
-use vikunja::vikunja_error::VikunjaError;
 
 pub type TodoLibResult<T = ()> = Result<T, TodoLibError>;
 
@@ -10,9 +9,6 @@ pub enum TodoLibError {
 
     #[error("todo item not found: {0}")]
     NotFound(i64),
-
-    #[error("Vikunja error: {0}")]
-    Vikunja(#[from] VikunjaError),
 
     #[error("nb error: {0}")]
     Nb(String),

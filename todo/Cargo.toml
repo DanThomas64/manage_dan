@@ -1,6 +1,6 @@
 [package]
 name = "todo"
-version = "0.8.0"
+version = "0.9.0"
 authors.workspace = true
 edition.workspace = true
 
@@ -13,6 +13,5 @@ tokio.workspace = true
 serde.workspace = true
 toml.workspace = true
 db      = { path = "../db" }
-vikunja = { path = "../vikunja" }
 printer = { path = "../printer" }
 notes   = { path = "../notes" }

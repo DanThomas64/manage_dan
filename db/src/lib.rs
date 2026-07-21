@@ -83,7 +83,7 @@ pub fn init() -> DbLibResult {
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS printed_tasks (
-            vikunja_task_id INTEGER PRIMARY KEY,
+            task_id INTEGER PRIMARY KEY,
             printed_at      TEXT NOT NULL,
             content_hash    TEXT
         )",
@@ -92,6 +92,14 @@ pub fn init() -> DbLibResult {
     // Migration: add content_hash to existing databases.
     let _ = conn.execute(
         "ALTER TABLE printed_tasks ADD COLUMN content_hash TEXT",
+        [],
+    );
+    // Migration: rename the column back from its original name (it predates
+    // the removal of the Vikunja todo backend — it always just stored a
+    // todo item id, named after the only backend that existed at the time).
+    // Best-effort: no-op on a database that already has the new name.
+    let _ = conn.execute(
+        "ALTER TABLE printed_tasks RENAME COLUMN vikunja_task_id TO task_id",
         [],
     );
 
@@ -122,8 +130,8 @@ pub fn init() -> DbLibResult {
         [],
     )?;
 
-    // --- Local read cache mirroring nb/Vikunja-backed todos and notes ---
-    // `nb`/Vikunja remain the source of truth; these tables let list/browse
+    // --- Local read cache mirroring nb-backed todos and notes ---
+    // `nb` remains the source of truth; these tables let list/browse
     // views read local SQL instead of shelling out (or making HTTP calls)
     // on every request. Kept in sync by the write path (upserted right
     // after a successful create/update) and a periodic background
@@ -227,11 +235,11 @@ pub async fn log_read_latest(limit: u32) -> DbLibResult<Vec<LogEntry>> {
 
 // --- printed_tasks ---
 
-/// Returns the printed_at timestamp for a given Vikunja task ID, if recorded.
+/// Returns the printed_at timestamp for a given task ID, if recorded.
 pub async fn printed_at_get(task_id: i64) -> DbLibResult<Option<DateTime<Local>>> {
     let opt_str = execute_async(move |conn| {
         conn.query_row(
-            "SELECT printed_at FROM printed_tasks WHERE vikunja_task_id = ?1",
+            "SELECT printed_at FROM printed_tasks WHERE task_id = ?1",
             params![task_id],
             |row| row.get::<_, String>(0),
         )
@@ -251,7 +259,7 @@ pub async fn printed_at_get(task_id: i64) -> DbLibResult<Option<DateTime<Local>>
 pub async fn printed_at_get_all() -> DbLibResult<HashMap<i64, DateTime<Local>>> {
     execute_async(move |conn| {
         let mut stmt =
-            conn.prepare("SELECT vikunja_task_id, printed_at FROM printed_tasks")?;
+            conn.prepare("SELECT task_id, printed_at FROM printed_tasks")?;
         let rows: RusqliteResult<Vec<(i64, String)>> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect();
@@ -270,15 +278,15 @@ pub async fn printed_at_get_all() -> DbLibResult<HashMap<i64, DateTime<Local>>> 
     })
 }
 
-/// Records (or updates) the printed_at timestamp for a Vikunja task.
+/// Records (or updates) the printed_at timestamp for a task.
 /// Does not modify the stored content_hash.
 pub async fn printed_at_set(task_id: i64, printed_at: DateTime<Local>) -> DbLibResult {
     let ts = printed_at.to_rfc3339();
     execute_async(move |conn| {
         conn.execute(
-            "INSERT INTO printed_tasks (vikunja_task_id, printed_at)
+            "INSERT INTO printed_tasks (task_id, printed_at)
              VALUES (?1, ?2)
-             ON CONFLICT(vikunja_task_id) DO UPDATE SET printed_at = excluded.printed_at",
+             ON CONFLICT(task_id) DO UPDATE SET printed_at = excluded.printed_at",
             params![task_id, ts],
         )?;
         Ok(())
@@ -287,11 +295,11 @@ pub async fn printed_at_set(task_id: i64, printed_at: DateTime<Local>) -> DbLibR
     .map_err(|e| DbLibError::Internal(format!("DB error setting printed_at: {}", e)))
 }
 
-/// Returns the stored content hash for a Vikunja task, if any.
+/// Returns the stored content hash for a task, if any.
 pub async fn printed_hash_get(task_id: i64) -> DbLibResult<Option<String>> {
     let opt = execute_async(move |conn| {
         conn.query_row(
-            "SELECT content_hash FROM printed_tasks WHERE vikunja_task_id = ?1",
+            "SELECT content_hash FROM printed_tasks WHERE task_id = ?1",
             params![task_id],
             |row| row.get::<_, Option<String>>(0),
         )
@@ -313,9 +321,9 @@ pub async fn printed_record_set(
     let ts = printed_at.to_rfc3339();
     execute_async(move |conn| {
         conn.execute(
-            "INSERT INTO printed_tasks (vikunja_task_id, printed_at, content_hash)
+            "INSERT INTO printed_tasks (task_id, printed_at, content_hash)
              VALUES (?1, ?2, ?3)
-             ON CONFLICT(vikunja_task_id) DO UPDATE SET
+             ON CONFLICT(task_id) DO UPDATE SET
                printed_at   = excluded.printed_at,
                content_hash = excluded.content_hash",
             params![task_id, ts, content_hash],
@@ -338,9 +346,9 @@ pub async fn printed_claim(task_id: i64, content_hash: String) -> DbLibResult<bo
     let ts = Local::now().to_rfc3339();
     execute_async(move |conn| {
         let changed = conn.execute(
-            "INSERT INTO printed_tasks (vikunja_task_id, printed_at, content_hash)
+            "INSERT INTO printed_tasks (task_id, printed_at, content_hash)
              VALUES (?1, ?2, ?3)
-             ON CONFLICT(vikunja_task_id) DO UPDATE SET
+             ON CONFLICT(task_id) DO UPDATE SET
                printed_at   = excluded.printed_at,
                content_hash = excluded.content_hash
              WHERE printed_tasks.content_hash IS NOT excluded.content_hash",
@@ -352,11 +360,11 @@ pub async fn printed_claim(task_id: i64, content_hash: String) -> DbLibResult<bo
     .map_err(|e| DbLibError::Internal(format!("DB error claiming print: {}", e)))
 }
 
-/// Removes the printed_at record for a Vikunja task (e.g. when the task is deleted).
+/// Removes the printed_at record for a task (e.g. when the task is deleted).
 pub async fn printed_at_delete(task_id: i64) -> DbLibResult {
     execute_async(move |conn| {
         conn.execute(
-            "DELETE FROM printed_tasks WHERE vikunja_task_id = ?1",
+            "DELETE FROM printed_tasks WHERE task_id = ?1",
             params![task_id],
         )?;
         Ok(())
@@ -429,7 +437,7 @@ pub async fn recurring_printed_record(date: String, task_title: String) -> DbLib
 // The `nb` CLI assigns todo item IDs per-folder, not notebook-wide (two
 // different project folders can each have a local id `1`). This table maps
 // each `(folder, local_id)` pair to a stable, globally unique synthetic id
-// so the nb-backed todo backend can hand out a plain `i64` like the Vikunja
+// so the nb-backed todo backend can hand out a stable, notebook-wide plain `i64`
 // backend does.
 
 /// Returns the synthetic id for `(folder, local_id)`, creating one if it
@@ -503,8 +511,8 @@ fn parse_opt_dt(s: Option<String>) -> RusqliteResult<Option<DateTime<Local>>> {
 
 // --- todo_cache ---
 //
-// A local mirror of the fully-hydrated todo items `nb`/Vikunja otherwise
-// have to be asked for on every read. `nb`/Vikunja stay the source of
+// A local mirror of the fully-hydrated todo items `nb` otherwise
+// have to be asked for on every read. `nb` stays the source of
 // truth; this table is upserted right after a successful write and
 // reconciled on a timer by `todo::monitor`'s background sync pass.
 
@@ -539,7 +547,7 @@ const TODO_CACHE_COLUMNS: &str = "id, title, description, completed, created_at,
 
 /// Inserts or fully replaces the cached row for a todo item — called by the
 /// write-path dispatcher right after a successful create/update/complete
-/// against `nb`/Vikunja, and by the background sync pass for items whose
+/// against `nb`, and by the background sync pass for items whose
 /// source has changed since the last sync.
 pub async fn todo_cache_upsert(row: TodoCacheRow) -> DbLibResult {
     execute_async(move |conn| {
@@ -596,7 +604,7 @@ pub async fn todo_cache_upsert(row: TodoCacheRow) -> DbLibResult {
 }
 
 /// Returns every cached todo — the read path `todo::read_items()` uses once
-/// the cache is live, instead of a live `nb`/Vikunja fetch.
+/// the cache is live, instead of a live `nb` fetch.
 pub async fn todo_cache_get_all() -> DbLibResult<Vec<TodoCacheRow>> {
     execute_async(|conn| {
         let sql = format!("SELECT {} FROM todo_cache", TODO_CACHE_COLUMNS);
@@ -642,9 +650,9 @@ pub async fn todo_cache_delete(id: i64) -> DbLibResult {
 }
 
 /// Returns every cached todo id — used by the background sync pass to
-/// detect items removed externally (deleted via the raw `nb` CLI or the
-/// Vikunja UI, outside this app) since the last sync, by diffing against a
-/// freshly-listed id set and deleting whatever's missing from it.
+/// detect items removed externally (deleted via the raw `nb` CLI, outside
+/// this app) since the last sync, by diffing against a freshly-listed id
+/// set and deleting whatever's missing from it.
 pub async fn todo_cache_get_ids() -> DbLibResult<Vec<i64>> {
     execute_async(|conn| {
         let mut stmt = conn.prepare("SELECT id FROM todo_cache")?;

@@ -1,6 +1,6 @@
 # Recurring tasks configuration.
 #
-# Tasks defined here are never stored in Vikunja and never appear in the
+# Tasks defined here are never stored as todo items and never appear in the
 # GUI or TUI.  Each day a task is due, a dedicated ticket is printed once
 # and the task is listed in the daily summary under "RECURRING TODAY".
 #
