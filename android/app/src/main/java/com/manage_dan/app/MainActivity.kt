@@ -15,12 +15,19 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
 import android.widget.FrameLayout
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import java.io.ByteArrayInputStream
+import java.io.File
+import java.io.FileInputStream
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MainActivity : AppCompatActivity() {
 
@@ -30,6 +37,14 @@ class MainActivity : AppCompatActivity() {
     // URL to load on the next onResume — set by deep-link intents so that
     // webView.loadUrl() is always called once the WebView is fully active.
     private var pendingUrl: String? = null
+
+    // Last-successfully-loaded copy of the SPA shell (index.html), served by
+    // shouldInterceptRequest below when the live server can't be reached —
+    // this is what makes a fully offline cold start (app launched with zero
+    // connectivity) still show the app instead of a blank error page. Only
+    // the shell itself is cached here; Lists/Todo *data* offline caching is
+    // a separate IndexedDB-based layer inside the page's own JS.
+    private val shellCacheFile by lazy { File(filesDir, "cached_shell.html") }
 
     /** Exposed to JavaScript as `window.AndroidVibrator`. */
     private inner class VibrationBridge {
@@ -104,6 +119,41 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(AndroidBridge(), "AndroidBridge")
 
         webView.webViewClient = object : WebViewClient() {
+            // Intercepts only the main-frame navigation to the configured server
+            // URL (never API fetches, deep links, or sub-resources — those return
+            // null and are handled by WebView exactly as before). On success, the
+            // response bytes are cached locally and also served as-is, so relative
+            // fetch('/api/v1/...') calls inside the page still resolve against the
+            // real server origin (unlike onReceivedError's static page below,
+            // which uses loadDataWithBaseURL(null, ...) because it makes no such
+            // relative calls). On failure, the last cached copy is served instead;
+            // if none exists yet (true first run with no connectivity ever), this
+            // returns null and onReceivedError's page appears as it always has.
+            override fun shouldInterceptRequest(
+                view: WebView, request: WebResourceRequest
+            ): WebResourceResponse? {
+                if (!request.isForMainFrame) return null
+                val configuredUrl = prefs.getString("server_url", null) ?: return null
+                // Chromium canonicalizes a bare host:port nav (no path) to add a
+                // trailing "/" on the actual request URL, while server_url is
+                // stored without one (trimmed in promptForUrl) — compare with
+                // trailing slashes stripped from both sides so that doesn't
+                // cause an exact-match miss and skip the cache fallback below.
+                if (request.url.toString().trimEnd('/') != configuredUrl.trimEnd('/')) return null
+
+                return try {
+                    val bytes = fetchShellBytes(configuredUrl)
+                    shellCacheFile.writeBytes(bytes)
+                    WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(bytes))
+                } catch (e: IOException) {
+                    if (shellCacheFile.exists()) {
+                        WebResourceResponse("text/html", "UTF-8", FileInputStream(shellCacheFile))
+                    } else {
+                        null
+                    }
+                }
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
                 view.evaluateJavascript(
                     """
@@ -314,6 +364,19 @@ class MainActivity : AppCompatActivity() {
             }
             else -> null
         }
+    }
+
+    // Blocking GET, used only from shouldInterceptRequest (already called on a
+    // background thread by WebView, so blocking here is fine — this is the
+    // documented way to intercept-and-serve a resource).
+    private fun fetchShellBytes(urlStr: String): ByteArray {
+        val conn = URL(urlStr).openConnection() as HttpURLConnection
+        conn.connectTimeout = 5000
+        conn.readTimeout = 5000
+        conn.requestMethod = "GET"
+        conn.connect()
+        if (conn.responseCode !in 200..299) throw IOException("HTTP ${conn.responseCode}")
+        return conn.inputStream.use { it.readBytes() }
     }
 
     private fun promptForUrl(firstRun: Boolean = false) {

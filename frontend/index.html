@@ -837,6 +837,29 @@
     #toast.show  { transform: translateX(-50%) translateY(0); }
     #toast.error { border-left-color: var(--red); color: var(--red); }
 
+    /* ── Offline banner ── */
+    /* Persistent (not auto-dismissing, unlike #toast) — stays up for the
+       whole time Lists/Todo are serving cached data instead of live. */
+    #offline-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--surface3);
+      border-bottom: 1px solid var(--border);
+      color: var(--accent);
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+      z-index: 1001;
+      text-align: center;
+    }
+    #offline-banner.show { display: flex; }
+
     /* ═══════════════════════════════════════════
        MOBILE  (touch devices or ≤ 1024px)
     ═══════════════════════════════════════════ */
@@ -1522,6 +1545,7 @@
 </div>
 
 <div id="toast"></div>
+<div id="offline-banner">&#9889; Offline — showing cached data</div>
 
 <!-- Home overlay: landing page with a big button per section -->
 <div id="home-overlay" class="app-overlay active">
@@ -1844,6 +1868,449 @@
 </div>
 
 <script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OFFLINE CACHE (IndexedDB) — Lists & Todo only, not Notes/Log/Projects.
+  //
+  // Every Lists/Todo fetch() call below goes through cachedFetch() instead of
+  // calling fetch() directly. On a GET, a network failure (not an HTTP error
+  // status — only a real connectivity failure) falls back to the last-synced
+  // copy in IndexedDB. On a mutation (POST/PUT/PATCH/DELETE), a network
+  // failure applies the change optimistically to the cached copy and queues
+  // it for replay once connectivity returns, so offline edits aren't lost.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const OFFLINE_DB_NAME = 'manage_dan_cache';
+  const OFFLINE_DB_VERSION = 1;
+  const OFFLINE_STORES = ['todos', 'list_groups', 'list_categories', 'list_items', 'list_common_items'];
+  let _offlineDbPromise = null;
+  let offlineMode = false;
+  let _reachabilityTimer = null;
+  let _flushingQueue = false;
+
+  function openOfflineDB() {
+    if (_offlineDbPromise) return _offlineDbPromise;
+    _offlineDbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        db.createObjectStore('todos', { keyPath: 'id' });
+        db.createObjectStore('list_groups', { keyPath: 'id' });
+        db.createObjectStore('list_categories', { keyPath: 'id' }).createIndex('group_id', 'group_id');
+        db.createObjectStore('list_items', { keyPath: 'id' }).createIndex('category_id', 'category_id');
+        db.createObjectStore('list_common_items', { keyPath: 'id' }).createIndex('category_id', 'category_id');
+        db.createObjectStore('write_queue', { keyPath: 'qid', autoIncrement: true });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return _offlineDbPromise;
+  }
+
+  function idbStore(storeName, mode) {
+    return openOfflineDB().then(db => db.transaction(storeName, mode).objectStore(storeName));
+  }
+
+  function idbGetAll(storeName) {
+    return idbStore(storeName, 'readonly').then(store => new Promise((resolve, reject) => {
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }));
+  }
+
+  function idbGetAllByIndex(storeName, indexName, value) {
+    return idbStore(storeName, 'readonly').then(store => new Promise((resolve, reject) => {
+      const req = store.index(indexName).getAll(value);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }));
+  }
+
+  function idbGet(storeName, key) {
+    return idbStore(storeName, 'readonly').then(store => new Promise((resolve, reject) => {
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    }));
+  }
+
+  function idbPut(storeName, record) {
+    return idbStore(storeName, 'readwrite').then(store => new Promise((resolve, reject) => {
+      store.put(record);
+      store.transaction.oncomplete = () => resolve();
+      store.transaction.onerror = () => reject(store.transaction.error);
+    }));
+  }
+
+  function idbDelete(storeName, key) {
+    return idbStore(storeName, 'readwrite').then(store => new Promise((resolve, reject) => {
+      store.delete(key);
+      store.transaction.oncomplete = () => resolve();
+      store.transaction.onerror = () => reject(store.transaction.error);
+    }));
+  }
+
+  function idbClear(storeName) {
+    return idbStore(storeName, 'readwrite').then(store => new Promise((resolve, reject) => {
+      store.clear();
+      store.transaction.oncomplete = () => resolve();
+      store.transaction.onerror = () => reject(store.transaction.error);
+    }));
+  }
+
+  // Real backend ids are numeric; offline-created records get a string temp
+  // id (see tempId()) until their queued create syncs — never coerce those.
+  function idParam(raw) {
+    return /^\d+$/.test(raw) ? Number(raw) : raw;
+  }
+
+  function tempId() {
+    return 'local-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+  }
+
+  async function replaceStore(storeName, data) {
+    await idbClear(storeName);
+    for (const rec of data) await idbPut(storeName, rec);
+  }
+
+  // Mirrors a scoped GET (e.g. one group's categories) without clobbering
+  // other groups'/categories' rows already cached from earlier fetches.
+  async function replaceStoreFiltered(storeName, indexName, value, data) {
+    const existing = await idbGetAllByIndex(storeName, indexName, value);
+    for (const rec of existing) await idbDelete(storeName, rec.id);
+    for (const rec of data) await idbPut(storeName, rec);
+  }
+
+  async function patchRecord(storeName, id, patch) {
+    const rec = await idbGet(storeName, id);
+    if (!rec) return null;
+    const merged = Object.assign({}, rec, patch);
+    await idbPut(storeName, merged);
+    return merged;
+  }
+
+  async function deleteCategoryCascade(catId) {
+    const its = await idbGetAllByIndex('list_items', 'category_id', catId);
+    for (const it of its) await idbDelete('list_items', it.id);
+    const cs = await idbGetAllByIndex('list_common_items', 'category_id', catId);
+    for (const c of cs) await idbDelete('list_common_items', c.id);
+    await idbDelete('list_categories', catId);
+  }
+
+  // ── Read routes: how a GET mirrors into the cache, and how it's re-read
+  // back out of the cache when the live request fails. ──────────────────────
+  const GET_ROUTES = [
+    {
+      pattern: /^\/api\/v1\/lists\/groups$/,
+      mirror: (data) => replaceStore('list_groups', data),
+      read: () => idbGetAll('list_groups'),
+    },
+    {
+      pattern: /^\/api\/v1\/lists\/groups\/([^/]+)\/categories$/,
+      mirror: (data, m) => replaceStoreFiltered('list_categories', 'group_id', idParam(m[1]), data),
+      read: (m) => idbGetAllByIndex('list_categories', 'group_id', idParam(m[1])),
+    },
+    {
+      pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/items$/,
+      mirror: (data, m) => replaceStoreFiltered('list_items', 'category_id', idParam(m[1]), data),
+      read: (m) => idbGetAllByIndex('list_items', 'category_id', idParam(m[1])),
+    },
+    {
+      pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/common$/,
+      mirror: (data, m) => replaceStoreFiltered('list_common_items', 'category_id', idParam(m[1]), data),
+      read: (m) => idbGetAllByIndex('list_common_items', 'category_id', idParam(m[1])),
+    },
+    {
+      pattern: /^\/api\/v1\/todo$/,
+      mirror: (data) => replaceStore('todos', data),
+      read: () => idbGetAll('todos'),
+    },
+  ];
+
+  // ── Write routes: how a mutation applies optimistically to the cache while
+  // offline. `creates: true` marks routes whose resulting record's id is a
+  // temp id that must later be reconciled once the queued write syncs. ──────
+  const WRITE_ROUTES = [
+    {
+      method: 'POST', pattern: /^\/api\/v1\/lists\/groups$/, creates: true,
+      handler: async (m, body) => {
+        const rec = { id: tempId(), name: body.name };
+        await idbPut('list_groups', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'DELETE', pattern: /^\/api\/v1\/lists\/groups\/([^/]+)$/, creates: false,
+      handler: async (m) => {
+        const groupId = idParam(m[1]);
+        const cats = await idbGetAllByIndex('list_categories', 'group_id', groupId);
+        for (const c of cats) await deleteCategoryCascade(c.id);
+        await idbDelete('list_groups', groupId);
+        return null;
+      },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/lists\/groups\/([^/]+)\/categories$/, creates: true,
+      handler: async (m, body) => {
+        const rec = { id: tempId(), group_id: idParam(m[1]), name: body.name, has_checkboxes: true, has_quick_add: true };
+        await idbPut('list_categories', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'DELETE', pattern: /^\/api\/v1\/lists\/categories\/([^/]+)$/, creates: false,
+      handler: async (m) => { await deleteCategoryCascade(idParam(m[1])); return null; },
+    },
+    {
+      method: 'PATCH', pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/name$/, creates: false,
+      handler: async (m, body) => patchRecord('list_categories', idParam(m[1]), { name: body.name }),
+    },
+    {
+      method: 'PATCH', pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/checkboxes$/, creates: false,
+      handler: async (m, body) => patchRecord('list_categories', idParam(m[1]), { has_checkboxes: body.has_checkboxes }),
+    },
+    {
+      method: 'PATCH', pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/quick-add$/, creates: false,
+      handler: async (m, body) => patchRecord('list_categories', idParam(m[1]), { has_quick_add: body.has_quick_add }),
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/reorder$/, creates: false,
+      handler: async (m, body) => {
+        const ids = body.ids || [];
+        for (let i = 0; i < ids.length; i++) await patchRecord('list_items', idParam(String(ids[i])), { position: i });
+        return null;
+      },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/items$/, creates: true,
+      handler: async (m, body) => {
+        const rec = {
+          id: tempId(), category_id: idParam(m[1]), name: body.name, quantity: body.quantity || null,
+          checked: false, created_at: new Date().toISOString(), position: Date.now(),
+        };
+        await idbPut('list_items', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'PATCH', pattern: /^\/api\/v1\/lists\/items\/([^/]+)\/check$/, creates: false,
+      handler: async (m, body) => patchRecord('list_items', idParam(m[1]), { checked: body.checked }),
+    },
+    {
+      method: 'DELETE', pattern: /^\/api\/v1\/lists\/items\/([^/]+)$/, creates: false,
+      handler: async (m) => { await idbDelete('list_items', idParam(m[1])); return null; },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/clear$/, creates: false,
+      handler: async (m) => {
+        const catId = idParam(m[1]);
+        const its = await idbGetAllByIndex('list_items', 'category_id', catId);
+        for (const it of its.filter(i => i.checked)) await idbDelete('list_items', it.id);
+        return null;
+      },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/lists\/common\/([^/]+)\/add$/, creates: true,
+      handler: async (m) => {
+        const common = await idbGet('list_common_items', idParam(m[1]));
+        if (!common) return null;
+        const rec = {
+          id: tempId(), category_id: common.category_id, name: common.name, quantity: common.quantity || null,
+          checked: false, created_at: new Date().toISOString(), position: Date.now(),
+        };
+        await idbPut('list_items', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'DELETE', pattern: /^\/api\/v1\/lists\/common\/([^/]+)$/, creates: false,
+      handler: async (m) => { await idbDelete('list_common_items', idParam(m[1])); return null; },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/lists\/categories\/([^/]+)\/common$/, creates: true,
+      handler: async (m, body) => {
+        const rec = { id: tempId(), category_id: idParam(m[1]), name: body.name, quantity: body.quantity || null };
+        await idbPut('list_common_items', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/todo$/, creates: true,
+      handler: async (m, body) => {
+        const rec = Object.assign({}, body, { id: tempId() });
+        await idbPut('todos', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'PUT', pattern: /^\/api\/v1\/todo\/([^/]+)$/, creates: false,
+      handler: async (m, body) => {
+        const rec = Object.assign({}, body, { id: idParam(m[1]) });
+        await idbPut('todos', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'PATCH', pattern: /^\/api\/v1\/todo\/([^/]+)\/done$/, creates: false,
+      handler: async (m, body) => patchRecord('todos', idParam(m[1]), {
+        completed: body.done, completed_at: body.done ? new Date().toISOString() : null,
+      }),
+    },
+    {
+      method: 'DELETE', pattern: /^\/api\/v1\/todo\/([^/]+)$/, creates: false,
+      handler: async (m) => { await idbDelete('todos', idParam(m[1])); return null; },
+    },
+  ];
+
+  function findGetRoute(url) {
+    for (const route of GET_ROUTES) {
+      const m = route.pattern.exec(url);
+      if (m) return { route, m };
+    }
+    return null;
+  }
+
+  function findWriteRoute(method, url) {
+    for (const route of WRITE_ROUTES) {
+      if (route.method !== method) continue;
+      const m = route.pattern.exec(url);
+      if (m) return { route, m };
+    }
+    return null;
+  }
+
+  function mirrorGet(url, data) {
+    const found = findGetRoute(url);
+    if (found) found.route.mirror(data, found.m);
+  }
+
+  function jsonResponse(body) {
+    return new Response(JSON.stringify(body === undefined ? null : body), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  function showOfflineBanner() {
+    if (offlineMode) return;
+    offlineMode = true;
+    document.getElementById('offline-banner').classList.add('show');
+    if (!_reachabilityTimer) _reachabilityTimer = setInterval(checkReachability, 15000);
+  }
+
+  function hideOfflineBanner() {
+    if (!offlineMode) return;
+    offlineMode = false;
+    document.getElementById('offline-banner').classList.remove('show');
+    if (_reachabilityTimer) { clearInterval(_reachabilityTimer); _reachabilityTimer = null; }
+  }
+
+  async function checkReachability() {
+    try {
+      const res = await fetch('/api/v1/todo/summary');
+      if (res.ok) { hideOfflineBanner(); flushWriteQueue(); }
+    } catch (e) { /* still offline */ }
+  }
+
+  // A queued create's temp id may itself be referenced by later-queued
+  // entries (e.g. an item added to a category that was also created offline)
+  // — once the create syncs and the server hands back a real id, patch the
+  // cached record and rewrite any still-queued entries pointing at the old
+  // temp id so they target the real one when their turn comes.
+  async function remapTempId(tempId_, realId, freshRecord) {
+    for (const store of OFFLINE_STORES) {
+      const rec = await idbGet(store, tempId_);
+      if (rec) {
+        await idbDelete(store, tempId_);
+        await idbPut(store, Object.assign({}, rec, freshRecord || {}, { id: realId }));
+        break;
+      }
+    }
+    const queue = await idbGetAll('write_queue');
+    for (const entry of queue) {
+      const urlHit = entry.url.includes(tempId_);
+      const bodyHit = entry.body && entry.body.includes(tempId_);
+      if (urlHit || bodyHit) {
+        if (urlHit) entry.url = entry.url.split(tempId_).join(realId);
+        if (bodyHit) entry.body = entry.body.split(tempId_).join(realId);
+        await idbPut('write_queue', entry);
+      }
+    }
+  }
+
+  async function flushWriteQueue() {
+    if (_flushingQueue) return;
+    _flushingQueue = true;
+    try {
+      const queue = (await idbGetAll('write_queue')).sort((a, b) => a.qid - b.qid);
+      for (const entry of queue) {
+        let res;
+        try {
+          res = await fetch(entry.url, {
+            method: entry.method,
+            headers: entry.body ? { 'Content-Type': 'application/json' } : undefined,
+            body: entry.body || undefined,
+          });
+        } catch (e) {
+          break; // still offline — stop, preserve order, retry on next flush
+        }
+        if (res.ok) {
+          await idbDelete('write_queue', entry.qid);
+          if (entry.tempId) {
+            let real = null;
+            try { real = await res.clone().json(); } catch (e) { /* no body */ }
+            const realId = real && real.id != null ? real.id : null;
+            if (realId != null) await remapTempId(entry.tempId, realId, real);
+          }
+        } else {
+          toast('A queued offline change could not be synced and was discarded', true);
+          await idbDelete('write_queue', entry.qid);
+        }
+      }
+    } finally {
+      _flushingQueue = false;
+    }
+  }
+
+  async function cachedFetch(url, options) {
+    options = options || {};
+    const method = (options.method || 'GET').toUpperCase();
+
+    if (method === 'GET') {
+      try {
+        const res = await fetch(url, options);
+        if (res.ok) {
+          hideOfflineBanner();
+          res.clone().json().then(data => mirrorGet(url, data)).catch(() => {});
+          flushWriteQueue();
+        }
+        return res;
+      } catch (e) {
+        const found = findGetRoute(url);
+        if (!found) throw e;
+        showOfflineBanner();
+        const data = await found.route.read(found.m);
+        return jsonResponse(data);
+      }
+    }
+
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) { hideOfflineBanner(); flushWriteQueue(); }
+      return res;
+    } catch (e) {
+      const found = findWriteRoute(method, url);
+      if (!found) throw e;
+      showOfflineBanner();
+      const body = options.body ? JSON.parse(options.body) : null;
+      const record = await found.route.handler(found.m, body);
+      await idbPut('write_queue', {
+        method, url, body: options.body || null,
+        tempId: found.route.creates && record ? record.id : undefined,
+      });
+      return jsonResponse(record);
+    }
+  }
+
   const API = '/api/v1/lists';
 
   let groups            = [];
@@ -1922,7 +2389,7 @@
 
   async function loadGroups() {
     try {
-      const res = await fetch(`${API}/groups`);
+      const res = await cachedFetch(`${API}/groups`);
       if (!res.ok) throw new Error(await res.text());
       groups = await res.json();
       renderGroupTabs();
@@ -2018,7 +2485,7 @@
     const name  = input.value.trim();
     if (!name) return;
     try {
-      const res = await fetch(`${API}/groups`, {
+      const res = await cachedFetch(`${API}/groups`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -2042,7 +2509,7 @@
     const group = groups.find(g => g.id === id);
     if (!confirm(`Delete group "${group?.name}"?\nThis removes all its lists and items.`)) return;
     try {
-      const res = await fetch(`${API}/groups/${id}`, { method: 'DELETE' });
+      const res = await cachedFetch(`${API}/groups/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(await res.text());
       if (selectedGroupId === id) {
         selectedGroupId = null;
@@ -2064,7 +2531,7 @@
   async function loadCategories() {
     if (!selectedGroupId) return;
     try {
-      const res = await fetch(`${API}/groups/${selectedGroupId}/categories`);
+      const res = await cachedFetch(`${API}/groups/${selectedGroupId}/categories`);
       if (!res.ok) throw new Error(await res.text());
       categories = await res.json();
       renderCategories();
@@ -2133,7 +2600,7 @@
     const name  = input.value.trim();
     if (!name) return;
     try {
-      const res = await fetch(`${API}/groups/${selectedGroupId}/categories`, {
+      const res = await cachedFetch(`${API}/groups/${selectedGroupId}/categories`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name }),
@@ -2152,7 +2619,7 @@
     const cat = categories.find(c => c.id === id);
     if (!confirm(`Delete list "${cat?.name}"?\nThis removes all its items.`)) return;
     try {
-      const res = await fetch(`${API}/categories/${id}`, { method: 'DELETE' });
+      const res = await cachedFetch(`${API}/categories/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(await res.text());
       if (selectedCategoryId === id) {
         selectedCategoryId = null;
@@ -2186,7 +2653,7 @@
 
   async function loadItems(categoryId) {
     try {
-      const res = await fetch(`${API}/categories/${categoryId}/items`);
+      const res = await cachedFetch(`${API}/categories/${categoryId}/items`);
       if (!res.ok) throw new Error(await res.text());
       items = await res.json();
       renderItems();
@@ -2269,7 +2736,7 @@
     const qty    = qtyEl.value.trim() || null;
     if (!name) return;
     try {
-      const res = await fetch(`${API}/categories/${selectedCategoryId}/items`, {
+      const res = await cachedFetch(`${API}/categories/${selectedCategoryId}/items`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, quantity: qty }),
@@ -2286,7 +2753,7 @@
 
   async function checkItem(id, checked) {
     try {
-      const res = await fetch(`${API}/items/${id}/check`, {
+      const res = await cachedFetch(`${API}/items/${id}/check`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ checked }),
@@ -2301,7 +2768,7 @@
 
   async function deleteItem(id) {
     try {
-      const res = await fetch(`${API}/items/${id}`, { method: 'DELETE' });
+      const res = await cachedFetch(`${API}/items/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(await res.text());
       await loadItems(selectedCategoryId);
     } catch (e) {
@@ -2314,7 +2781,7 @@
     const count = items.filter(i => i.checked).length;
     if (count === 0) { toast('No checked items to clear'); return; }
     try {
-      const res = await fetch(`${API}/categories/${selectedCategoryId}/clear`, { method: 'POST' });
+      const res = await cachedFetch(`${API}/categories/${selectedCategoryId}/clear`, { method: 'POST' });
       if (!res.ok) throw new Error(await res.text());
       await loadItems(selectedCategoryId);
       toast(`Cleared ${count} item${count === 1 ? '' : 's'}`);
@@ -2340,7 +2807,7 @@
 
   async function loadCommonItems(categoryId) {
     try {
-      const res = await fetch(`${API}/categories/${categoryId}/common`);
+      const res = await cachedFetch(`${API}/categories/${categoryId}/common`);
       if (!res.ok) throw new Error(await res.text());
       commonItems = await res.json();
       renderCommonItems();
@@ -2369,7 +2836,7 @@
 
   async function addItemFromCommon(commonId) {
     try {
-      const res = await fetch(`${API}/common/${commonId}/add`, { method: 'POST' });
+      const res = await cachedFetch(`${API}/common/${commonId}/add`, { method: 'POST' });
       if (!res.ok) throw new Error(await res.text());
       if (navigator.vibrate) navigator.vibrate(8);
       await loadItems(selectedCategoryId);
@@ -2380,7 +2847,7 @@
 
   async function deleteCommonItem(id) {
     try {
-      const res = await fetch(`${API}/common/${id}`, { method: 'DELETE' });
+      const res = await cachedFetch(`${API}/common/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error(await res.text());
       commonItems = commonItems.filter(c => c.id !== id);
       renderCommonItems();
@@ -2397,7 +2864,7 @@
       return;
     }
     try {
-      const res = await fetch(`${API}/categories/${selectedCategoryId}/common`, {
+      const res = await cachedFetch(`${API}/categories/${selectedCategoryId}/common`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: item.name, quantity: item.quantity || null }),
@@ -2532,7 +2999,7 @@
     const newName = lowercaseFirstChar(promptResult.trim());
     if (newName === cat.name) return;
     try {
-      const res = await fetch(`${API}/categories/${selectedCategoryId}/name`, {
+      const res = await cachedFetch(`${API}/categories/${selectedCategoryId}/name`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newName }),
@@ -2552,7 +3019,7 @@
     if (!selectedCategoryId) return;
     const newVal = !currentCategoryHasCheckboxes;
     try {
-      const res = await fetch(`${API}/categories/${selectedCategoryId}/checkboxes`, {
+      const res = await cachedFetch(`${API}/categories/${selectedCategoryId}/checkboxes`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ has_checkboxes: newVal }),
@@ -2573,7 +3040,7 @@
     if (!selectedCategoryId) return;
     const newVal = !currentCategoryHasQuickAdd;
     try {
-      const res = await fetch(`${API}/categories/${selectedCategoryId}/quick-add`, {
+      const res = await cachedFetch(`${API}/categories/${selectedCategoryId}/quick-add`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ has_quick_add: newVal }),
@@ -2664,7 +3131,7 @@
   async function reorderItemsApi(ids) {
     if (!selectedCategoryId) return;
     try {
-      const res = await fetch(`${API}/categories/${selectedCategoryId}/reorder`, {
+      const res = await cachedFetch(`${API}/categories/${selectedCategoryId}/reorder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids }),
@@ -3628,7 +4095,7 @@
 
     try {
       const url = editing ? `${TODO_API}/${todoEditingId}` : TODO_API;
-      const r = await fetch(url, {
+      const r = await cachedFetch(url, {
         method: editing ? 'PUT' : 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(payload),
@@ -3645,7 +4112,7 @@
 
   async function todoLoadList() {
     try {
-      const r = await fetch(TODO_API);
+      const r = await cachedFetch(TODO_API);
       if (!r.ok) throw 0;
       todoItems = await r.json();
       renderTodoList();
@@ -3756,7 +4223,7 @@
 
   async function todoToggleDone(id, done) {
     try {
-      const r = await fetch(`${TODO_API}/${id}/done`, {
+      const r = await cachedFetch(`${TODO_API}/${id}/done`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({done}),
@@ -3782,7 +4249,7 @@
   async function todoDelete(id) {
     if (!confirm('Delete this todo? This cannot be undone.')) return;
     try {
-      const r = await fetch(`${TODO_API}/${id}`, {method: 'DELETE'});
+      const r = await cachedFetch(`${TODO_API}/${id}`, {method: 'DELETE'});
       if (!r.ok) throw 0;
       toast('Todo deleted');
       todoLoadList();
