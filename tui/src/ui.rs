@@ -143,6 +143,7 @@ pub enum FinancesRecurringFocus {
     Amount,
     Label,
     Frequency,
+    ReferenceDate,
     Submit,
 }
 
@@ -275,6 +276,7 @@ pub struct App {
     pub fin_rec_amount_buffer: String,
     pub fin_rec_label_buffer: String,
     pub fin_rec_frequency_buffer: String,
+    pub fin_rec_refdate_buffer: String,
 }
 
 /// Parses the multiline subtasks input buffer into a `Vec<Subtask>`.
@@ -406,6 +408,7 @@ impl App {
             fin_rec_amount_buffer: String::new(),
             fin_rec_label_buffer: String::new(),
             fin_rec_frequency_buffer: String::from("monthly"),
+            fin_rec_refdate_buffer: String::new(),
         }
     }
 
@@ -1310,6 +1313,7 @@ impl App {
         self.fin_rec_amount_buffer.clear();
         self.fin_rec_label_buffer.clear();
         self.fin_rec_frequency_buffer = "monthly".to_string();
+        self.fin_rec_refdate_buffer.clear();
     }
 
     pub async fn finances_submit_spending(&mut self) {
@@ -1362,7 +1366,15 @@ impl App {
             "yearly" => crate::api::Frequency::Yearly,
             _ => crate::api::Frequency::Monthly,
         };
-        match self.api_client.add_recurring_item(&name, amount, kind, &label, frequency).await {
+        let reference_date = if self.fin_rec_refdate_buffer.trim().is_empty() {
+            None
+        } else {
+            match NaiveDate::parse_from_str(self.fin_rec_refdate_buffer.trim(), "%Y-%m-%d") {
+                Ok(d) => Some(d),
+                Err(_) => { self.last_error = Some("Reference date must be YYYY-MM-DD".to_string()); return; }
+            }
+        };
+        match self.api_client.add_recurring_item(&name, amount, kind, &label, frequency, reference_date).await {
             Ok(_) => {
                 self.finances_mode = FinancesMode::Normal;
                 self.fetch_recurring_items().await;
@@ -2066,7 +2078,8 @@ impl App {
                                         FinancesRecurringFocus::Kind => FinancesRecurringFocus::Amount,
                                         FinancesRecurringFocus::Amount => FinancesRecurringFocus::Label,
                                         FinancesRecurringFocus::Label => FinancesRecurringFocus::Frequency,
-                                        FinancesRecurringFocus::Frequency => FinancesRecurringFocus::Submit,
+                                        FinancesRecurringFocus::Frequency => FinancesRecurringFocus::ReferenceDate,
+                                        FinancesRecurringFocus::ReferenceDate => FinancesRecurringFocus::Submit,
                                         FinancesRecurringFocus::Submit => FinancesRecurringFocus::Name,
                                     };
                                 }
@@ -2077,7 +2090,8 @@ impl App {
                                         FinancesRecurringFocus::Amount => FinancesRecurringFocus::Kind,
                                         FinancesRecurringFocus::Label => FinancesRecurringFocus::Amount,
                                         FinancesRecurringFocus::Frequency => FinancesRecurringFocus::Label,
-                                        FinancesRecurringFocus::Submit => FinancesRecurringFocus::Frequency,
+                                        FinancesRecurringFocus::ReferenceDate => FinancesRecurringFocus::Frequency,
+                                        FinancesRecurringFocus::Submit => FinancesRecurringFocus::ReferenceDate,
                                     };
                                 }
                                 KeyCode::Left | KeyCode::Right if self.finances_recurring_focus == FinancesRecurringFocus::Kind => {
@@ -2115,6 +2129,7 @@ impl App {
                                                 _ => "weekly".to_string(),
                                             };
                                         }
+                                        FinancesRecurringFocus::ReferenceDate => self.finances_recurring_focus = FinancesRecurringFocus::Submit,
                                         FinancesRecurringFocus::Submit => {
                                             self.finances_submit_recurring().await;
                                             action_taken = true;
@@ -2126,6 +2141,7 @@ impl App {
                                         FinancesRecurringFocus::Name => Some(&mut self.fin_rec_name_buffer),
                                         FinancesRecurringFocus::Amount => Some(&mut self.fin_rec_amount_buffer),
                                         FinancesRecurringFocus::Label => Some(&mut self.fin_rec_label_buffer),
+                                        FinancesRecurringFocus::ReferenceDate => Some(&mut self.fin_rec_refdate_buffer),
                                         _ => None,
                                     };
                                     if let Some(buf) = buf { buf.pop(); }
@@ -2135,6 +2151,7 @@ impl App {
                                         FinancesRecurringFocus::Name => Some(&mut self.fin_rec_name_buffer),
                                         FinancesRecurringFocus::Amount => Some(&mut self.fin_rec_amount_buffer),
                                         FinancesRecurringFocus::Label => Some(&mut self.fin_rec_label_buffer),
+                                        FinancesRecurringFocus::ReferenceDate => Some(&mut self.fin_rec_refdate_buffer),
                                         _ => None,
                                     };
                                     if let Some(buf) = buf { buf.push(c); }
@@ -4620,7 +4637,8 @@ fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
                     crate::api::Frequency::Monthly => "Monthly",
                     crate::api::Frequency::Yearly => "Yearly",
                 };
-                ListItem::new(format!("{}  ${:.2}  {} / {} ({})", i.name, i.amount, kind, freq, i.label))
+                let ref_suffix = i.reference_date.map(|d| format!(" from {}", d)).unwrap_or_default();
+                ListItem::new(format!("{}  ${:.2}  {} / {} ({}){}", i.name, i.amount, kind, freq, i.label, ref_suffix))
             }).collect();
             let title = format!(" Recurring ({}) — Tab: Spending ", app.finances_recurring.len());
             let widget = List::new(items)
@@ -4684,6 +4702,7 @@ fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             body.push_str(&line("Amount", &app.fin_rec_amount_buffer, FinancesRecurringFocus::Amount));
             body.push_str(&line("Label", &app.fin_rec_label_buffer, FinancesRecurringFocus::Label));
             body.push_str(&line("Frequency", &app.fin_rec_frequency_buffer, FinancesRecurringFocus::Frequency));
+            body.push_str(&line("Reference Date (optional)", &app.fin_rec_refdate_buffer, FinancesRecurringFocus::ReferenceDate));
             body.push_str(if f == FinancesRecurringFocus::Submit { "\n> [ SUBMIT ]\n" } else { "\n  [ SUBMIT ]\n" });
             if let Some(err) = &app.last_error {
                 body.push_str(&format!("\nError: {err}\n"));

@@ -1525,6 +1525,7 @@ pub struct AddRecurringBody {
     pub kind: TxnKind,
     pub label: String,
     pub frequency: Frequency,
+    pub reference_date: Option<NaiveDate>,
 }
 
 /// GET /api/v1/finances/recurring
@@ -1547,6 +1548,7 @@ pub async fn add_recurring_handler(body: AddRecurringBody) -> Result<impl Reply,
         body.kind,
         &body.label,
         body.frequency,
+        body.reference_date,
     )
     .await
     {

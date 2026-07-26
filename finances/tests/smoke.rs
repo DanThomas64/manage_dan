@@ -56,6 +56,7 @@ async fn full_roundtrip_against_real_hledger() {
         TxnKind::Income,
         "salary",
         Frequency::Biweekly,
+        Some(NaiveDate::from_ymd_opt(2026, 1, 6).unwrap()),
     )
     .await
     .expect("add recurring income");
@@ -67,6 +68,7 @@ async fn full_roundtrip_against_real_hledger() {
         TxnKind::Expense,
         "netflix",
         Frequency::Monthly,
+        None,
     )
     .await
     .expect("add recurring expense");
