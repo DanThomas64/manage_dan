@@ -2,16 +2,41 @@
 # Build manage_dan and install it as a native systemd service + nginx
 # reverse proxy on this machine. Run from the project root: ./deploy.sh
 #
-# ── One-time setup ────────────────────────────────────────────────────────────
-#   sudo apt-get install -y nginx libudev1 zip unzip
+# ── One-time setup (still manual — package names/steps vary too much to
+#    safely automate) ─────────────────────────────────────────────────────────
+#   Debian/Ubuntu: sudo apt-get install -y libudev1 zip unzip
+#   Arch/CachyOS:  sudo pacman -S --needed zip unzip
 #   bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
 #   sudo usermod -aG plugdev "$USER"    # USB printer access
 #   sudo cp 99-printer.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
+#
+# nginx itself IS auto-installed below (detects apt-get/pacman/dnf) — a fresh
+# machine with no nginx package at all previously failed confusingly deep
+# inside `sudo tee /etc/nginx/conf.d/manage_dan.conf` ("No such file or
+# directory", since neither nginx nor its conf.d existed yet).
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BINARY="$PROJECT_DIR/target/release/app"
 RUN_USER="$(whoami)"
+
+# ── Ensure nginx is installed ─────────────────────────────────────────────────
+if ! command -v nginx &> /dev/null; then
+  echo "nginx not found — installing..."
+  if command -v pacman &> /dev/null; then
+    sudo pacman -Sy --needed --noconfirm nginx
+  elif command -v apt-get &> /dev/null; then
+    sudo apt-get update && sudo apt-get install -y nginx
+  elif command -v dnf &> /dev/null; then
+    sudo dnf install -y nginx
+  else
+    echo "Unrecognized package manager — install nginx manually, then re-run this script." >&2
+    exit 1
+  fi
+fi
+# Defensive even after a fresh install: some distros' base nginx package
+# doesn't ship an empty conf.d/ (or it was previously removed by hand).
+sudo mkdir -p /etc/nginx/conf.d
 
 # ── Build ──────────────────────────────────────────────────────────────────────
 echo "Building release binary..."
