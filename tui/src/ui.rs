@@ -28,6 +28,7 @@ pub enum Screen {
     Project,
     Lists,
     Log,
+    Finances,
     Quit,
 }
 
@@ -106,6 +107,42 @@ pub enum LogCreateFocus {
     Title,
     Tags,
     Content,
+    Submit,
+}
+
+/// Which list is active on the Finances screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinancesFocus {
+    Spending,
+    Recurring,
+}
+
+/// Which sub-mode the Finances screen is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinancesMode {
+    Normal,
+    AddingSpending,
+    AddingRecurring,
+}
+
+/// Which field is focused in the Finances "add spending entry" form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinancesSpendingFocus {
+    Category,
+    Amount,
+    Description,
+    Date,
+    Submit,
+}
+
+/// Which field is focused in the Finances "add recurring item" form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinancesRecurringFocus {
+    Name,
+    Kind,
+    Amount,
+    Label,
+    Frequency,
     Submit,
 }
 
@@ -217,6 +254,27 @@ pub struct App {
     /// toggle (each project owns one whole top-level list group, so hiding
     /// project lists just means hiding those groups from the sidebar).
     pub project_list_group_ids: std::collections::HashSet<i64>,
+
+    // Finances state
+    pub finances_spending: Vec<crate::api::SpendingEntry>,
+    pub finances_spending_state: ListState,
+    pub finances_recurring: Vec<crate::api::RecurringItem>,
+    pub finances_recurring_state: ListState,
+    pub finances_projection: Vec<crate::api::ProjectionPoint>,
+    pub finances_category_totals: crate::api::CategoryTotals,
+    pub finances_focus: FinancesFocus,
+    pub finances_mode: FinancesMode,
+    pub finances_spending_focus: FinancesSpendingFocus,
+    pub fin_category_buffer: String,
+    pub fin_amount_buffer: String,
+    pub fin_description_buffer: String,
+    pub fin_date_buffer: String,
+    pub finances_recurring_focus: FinancesRecurringFocus,
+    pub fin_rec_name_buffer: String,
+    pub fin_rec_kind_buffer: String,
+    pub fin_rec_amount_buffer: String,
+    pub fin_rec_label_buffer: String,
+    pub fin_rec_frequency_buffer: String,
 }
 
 /// Parses the multiline subtasks input buffer into a `Vec<Subtask>`.
@@ -328,6 +386,26 @@ impl App {
             project_input_mode: ProjectInputMode::Normal,
             project_input_buffer: String::new(),
             project_list_group_ids: std::collections::HashSet::new(),
+
+            finances_spending: Vec::new(),
+            finances_spending_state: ListState::default(),
+            finances_recurring: Vec::new(),
+            finances_recurring_state: ListState::default(),
+            finances_projection: Vec::new(),
+            finances_category_totals: crate::api::CategoryTotals::default(),
+            finances_focus: FinancesFocus::Spending,
+            finances_mode: FinancesMode::Normal,
+            finances_spending_focus: FinancesSpendingFocus::Category,
+            fin_category_buffer: String::from("stupid"),
+            fin_amount_buffer: String::new(),
+            fin_description_buffer: String::new(),
+            fin_date_buffer: now.format("%Y-%m-%d").to_string(),
+            finances_recurring_focus: FinancesRecurringFocus::Name,
+            fin_rec_name_buffer: String::new(),
+            fin_rec_kind_buffer: String::from("expense"),
+            fin_rec_amount_buffer: String::new(),
+            fin_rec_label_buffer: String::new(),
+            fin_rec_frequency_buffer: String::from("monthly"),
         }
     }
 
@@ -1115,6 +1193,185 @@ impl App {
         }
     }
 
+    // --- Finances helpers ---
+
+    pub async fn fetch_spending_entries(&mut self) {
+        match self.api_client.fetch_spending_entries().await {
+            Ok(mut entries) => {
+                entries.sort_by(|a, b| b.date.cmp(&a.date));
+                self.finances_spending = entries;
+                let len = self.finances_spending.len();
+                if len == 0 {
+                    self.finances_spending_state.select(None);
+                } else {
+                    let sel = self.finances_spending_state.selected().unwrap_or(0).min(len - 1);
+                    self.finances_spending_state.select(Some(sel));
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Failed to fetch spending entries: {}", e)),
+        }
+    }
+
+    pub async fn fetch_recurring_items(&mut self) {
+        match self.api_client.fetch_recurring_items().await {
+            Ok(items) => {
+                self.finances_recurring = items;
+                let len = self.finances_recurring.len();
+                if len == 0 {
+                    self.finances_recurring_state.select(None);
+                } else {
+                    let sel = self.finances_recurring_state.selected().unwrap_or(0).min(len - 1);
+                    self.finances_recurring_state.select(Some(sel));
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Failed to fetch recurring items: {}", e)),
+        }
+    }
+
+    pub async fn fetch_projection(&mut self) {
+        match self.api_client.fetch_projection(12).await {
+            Ok(points) => {
+                self.finances_projection = points;
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Failed to fetch projection: {}", e)),
+        }
+    }
+
+    pub async fn fetch_finances_all(&mut self) {
+        self.fetch_spending_entries().await;
+        self.fetch_recurring_items().await;
+        self.fetch_projection().await;
+        if let Ok(totals) = self.api_client.fetch_spending_stats().await {
+            self.finances_category_totals = totals;
+        }
+    }
+
+    fn finances_move_selection(&mut self, delta: i32) {
+        match self.finances_focus {
+            FinancesFocus::Spending => {
+                let len = self.finances_spending.len();
+                if len == 0 { return; }
+                let cur = self.finances_spending_state.selected().unwrap_or(0) as i32;
+                let next = (cur + delta).rem_euclid(len as i32) as usize;
+                self.finances_spending_state.select(Some(next));
+            }
+            FinancesFocus::Recurring => {
+                let len = self.finances_recurring.len();
+                if len == 0 { return; }
+                let cur = self.finances_recurring_state.selected().unwrap_or(0) as i32;
+                let next = (cur + delta).rem_euclid(len as i32) as usize;
+                self.finances_recurring_state.select(Some(next));
+            }
+        }
+    }
+
+    async fn finances_delete_selected(&mut self) {
+        match self.finances_focus {
+            FinancesFocus::Spending => {
+                let Some(entry) = self.finances_spending_state.selected()
+                    .and_then(|i| self.finances_spending.get(i)).cloned() else { return; };
+                match self.api_client.delete_spending_entry(&entry.id).await {
+                    Ok(()) => {
+                        self.fetch_spending_entries().await;
+                        self.fetch_projection().await;
+                    }
+                    Err(e) => self.last_error = Some(format!("Delete failed: {}", e)),
+                }
+            }
+            FinancesFocus::Recurring => {
+                let Some(item) = self.finances_recurring_state.selected()
+                    .and_then(|i| self.finances_recurring.get(i)).cloned() else { return; };
+                match self.api_client.delete_recurring_item(&item.id).await {
+                    Ok(()) => {
+                        self.fetch_recurring_items().await;
+                        self.fetch_projection().await;
+                    }
+                    Err(e) => self.last_error = Some(format!("Delete failed: {}", e)),
+                }
+            }
+        }
+    }
+
+    fn finances_reset_spending_form(&mut self) {
+        self.finances_spending_focus = FinancesSpendingFocus::Category;
+        self.fin_category_buffer = "stupid".to_string();
+        self.fin_amount_buffer.clear();
+        self.fin_description_buffer.clear();
+        self.fin_date_buffer = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    }
+
+    fn finances_reset_recurring_form(&mut self) {
+        self.finances_recurring_focus = FinancesRecurringFocus::Name;
+        self.fin_rec_name_buffer.clear();
+        self.fin_rec_kind_buffer = "expense".to_string();
+        self.fin_rec_amount_buffer.clear();
+        self.fin_rec_label_buffer.clear();
+        self.fin_rec_frequency_buffer = "monthly".to_string();
+    }
+
+    pub async fn finances_submit_spending(&mut self) {
+        let amount: f64 = match self.fin_amount_buffer.trim().parse() {
+            Ok(a) if a > 0.0 => a,
+            _ => { self.last_error = Some("Enter a valid amount".to_string()); return; }
+        };
+        let date = match NaiveDate::parse_from_str(self.fin_date_buffer.trim(), "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => { self.last_error = Some("Date must be YYYY-MM-DD".to_string()); return; }
+        };
+        let category = if self.fin_category_buffer == "survival" {
+            crate::api::SpendingCategory::Survival
+        } else {
+            crate::api::SpendingCategory::Stupid
+        };
+        match self.api_client.add_spending_entry(category, amount, self.fin_description_buffer.trim(), date).await {
+            Ok(_) => {
+                self.finances_mode = FinancesMode::Normal;
+                self.fetch_spending_entries().await;
+                self.fetch_projection().await;
+            }
+            Err(e) => self.last_error = Some(format!("Add spending entry failed: {}", e)),
+        }
+    }
+
+    pub async fn finances_submit_recurring(&mut self) {
+        let name = self.fin_rec_name_buffer.trim().to_string();
+        if name.is_empty() {
+            self.last_error = Some("Enter a name".to_string());
+            return;
+        }
+        let amount: f64 = match self.fin_rec_amount_buffer.trim().parse() {
+            Ok(a) if a > 0.0 => a,
+            _ => { self.last_error = Some("Enter a valid amount".to_string()); return; }
+        };
+        let label = self.fin_rec_label_buffer.trim().to_string();
+        if label.is_empty() {
+            self.last_error = Some("Enter a label".to_string());
+            return;
+        }
+        let kind = if self.fin_rec_kind_buffer == "income" {
+            crate::api::TxnKind::Income
+        } else {
+            crate::api::TxnKind::Expense
+        };
+        let frequency = match self.fin_rec_frequency_buffer.as_str() {
+            "weekly" => crate::api::Frequency::Weekly,
+            "biweekly" => crate::api::Frequency::Biweekly,
+            "yearly" => crate::api::Frequency::Yearly,
+            _ => crate::api::Frequency::Monthly,
+        };
+        match self.api_client.add_recurring_item(&name, amount, kind, &label, frequency).await {
+            Ok(_) => {
+                self.finances_mode = FinancesMode::Normal;
+                self.fetch_recurring_items().await;
+                self.fetch_projection().await;
+            }
+            Err(e) => self.last_error = Some(format!("Add recurring item failed: {}", e)),
+        }
+    }
+
     /// Handles input events specific to the current screen.
     pub async fn handle_input(&mut self, event: CEvent) {
         let previous_screen = self.current_screen;
@@ -1688,6 +1945,206 @@ impl App {
                     }
                 }
             }
+            Screen::Finances => {
+                if let CEvent::Key(key) = event {
+                    match self.finances_mode {
+                        FinancesMode::Normal => {
+                            match key.code {
+                                KeyCode::Char('q') | KeyCode::Esc => {
+                                    self.current_screen = Screen::Dashboard;
+                                }
+                                KeyCode::Tab => {
+                                    self.finances_focus = match self.finances_focus {
+                                        FinancesFocus::Spending => FinancesFocus::Recurring,
+                                        FinancesFocus::Recurring => FinancesFocus::Spending,
+                                    };
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => self.finances_move_selection(-1),
+                                KeyCode::Down | KeyCode::Char('j') => self.finances_move_selection(1),
+                                KeyCode::Char('a') => {
+                                    match self.finances_focus {
+                                        FinancesFocus::Spending => {
+                                            self.finances_reset_spending_form();
+                                            self.finances_mode = FinancesMode::AddingSpending;
+                                        }
+                                        FinancesFocus::Recurring => {
+                                            self.finances_reset_recurring_form();
+                                            self.finances_mode = FinancesMode::AddingRecurring;
+                                        }
+                                    }
+                                    self.last_error = None;
+                                }
+                                KeyCode::Char('x') => {
+                                    self.finances_delete_selected().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Char('r') => {
+                                    self.fetch_finances_all().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Char('?') => { self.show_help = true; }
+                                _ => { self.handle_nav_key(key.code); }
+                            }
+                        }
+                        FinancesMode::AddingSpending => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.finances_mode = FinancesMode::Normal;
+                                }
+                                KeyCode::Tab => {
+                                    self.finances_spending_focus = match self.finances_spending_focus {
+                                        FinancesSpendingFocus::Category => FinancesSpendingFocus::Amount,
+                                        FinancesSpendingFocus::Amount => FinancesSpendingFocus::Description,
+                                        FinancesSpendingFocus::Description => FinancesSpendingFocus::Date,
+                                        FinancesSpendingFocus::Date => FinancesSpendingFocus::Submit,
+                                        FinancesSpendingFocus::Submit => FinancesSpendingFocus::Category,
+                                    };
+                                }
+                                KeyCode::BackTab => {
+                                    self.finances_spending_focus = match self.finances_spending_focus {
+                                        FinancesSpendingFocus::Category => FinancesSpendingFocus::Submit,
+                                        FinancesSpendingFocus::Amount => FinancesSpendingFocus::Category,
+                                        FinancesSpendingFocus::Description => FinancesSpendingFocus::Amount,
+                                        FinancesSpendingFocus::Date => FinancesSpendingFocus::Description,
+                                        FinancesSpendingFocus::Submit => FinancesSpendingFocus::Date,
+                                    };
+                                }
+                                KeyCode::Left | KeyCode::Right if self.finances_spending_focus == FinancesSpendingFocus::Category => {
+                                    self.fin_category_buffer = if self.fin_category_buffer == "stupid" {
+                                        "survival".to_string()
+                                    } else {
+                                        "stupid".to_string()
+                                    };
+                                }
+                                KeyCode::Enter => {
+                                    match self.finances_spending_focus {
+                                        FinancesSpendingFocus::Category => {
+                                            self.fin_category_buffer = if self.fin_category_buffer == "stupid" {
+                                                "survival".to_string()
+                                            } else {
+                                                "stupid".to_string()
+                                            };
+                                        }
+                                        FinancesSpendingFocus::Amount => self.finances_spending_focus = FinancesSpendingFocus::Description,
+                                        FinancesSpendingFocus::Description => self.finances_spending_focus = FinancesSpendingFocus::Date,
+                                        FinancesSpendingFocus::Date => self.finances_spending_focus = FinancesSpendingFocus::Submit,
+                                        FinancesSpendingFocus::Submit => {
+                                            self.finances_submit_spending().await;
+                                            action_taken = true;
+                                        }
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    let buf = match self.finances_spending_focus {
+                                        FinancesSpendingFocus::Amount => Some(&mut self.fin_amount_buffer),
+                                        FinancesSpendingFocus::Description => Some(&mut self.fin_description_buffer),
+                                        FinancesSpendingFocus::Date => Some(&mut self.fin_date_buffer),
+                                        _ => None,
+                                    };
+                                    if let Some(buf) = buf { buf.pop(); }
+                                }
+                                KeyCode::Char(c) => {
+                                    let buf = match self.finances_spending_focus {
+                                        FinancesSpendingFocus::Amount => Some(&mut self.fin_amount_buffer),
+                                        FinancesSpendingFocus::Description => Some(&mut self.fin_description_buffer),
+                                        FinancesSpendingFocus::Date => Some(&mut self.fin_date_buffer),
+                                        _ => None,
+                                    };
+                                    if let Some(buf) = buf { buf.push(c); }
+                                }
+                                _ => {}
+                            }
+                        }
+                        FinancesMode::AddingRecurring => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.finances_mode = FinancesMode::Normal;
+                                }
+                                KeyCode::Tab => {
+                                    self.finances_recurring_focus = match self.finances_recurring_focus {
+                                        FinancesRecurringFocus::Name => FinancesRecurringFocus::Kind,
+                                        FinancesRecurringFocus::Kind => FinancesRecurringFocus::Amount,
+                                        FinancesRecurringFocus::Amount => FinancesRecurringFocus::Label,
+                                        FinancesRecurringFocus::Label => FinancesRecurringFocus::Frequency,
+                                        FinancesRecurringFocus::Frequency => FinancesRecurringFocus::Submit,
+                                        FinancesRecurringFocus::Submit => FinancesRecurringFocus::Name,
+                                    };
+                                }
+                                KeyCode::BackTab => {
+                                    self.finances_recurring_focus = match self.finances_recurring_focus {
+                                        FinancesRecurringFocus::Name => FinancesRecurringFocus::Submit,
+                                        FinancesRecurringFocus::Kind => FinancesRecurringFocus::Name,
+                                        FinancesRecurringFocus::Amount => FinancesRecurringFocus::Kind,
+                                        FinancesRecurringFocus::Label => FinancesRecurringFocus::Amount,
+                                        FinancesRecurringFocus::Frequency => FinancesRecurringFocus::Label,
+                                        FinancesRecurringFocus::Submit => FinancesRecurringFocus::Frequency,
+                                    };
+                                }
+                                KeyCode::Left | KeyCode::Right if self.finances_recurring_focus == FinancesRecurringFocus::Kind => {
+                                    self.fin_rec_kind_buffer = if self.fin_rec_kind_buffer == "income" {
+                                        "expense".to_string()
+                                    } else {
+                                        "income".to_string()
+                                    };
+                                }
+                                KeyCode::Left | KeyCode::Right if self.finances_recurring_focus == FinancesRecurringFocus::Frequency => {
+                                    self.fin_rec_frequency_buffer = match self.fin_rec_frequency_buffer.as_str() {
+                                        "weekly" => "biweekly".to_string(),
+                                        "biweekly" => "monthly".to_string(),
+                                        "monthly" => "yearly".to_string(),
+                                        _ => "weekly".to_string(),
+                                    };
+                                }
+                                KeyCode::Enter => {
+                                    match self.finances_recurring_focus {
+                                        FinancesRecurringFocus::Name => self.finances_recurring_focus = FinancesRecurringFocus::Kind,
+                                        FinancesRecurringFocus::Kind => {
+                                            self.fin_rec_kind_buffer = if self.fin_rec_kind_buffer == "income" {
+                                                "expense".to_string()
+                                            } else {
+                                                "income".to_string()
+                                            };
+                                        }
+                                        FinancesRecurringFocus::Amount => self.finances_recurring_focus = FinancesRecurringFocus::Label,
+                                        FinancesRecurringFocus::Label => self.finances_recurring_focus = FinancesRecurringFocus::Frequency,
+                                        FinancesRecurringFocus::Frequency => {
+                                            self.fin_rec_frequency_buffer = match self.fin_rec_frequency_buffer.as_str() {
+                                                "weekly" => "biweekly".to_string(),
+                                                "biweekly" => "monthly".to_string(),
+                                                "monthly" => "yearly".to_string(),
+                                                _ => "weekly".to_string(),
+                                            };
+                                        }
+                                        FinancesRecurringFocus::Submit => {
+                                            self.finances_submit_recurring().await;
+                                            action_taken = true;
+                                        }
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    let buf = match self.finances_recurring_focus {
+                                        FinancesRecurringFocus::Name => Some(&mut self.fin_rec_name_buffer),
+                                        FinancesRecurringFocus::Amount => Some(&mut self.fin_rec_amount_buffer),
+                                        FinancesRecurringFocus::Label => Some(&mut self.fin_rec_label_buffer),
+                                        _ => None,
+                                    };
+                                    if let Some(buf) = buf { buf.pop(); }
+                                }
+                                KeyCode::Char(c) => {
+                                    let buf = match self.finances_recurring_focus {
+                                        FinancesRecurringFocus::Name => Some(&mut self.fin_rec_name_buffer),
+                                        FinancesRecurringFocus::Amount => Some(&mut self.fin_rec_amount_buffer),
+                                        FinancesRecurringFocus::Label => Some(&mut self.fin_rec_label_buffer),
+                                        _ => None,
+                                    };
+                                    if let Some(buf) = buf { buf.push(c); }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -1714,6 +2171,9 @@ impl App {
                 Screen::Project => {
                     self.fetch_projects().await;
                     self.project_load_selected_detail().await;
+                }
+                Screen::Finances => {
+                    self.fetch_finances_all().await;
                 }
                 _ => {}
             }
@@ -1742,6 +2202,7 @@ impl App {
             KeyCode::Char('3') => { self.current_screen = Screen::Project; true }
             KeyCode::Char('4') => { self.current_screen = Screen::Lists; true }
             KeyCode::Char('5') => { self.current_screen = Screen::Log; true }
+            KeyCode::Char('6') => { self.current_screen = Screen::Finances; true }
             _ => false,
         }
     }
@@ -2214,6 +2675,7 @@ impl Tui {
                 Screen::Project => draw_project_screen(frame, app, area),
                 Screen::Lists => draw_lists_screen(frame, app, area),
                 Screen::Log => draw_log_screen(frame, app, area),
+                Screen::Finances => draw_finances_screen(frame, app, area),
                 _ => {}
             }
             if app.show_help {
@@ -2259,7 +2721,7 @@ fn draw_too_small(frame: &mut ratatui::Frame, area: Rect) {
 /// fallback), so it's listed on every screen rather than repeated in every
 /// footer.
 fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>) {
-    const SWITCH_SCREEN: (&str, &str) = ("1-5", "Switch screen (Tasks/Notes/Project/Lists/Log)");
+    const SWITCH_SCREEN: (&str, &str) = ("1-6", "Switch screen (Tasks/Notes/Project/Lists/Log/Finances)");
     const TOGGLE_HELP: (&str, &str) = ("?", "Toggle this help");
 
     match app.current_screen {
@@ -2272,6 +2734,7 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                 ("3", "Project"),
                 ("4", "Lists"),
                 ("5", "Log"),
+                ("6", "Finances"),
                 TOGGLE_HELP,
             ],
         ),
@@ -2447,6 +2910,39 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                     ("Esc", "Cancel"),
                     ("Tab / Shift+Tab", "Move between fields"),
                     ("Enter", "Next field (or newline, in Content; save, on Submit)"),
+                ],
+            ),
+        },
+        Screen::Finances => match app.finances_mode {
+            FinancesMode::Normal => (
+                "Finances",
+                vec![
+                    ("q", "Back to Dashboard"),
+                    ("Tab", "Switch list: Spending ↔ Recurring"),
+                    ("j/k", "Move selection"),
+                    ("a", "Add (spending entry or recurring item, per focus)"),
+                    ("x", "Delete selected"),
+                    ("r", "Refetch entries/items/projection"),
+                    SWITCH_SCREEN,
+                    TOGGLE_HELP,
+                ],
+            ),
+            FinancesMode::AddingSpending => (
+                "Finances — New Spending Entry",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Tab / Shift+Tab", "Move between fields"),
+                    ("←/→ or Enter", "Toggle Stupid/Survival (on Category)"),
+                    ("Enter", "Next field (or save, on Submit)"),
+                ],
+            ),
+            FinancesMode::AddingRecurring => (
+                "Finances — New Recurring Item",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Tab / Shift+Tab", "Move between fields"),
+                    ("←/→ or Enter", "Cycle Kind / Frequency"),
+                    ("Enter", "Next field (or save, on Submit)"),
                 ],
             ),
         },
@@ -2642,6 +3138,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
             status_to_line("printer", systems.printer),
             status_to_line("todo", systems.todo),
             status_to_line("lists", systems.lists),
+            status_to_line("finances", systems.finances),
         ]
     } else {
         vec![Line::from(app.last_error.as_deref().unwrap_or("Waiting for API status...").fg(Color::Red))]
@@ -4075,6 +4572,138 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             popup,
         );
     }
+}
+
+fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let summary = format!("{} spending, {} recurring", app.finances_spending.len(), app.finances_recurring.len());
+
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+    let (header_area, body, footer_area) = (outer[0], outer[1], outer[2]);
+    draw_section_header(frame, header_area, "FINANCES", &summary, Color::Green);
+
+    let content_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(body);
+    let (list_area, detail_area) = (content_chunks[0], content_chunks[1]);
+
+    // Left pane: whichever list is focused
+    match app.finances_focus {
+        FinancesFocus::Spending => {
+            let items: Vec<ListItem> = app.finances_spending.iter().map(|e| {
+                let cat = match e.category {
+                    crate::api::SpendingCategory::Stupid => "Stupid",
+                    crate::api::SpendingCategory::Survival => "Survival",
+                };
+                ListItem::new(format!("{}  ${:.2}  {} ({})", e.date, e.amount, e.description, cat))
+            }).collect();
+            let title = format!(" Spending ({}) — Tab: Recurring ", app.finances_spending.len());
+            let widget = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title(title)
+                    .border_style(Style::default().fg(Color::Green)))
+                .highlight_style(Style::default().fg(Color::Black).bg(Color::Green))
+                .highlight_symbol("> ");
+            frame.render_stateful_widget(widget, list_area, &mut app.finances_spending_state);
+        }
+        FinancesFocus::Recurring => {
+            let items: Vec<ListItem> = app.finances_recurring.iter().map(|i| {
+                let kind = match i.kind {
+                    crate::api::TxnKind::Income => "Income",
+                    crate::api::TxnKind::Expense => "Expense",
+                };
+                let freq = match i.frequency {
+                    crate::api::Frequency::Weekly => "Weekly",
+                    crate::api::Frequency::Biweekly => "Biweekly",
+                    crate::api::Frequency::Monthly => "Monthly",
+                    crate::api::Frequency::Yearly => "Yearly",
+                };
+                ListItem::new(format!("{}  ${:.2}  {} / {} ({})", i.name, i.amount, kind, freq, i.label))
+            }).collect();
+            let title = format!(" Recurring ({}) — Tab: Spending ", app.finances_recurring.len());
+            let widget = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title(title)
+                    .border_style(Style::default().fg(Color::Green)))
+                .highlight_style(Style::default().fg(Color::Black).bg(Color::Green))
+                .highlight_symbol("> ");
+            frame.render_stateful_widget(widget, list_area, &mut app.finances_recurring_state);
+        }
+    }
+
+    // Right pane: either the projected-balance table, or the active add form
+    let detail_widget: Paragraph = match app.finances_mode {
+        FinancesMode::Normal => {
+            let mut body = format!(
+                "This month — Stupid: ${:.2}  Survival: ${:.2}\n\nProjected balance (assets - liabilities, 12mo):\n\n",
+                app.finances_category_totals.stupid, app.finances_category_totals.survival,
+            );
+            for p in app.finances_projection.iter() {
+                body.push_str(&format!("  {}  ${:.2}\n", p.period_start, p.balance));
+            }
+            if app.finances_projection.is_empty() {
+                body.push_str("  (no data yet)\n");
+            }
+            Paragraph::new(body)
+                .block(Block::default().borders(Borders::ALL).title(" Projection ")
+                    .border_style(Style::default().fg(Color::Rgb(110, 110, 110))))
+                .wrap(Wrap { trim: false })
+        }
+        FinancesMode::AddingSpending => {
+            let f = app.finances_spending_focus;
+            let line = |label: &str, value: &str, focus: FinancesSpendingFocus| {
+                let marker = if f == focus { "> " } else { "  " };
+                let cursor = if f == focus { "_" } else { "" };
+                format!("{marker}{label}: {value}{cursor}\n")
+            };
+            let mut body = String::new();
+            body.push_str(&line("Category", &app.fin_category_buffer, FinancesSpendingFocus::Category));
+            body.push_str(&line("Amount", &app.fin_amount_buffer, FinancesSpendingFocus::Amount));
+            body.push_str(&line("Description", &app.fin_description_buffer, FinancesSpendingFocus::Description));
+            body.push_str(&line("Date (YYYY-MM-DD)", &app.fin_date_buffer, FinancesSpendingFocus::Date));
+            body.push_str(if f == FinancesSpendingFocus::Submit { "\n> [ SUBMIT ]\n" } else { "\n  [ SUBMIT ]\n" });
+            if let Some(err) = &app.last_error {
+                body.push_str(&format!("\nError: {err}\n"));
+            }
+            Paragraph::new(body)
+                .block(Block::default().borders(Borders::ALL).title(" New Spending Entry ")
+                    .border_style(Style::default().fg(Color::Yellow)))
+                .wrap(Wrap { trim: false })
+        }
+        FinancesMode::AddingRecurring => {
+            let f = app.finances_recurring_focus;
+            let line = |label: &str, value: &str, focus: FinancesRecurringFocus| {
+                let marker = if f == focus { "> " } else { "  " };
+                let cursor = if f == focus { "_" } else { "" };
+                format!("{marker}{label}: {value}{cursor}\n")
+            };
+            let mut body = String::new();
+            body.push_str(&line("Name", &app.fin_rec_name_buffer, FinancesRecurringFocus::Name));
+            body.push_str(&line("Kind", &app.fin_rec_kind_buffer, FinancesRecurringFocus::Kind));
+            body.push_str(&line("Amount", &app.fin_rec_amount_buffer, FinancesRecurringFocus::Amount));
+            body.push_str(&line("Label", &app.fin_rec_label_buffer, FinancesRecurringFocus::Label));
+            body.push_str(&line("Frequency", &app.fin_rec_frequency_buffer, FinancesRecurringFocus::Frequency));
+            body.push_str(if f == FinancesRecurringFocus::Submit { "\n> [ SUBMIT ]\n" } else { "\n  [ SUBMIT ]\n" });
+            if let Some(err) = &app.last_error {
+                body.push_str(&format!("\nError: {err}\n"));
+            }
+            Paragraph::new(body)
+                .block(Block::default().borders(Borders::ALL).title(" New Recurring Item ")
+                    .border_style(Style::default().fg(Color::Yellow)))
+                .wrap(Wrap { trim: false })
+        }
+    };
+    frame.render_widget(detail_widget, detail_area);
+
+    let footer_text = match app.finances_mode {
+        FinancesMode::Normal => "Tab: switch list  j/k: move  a: add  x: delete  q: back  ?: help".to_string(),
+        FinancesMode::AddingSpending | FinancesMode::AddingRecurring => "Tab: next field  Enter: next/toggle/save  Esc: cancel".to_string(),
+    };
+    frame.render_widget(
+        Paragraph::new(footer_text).style(Style::default().fg(Color::Green)),
+        footer_area,
+    );
 }
 
 // ---------------------------------------------------------------------------------

@@ -27,6 +27,7 @@ mod nogo_tests {
         systems.update("printer", Status::Go);
         systems.update("todo", Status::Go);
         systems.update("lists", Status::Go);
+        systems.update("finances", Status::Go);
         systems
     }
 

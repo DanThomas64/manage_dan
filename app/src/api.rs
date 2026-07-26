@@ -7,6 +7,9 @@ use crate::prelude::*;
 use warp::{Filter, Rejection, Reply, http::StatusCode};
 use todo::todo_prelude::TodoItem;
 use warp::query::query; // NEW: Import query filter
+use chrono::{Local, NaiveDate};
+use finances::finances_error::FinancesLibError;
+use finances::models::{Frequency, SpendingCategory, TxnKind};
 
 /// State shared across API handlers.
 #[derive(Clone)]
@@ -1432,6 +1435,158 @@ pub async fn project_lists_handler(id: i64) -> Result<impl Reply, Rejection> {
     }
 }
 
+// --- Finances Endpoints ---
+
+fn finances_journal_path() -> String {
+    AppConfig::get().finances.journal_path.clone()
+}
+
+fn parse_date_or(s: &Option<String>, default: NaiveDate) -> NaiveDate {
+    s.as_deref()
+        .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        .unwrap_or(default)
+}
+
+#[derive(Deserialize)]
+pub struct SpendingQuery {
+    pub from: Option<String>,
+    pub to: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AddSpendingBody {
+    pub category: SpendingCategory,
+    pub amount: f64,
+    pub description: String,
+    pub date: NaiveDate,
+}
+
+/// GET /api/v1/finances/spending?from=&to=
+pub async fn list_spending_handler(query: SpendingQuery) -> Result<impl Reply, Rejection> {
+    let from = parse_date_or(&query.from, NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
+    let to = parse_date_or(&query.to, Local::now().date_naive());
+    match finances::list_spending_entries(&finances_journal_path(), from, to).await {
+        Ok(entries) => Ok(warp::reply::json(&entries)),
+        Err(e) => {
+            error!("Failed to list spending entries: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/finances/spending
+pub async fn add_spending_handler(body: AddSpendingBody) -> Result<impl Reply, Rejection> {
+    match finances::add_spending_entry(
+        &finances_journal_path(),
+        body.category,
+        body.amount,
+        &body.description,
+        body.date,
+    )
+    .await
+    {
+        Ok(entry) => Ok(warp::reply::with_status(warp::reply::json(&entry), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add spending entry: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/finances/spending/:id
+pub async fn delete_spending_handler(id: String) -> Result<impl Reply, Rejection> {
+    match finances::delete_spending_entry(&finances_journal_path(), &id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(FinancesLibError::EntryNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to delete spending entry {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/finances/spending/stats?from=&to=
+pub async fn spending_stats_handler(query: SpendingQuery) -> Result<impl Reply, Rejection> {
+    let from = parse_date_or(&query.from, NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
+    let to = parse_date_or(&query.to, Local::now().date_naive());
+    match finances::spending_stats(&finances_journal_path(), from, to).await {
+        Ok(totals) => Ok(warp::reply::json(&totals)),
+        Err(e) => {
+            error!("Failed to compute spending stats: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AddRecurringBody {
+    pub name: String,
+    pub amount: f64,
+    pub kind: TxnKind,
+    pub label: String,
+    pub frequency: Frequency,
+}
+
+/// GET /api/v1/finances/recurring
+pub async fn list_recurring_handler() -> Result<impl Reply, Rejection> {
+    match finances::list_recurring_items(&finances_journal_path()).await {
+        Ok(items) => Ok(warp::reply::json(&items)),
+        Err(e) => {
+            error!("Failed to list recurring items: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/finances/recurring
+pub async fn add_recurring_handler(body: AddRecurringBody) -> Result<impl Reply, Rejection> {
+    match finances::add_recurring_item(
+        &finances_journal_path(),
+        &body.name,
+        body.amount,
+        body.kind,
+        &body.label,
+        body.frequency,
+    )
+    .await
+    {
+        Ok(item) => Ok(warp::reply::with_status(warp::reply::json(&item), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add recurring item: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/finances/recurring/:id
+pub async fn delete_recurring_handler(id: String) -> Result<impl Reply, Rejection> {
+    match finances::delete_recurring_item(&finances_journal_path(), &id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(FinancesLibError::RecurringItemNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to delete recurring item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ProjectionQuery {
+    pub months: Option<u32>,
+}
+
+/// GET /api/v1/finances/projection?months=
+pub async fn projection_handler(query: ProjectionQuery) -> Result<impl Reply, Rejection> {
+    let months = query.months.unwrap_or(12);
+    match finances::projection(&finances_journal_path(), months).await {
+        Ok(points) => Ok(warp::reply::json(&points)),
+        Err(e) => {
+            error!("Failed to compute projection: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
 // --- Error Handling ---
 
 /// Custom API errors used for rejection handling.
@@ -1445,6 +1600,7 @@ enum ApiError {
     NotesInvalidInput(String),
     ProjectOperationFailed,
     ProjectInvalidInput(String),
+    FinancesOperationFailed,
 }
 
 impl warp::reject::Reject for ApiError {}
@@ -1467,6 +1623,8 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
         Ok(warp::reply::with_status("Project operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
     } else if let Some(ApiError::ProjectInvalidInput(msg)) = err.find() {
         Ok(warp::reply::with_status(msg.clone(), StatusCode::BAD_REQUEST))
+    } else if let Some(ApiError::FinancesOperationFailed) = err.find() {
+        Ok(warp::reply::with_status("Finances operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
     } else {
         Err(err)
     }
@@ -1790,6 +1948,92 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .or(add_from_common)
 }
 
+/// Defines routes for the finances module (hledger-backed).
+///
+/// URL structure:
+///   /api/v1/finances/spending            — spending entries CRUD
+///   /api/v1/finances/spending/stats      — category totals for a date range
+///   /api/v1/finances/recurring           — recurring items (periodic rules) CRUD
+///   /api/v1/finances/projection          — projected assets/liabilities trend
+fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    let finances = warp::path("finances");
+    let spending = warp::path("spending");
+    let recurring = warp::path("recurring");
+
+    // GET /api/v1/finances/spending?from=&to=
+    let list_spending = finances
+        .and(spending)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<SpendingQuery>())
+        .and_then(list_spending_handler);
+
+    // POST /api/v1/finances/spending
+    let add_spending = finances
+        .and(spending)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(add_spending_handler);
+
+    // DELETE /api/v1/finances/spending/:id
+    let delete_spending = finances
+        .and(spending)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_spending_handler);
+
+    // GET /api/v1/finances/spending/stats?from=&to=
+    let spending_stats = finances
+        .and(spending)
+        .and(warp::path("stats"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<SpendingQuery>())
+        .and_then(spending_stats_handler);
+
+    // GET /api/v1/finances/recurring
+    let list_recurring = finances
+        .and(recurring)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_recurring_handler);
+
+    // POST /api/v1/finances/recurring
+    let add_recurring = finances
+        .and(recurring)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(add_recurring_handler);
+
+    // DELETE /api/v1/finances/recurring/:id
+    let delete_recurring = finances
+        .and(recurring)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_recurring_handler);
+
+    // GET /api/v1/finances/projection?months=
+    let projection = finances
+        .and(warp::path("projection"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<ProjectionQuery>())
+        .and_then(projection_handler);
+
+    list_spending
+        .or(add_spending)
+        .or(spending_stats)
+        .or(delete_spending)
+        .or(list_recurring)
+        .or(add_recurring)
+        .or(delete_recurring)
+        .or(projection)
+}
+
 /// Defines routes for the notes subsystem.
 fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let notes_seg = warp::path("notes");
@@ -2058,6 +2302,7 @@ pub fn routes(
             .or(list_routes())
             .or(notes_routes())
             .or(project_routes())
+            .or(finances_routes())
         )
     )
     .recover(handle_rejection)

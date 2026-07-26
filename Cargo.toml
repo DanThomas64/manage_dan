@@ -10,6 +10,7 @@ members = [
     "todo",
     "tui",
     "lists",
+    "finances",
 ]
 default_members = ["/app"]
 

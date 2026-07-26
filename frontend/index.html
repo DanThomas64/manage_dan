@@ -1142,7 +1142,7 @@
       background: var(--surface);
       flex-shrink: 0;
     }
-    .notes-tab, .log-tab, .todo-tab {
+    .notes-tab, .log-tab, .todo-tab, .finances-tab {
       padding: 7px 16px;
       border-radius: var(--radius-sm);
       background: transparent;
@@ -1156,35 +1156,36 @@
       cursor: pointer;
       transition: background 0.15s, color 0.15s;
     }
-    .notes-tab.active, .log-tab.active, .todo-tab.active {
+    .notes-tab.active, .log-tab.active, .todo-tab.active, .finances-tab.active {
       background: var(--accent-dim);
       color: var(--accent-cont);
       border-color: transparent;
       border-bottom: 2px solid var(--accent);
     }
-    .notes-tab:hover:not(.active), .log-tab:hover:not(.active), .todo-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+    .notes-tab:hover:not(.active), .log-tab:hover:not(.active), .todo-tab:hover:not(.active), .finances-tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
 
     /* "+ New" is a create-action, not a view filter like its sibling tabs —
        give it its own amber outline so it reads as a button, not a tab. */
-    .notes-tab[id$="-add"], .log-tab[id$="-add"], .todo-tab[id$="-add"] {
+    .notes-tab[id$="-add"], .log-tab[id$="-add"], .todo-tab[id$="-add"], .finances-tab[id$="-add"] {
       background: transparent;
       color: var(--accent);
       border: 1px solid var(--accent);
     }
     .notes-tab[id$="-add"]:hover:not(.active),
     .log-tab[id$="-add"]:hover:not(.active),
-    .todo-tab[id$="-add"]:hover:not(.active) {
+    .todo-tab[id$="-add"]:hover:not(.active),
+    .finances-tab[id$="-add"]:hover:not(.active) {
       background: var(--accent-dim);
       color: var(--accent-cont);
     }
-    .notes-tab.active[id$="-add"], .log-tab.active[id$="-add"], .todo-tab.active[id$="-add"] {
+    .notes-tab.active[id$="-add"], .log-tab.active[id$="-add"], .todo-tab.active[id$="-add"], .finances-tab.active[id$="-add"] {
       background: var(--accent);
       color: var(--accent-on);
       border-color: var(--accent);
     }
 
-    .notes-panel, .log-panel, .todo-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
-    .notes-panel.active, .log-panel.active, .todo-panel.active { display: flex; }
+    .notes-panel, .log-panel, .todo-panel, .finances-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+    .notes-panel.active, .log-panel.active, .todo-panel.active, .finances-panel.active { display: flex; }
 
     /* ── Home landing page ── */
     .home-hero {
@@ -1572,6 +1573,10 @@
         <span class="home-tile-icon">&#128193;</span>
         <span class="home-tile-label">Projects</span>
       </button>
+      <button class="home-tile" onclick="showView('finances')">
+        <span class="home-tile-icon">&#128176;</span>
+        <span class="home-tile-label">Finances</span>
+      </button>
     </div>
   </div>
 </div>
@@ -1821,6 +1826,111 @@
     </div>
     <div class="notes-list" id="todo-list">
       <div class="empty-state"><span class="icon">&#9989;</span><span>No todos yet</span></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Finances overlay -->
+<div id="finances-overlay" class="app-overlay">
+
+  <!-- Finances sub-nav -->
+  <div class="notes-nav">
+    <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
+    <div class="hbar-scroll">
+      <button class="finances-tab active" id="ftab-spending" onclick="financesShowTab('spending')">Spending</button>
+      <button class="finances-tab" id="ftab-recurring" onclick="financesShowTab('recurring')">Recurring</button>
+    </div>
+  </div>
+
+  <!-- Spending panel -->
+  <div class="finances-panel active" id="fpanel-spending">
+    <div class="quick-note-form">
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;">
+          <div class="field-label">Category</div>
+          <select id="fin-category" style="width:100%;">
+            <option value="stupid">Stupid Spending</option>
+            <option value="survival">Survival Spending</option>
+          </select>
+        </div>
+        <div style="width:110px;">
+          <div class="field-label">Amount</div>
+          <input type="number" id="fin-amount" step="0.01" min="0" placeholder="0.00" style="width:100%;" />
+        </div>
+      </div>
+      <div>
+        <div class="field-label">Description</div>
+        <input type="text" id="fin-description" placeholder="e.g. Junk food" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Date</div>
+        <input type="date" id="fin-date" style="width:100%;" />
+      </div>
+      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitSpendingEntry()">Add Entry</button>
+    </div>
+
+    <div class="cat-totals" id="fin-category-totals" style="display:flex;gap:12px;padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
+      <div style="flex:1;text-align:center;">
+        <div class="field-label">Stupid (this month)</div>
+        <div style="font-family:var(--font-mono);font-weight:700;font-size:1.1rem;" id="fin-total-stupid">$0.00</div>
+      </div>
+      <div style="flex:1;text-align:center;">
+        <div class="field-label">Survival (this month)</div>
+        <div style="font-family:var(--font-mono);font-weight:700;font-size:1.1rem;" id="fin-total-survival">$0.00</div>
+      </div>
+    </div>
+
+    <div class="notes-list" id="fin-spending-list">
+      <div class="empty-state"><span class="icon">&#128176;</span><span>No spending entries yet</span></div>
+    </div>
+  </div>
+
+  <!-- Recurring panel -->
+  <div class="finances-panel" id="fpanel-recurring">
+    <div class="quick-note-form">
+      <div>
+        <div class="field-label">Name</div>
+        <input type="text" id="fin-rec-name" class="lc-first" placeholder="e.g. Salary, Netflix" autocomplete="off" />
+      </div>
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;">
+          <div class="field-label">Kind</div>
+          <select id="fin-rec-kind" style="width:100%;">
+            <option value="income">Income</option>
+            <option value="expense">Expense</option>
+          </select>
+        </div>
+        <div style="width:110px;">
+          <div class="field-label">Amount</div>
+          <input type="number" id="fin-rec-amount" step="0.01" min="0" placeholder="0.00" style="width:100%;" />
+        </div>
+      </div>
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;">
+          <div class="field-label">Label <span style="color:var(--text-dim)">(account)</span></div>
+          <input type="text" id="fin-rec-label" placeholder="e.g. salary, netflix, taxes" autocomplete="off" />
+        </div>
+        <div style="flex:1;">
+          <div class="field-label">Frequency</div>
+          <select id="fin-rec-frequency" style="width:100%;">
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Biweekly</option>
+            <option value="monthly" selected>Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitRecurringItem()">Add Recurring Item</button>
+    </div>
+
+    <div class="notes-list" id="fin-recurring-list">
+      <div class="empty-state"><span class="icon">&#128257;</span><span>No recurring items yet</span></div>
+    </div>
+
+    <div style="padding:12px 16px;">
+      <div class="field-label">Projected balance trend (12 months)</div>
+      <canvas id="fin-projection-chart" height="180"></canvas>
     </div>
   </div>
 
@@ -3364,7 +3474,7 @@
   // APP NAVIGATION (Home / Lists / Notes / Log — full-screen overlays)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const OVERLAY_IDS = { home: 'home-overlay', lists: 'lists-overlay', notes: 'notes-overlay', log: 'log-overlay', todo: 'todo-overlay', projects: 'projects-overlay', 'project-detail': 'project-detail-overlay' };
+  const OVERLAY_IDS = { home: 'home-overlay', lists: 'lists-overlay', notes: 'notes-overlay', log: 'log-overlay', todo: 'todo-overlay', finances: 'finances-overlay', projects: 'projects-overlay', 'project-detail': 'project-detail-overlay' };
   let currentView = 'home';
 
   function showView(view, fromPopState, extra) {
@@ -3381,6 +3491,7 @@
     if (view === 'notes') notesOnOpen();
     if (view === 'log') logOnOpen();
     if (view === 'todo') todoOnOpen();
+    if (view === 'finances') financesOnOpen();
     if (view === 'projects') projectsOnOpen();
     if (view === 'project-detail') projectDetailOnOpen(extra && extra.projectId);
 
@@ -4509,6 +4620,231 @@
     } catch (_) {
       toast('Failed to delete project', true);
     }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FINANCES (spending tracker + recurring income/outgoings + trend chart)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const FINANCES_API = '/api/v1/finances';
+  let financesLoaded = false;
+  let financesChart = null;
+
+  function financesShowTab(tab) {
+    document.querySelectorAll('.finances-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('ftab-' + tab).classList.add('active');
+    document.querySelectorAll('.finances-panel').forEach(p => p.classList.remove('active'));
+    document.getElementById('fpanel-' + tab).classList.add('active');
+    if (tab === 'recurring') loadRecurringItems();
+  }
+
+  function financesOnOpen() {
+    if (!document.getElementById('fin-date').value) {
+      document.getElementById('fin-date').value = new Date().toISOString().slice(0, 10);
+    }
+    loadSpendingEntries();
+    loadSpendingStats();
+    if (document.getElementById('fpanel-recurring').classList.contains('active')) {
+      loadRecurringItems();
+    }
+    financesLoaded = true;
+  }
+
+  function monthRange() {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    return { from, to };
+  }
+
+  async function loadSpendingEntries() {
+    const list = document.getElementById('fin-spending-list');
+    try {
+      const r = await fetch(`${FINANCES_API}/spending`);
+      if (!r.ok) throw 0;
+      const entries = await r.json();
+      entries.sort((a, b) => b.date.localeCompare(a.date));
+      if (!entries.length) {
+        list.innerHTML = '<div class="empty-state"><span class="icon">&#128176;</span><span>No spending entries yet</span></div>';
+        return;
+      }
+      list.innerHTML = entries.map(renderSpendingEntry).join('');
+    } catch (_) {
+      list.innerHTML = '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load entries</span></div>';
+    }
+  }
+
+  function renderSpendingEntry(e) {
+    const catLabel = e.category === 'stupid' ? 'Stupid' : 'Survival';
+    return `
+      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
+        <div style="flex:1;">
+          <div style="font-weight:600;">${esc(e.description || '(no description)')}</div>
+          <div class="field-label">${esc(e.date)} &middot; ${catLabel}</div>
+        </div>
+        <div style="font-family:var(--font-mono);font-weight:700;">$${Number(e.amount).toFixed(2)}</div>
+        <button class="btn-ghost btn-sm" onclick="deleteSpendingEntry('${e.id}')">&times;</button>
+      </div>`;
+  }
+
+  async function deleteSpendingEntry(id) {
+    if (!confirm('Delete this spending entry?')) return;
+    try {
+      const r = await fetch(`${FINANCES_API}/spending/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw 0;
+      loadSpendingEntries();
+      loadSpendingStats();
+    } catch (_) {
+      toast('Failed to delete entry', true);
+    }
+  }
+
+  async function loadSpendingStats() {
+    try {
+      const { from, to } = monthRange();
+      const r = await fetch(`${FINANCES_API}/spending/stats?from=${from}&to=${to}`);
+      if (!r.ok) throw 0;
+      const totals = await r.json();
+      document.getElementById('fin-total-stupid').textContent = '$' + Number(totals.stupid || 0).toFixed(2);
+      document.getElementById('fin-total-survival').textContent = '$' + Number(totals.survival || 0).toFixed(2);
+    } catch (_) { /* stats are supplementary; leave zeros on failure */ }
+  }
+
+  async function submitSpendingEntry() {
+    const category = document.getElementById('fin-category').value;
+    const amount = parseFloat(document.getElementById('fin-amount').value);
+    const description = document.getElementById('fin-description').value.trim();
+    const date = document.getElementById('fin-date').value;
+    if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
+    if (!date) { toast('Pick a date', true); return; }
+    try {
+      const r = await fetch(`${FINANCES_API}/spending`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category, amount, description, date }),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('fin-amount').value = '';
+      document.getElementById('fin-description').value = '';
+      toast('Spending entry added');
+      loadSpendingEntries();
+      loadSpendingStats();
+    } catch (_) {
+      toast('Failed to add entry', true);
+    }
+  }
+
+  async function loadRecurringItems() {
+    const list = document.getElementById('fin-recurring-list');
+    try {
+      const r = await fetch(`${FINANCES_API}/recurring`);
+      if (!r.ok) throw 0;
+      const items = await r.json();
+      if (!items.length) {
+        list.innerHTML = '<div class="empty-state"><span class="icon">&#128257;</span><span>No recurring items yet</span></div>';
+      } else {
+        list.innerHTML = items.map(renderRecurringItem).join('');
+      }
+      loadProjectionChart();
+    } catch (_) {
+      list.innerHTML = '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load recurring items</span></div>';
+    }
+  }
+
+  function renderRecurringItem(item) {
+    const kindLabel = item.kind === 'income' ? 'Income' : 'Expense';
+    const freqLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', yearly: 'Yearly' };
+    return `
+      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
+        <div style="flex:1;">
+          <div style="font-weight:600;">${esc(item.name)}</div>
+          <div class="field-label">${kindLabel} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)}</div>
+        </div>
+        <div style="font-family:var(--font-mono);font-weight:700;">$${Number(item.amount).toFixed(2)}</div>
+        <button class="btn-ghost btn-sm" onclick="deleteRecurringItem('${item.id}')">&times;</button>
+      </div>`;
+  }
+
+  async function deleteRecurringItem(id) {
+    if (!confirm('Delete this recurring item?')) return;
+    try {
+      const r = await fetch(`${FINANCES_API}/recurring/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw 0;
+      loadRecurringItems();
+    } catch (_) {
+      toast('Failed to delete recurring item', true);
+    }
+  }
+
+  async function submitRecurringItem() {
+    const name = document.getElementById('fin-rec-name').value.trim();
+    const kind = document.getElementById('fin-rec-kind').value;
+    const amount = parseFloat(document.getElementById('fin-rec-amount').value);
+    const label = document.getElementById('fin-rec-label').value.trim();
+    const frequency = document.getElementById('fin-rec-frequency').value;
+    if (!name) { toast('Enter a name', true); return; }
+    if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
+    if (!label) { toast('Enter a label', true); return; }
+    try {
+      const r = await fetch(`${FINANCES_API}/recurring`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, amount, kind, label, frequency }),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('fin-rec-name').value = '';
+      document.getElementById('fin-rec-amount').value = '';
+      document.getElementById('fin-rec-label').value = '';
+      toast('Recurring item added');
+      loadRecurringItems();
+    } catch (_) {
+      toast('Failed to add recurring item', true);
+    }
+  }
+
+  async function loadProjectionChart() {
+    try {
+      const r = await fetch(`${FINANCES_API}/projection?months=12`);
+      if (!r.ok) throw 0;
+      const points = await r.json();
+      const labels = points.map(p => p.period_start);
+      const data = points.map(p => p.balance);
+      const draw = () => {
+        const ctx = document.getElementById('fin-projection-chart');
+        if (!ctx) return;
+        if (financesChart) financesChart.destroy();
+        financesChart = new window.Chart(ctx, {
+          type: 'line',
+          data: {
+            labels,
+            datasets: [{
+              label: 'Projected balance',
+              data,
+              borderColor: '#e8a33d',
+              backgroundColor: 'rgba(232,163,61,0.15)',
+              tension: 0.25,
+              fill: true,
+            }],
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+              y: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            },
+          },
+        });
+      };
+      if (window.Chart) {
+        draw();
+      } else {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+        s.onload = draw;
+        document.head.appendChild(s);
+      }
+    } catch (_) { /* chart is supplementary; leave it blank on failure */ }
   }
 </script>
 </body>

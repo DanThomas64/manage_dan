@@ -12,6 +12,7 @@ project = { path = "../project" }
 printer = { path = "../printer" }
 todo     = { path = "../todo" }
 lists = { path = "../lists" }
+finances = { path = "../finances" }
 tracing-subscriber = { version = "0.3.18", features = ["chrono"] }
 anyhow.workspace = true
 thiserror.workspace = true

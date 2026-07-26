@@ -32,6 +32,7 @@ pub struct SystemsStatus {
     pub printer: Status,
     pub todo: Status,
     pub lists: Status,
+    pub finances: Status,
 }
 
 /// Overall Go/NoGo status (mirrors app::nogo::SystemsGoNogo).
@@ -200,6 +201,65 @@ pub struct ProjectDetail {
     pub notes: Vec<Note>,
     pub logs: Vec<DailyLogEntry>,
     pub lists: Vec<ListCategory>,
+}
+
+// ---------------------------------------------------
+
+// --- Finances Data Structures (mirrors finances::models) ---
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpendingCategory {
+    Stupid,
+    Survival,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TxnKind {
+    Income,
+    Expense,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Frequency {
+    Weekly,
+    Biweekly,
+    Monthly,
+    Yearly,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SpendingEntry {
+    pub id: String,
+    pub date: chrono::NaiveDate,
+    pub description: String,
+    pub category: SpendingCategory,
+    pub amount: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringItem {
+    pub id: String,
+    pub name: String,
+    pub amount: f64,
+    pub kind: TxnKind,
+    pub label: String,
+    pub frequency: Frequency,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectionPoint {
+    pub period_start: chrono::NaiveDate,
+    pub period_end: chrono::NaiveDate,
+    pub balance: f64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CategoryTotals {
+    pub stupid: f64,
+    pub survival: f64,
 }
 
 // ---------------------------------------------------
@@ -513,5 +573,66 @@ impl ApiClient {
         let url = format!("{}/api/v1/project/{}", self.base_url, id);
         self.client.delete(&url).send().await?.error_for_status()?;
         Ok(())
+    }
+
+    // --- Finances Methods ---
+
+    pub async fn fetch_spending_entries(&self) -> Result<Vec<SpendingEntry>> {
+        let url = format!("{}/api/v1/finances/spending", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn add_spending_entry(
+        &self,
+        category: SpendingCategory,
+        amount: f64,
+        description: &str,
+        date: chrono::NaiveDate,
+    ) -> Result<SpendingEntry> {
+        let url = format!("{}/api/v1/finances/spending", self.base_url);
+        Ok(self.client.post(&url)
+            .json(&serde_json::json!({ "category": category, "amount": amount, "description": description, "date": date }))
+            .send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn delete_spending_entry(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/v1/finances/spending/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn fetch_spending_stats(&self) -> Result<CategoryTotals> {
+        let url = format!("{}/api/v1/finances/spending/stats", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn fetch_recurring_items(&self) -> Result<Vec<RecurringItem>> {
+        let url = format!("{}/api/v1/finances/recurring", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn add_recurring_item(
+        &self,
+        name: &str,
+        amount: f64,
+        kind: TxnKind,
+        label: &str,
+        frequency: Frequency,
+    ) -> Result<RecurringItem> {
+        let url = format!("{}/api/v1/finances/recurring", self.base_url);
+        Ok(self.client.post(&url)
+            .json(&serde_json::json!({ "name": name, "amount": amount, "kind": kind, "label": label, "frequency": frequency }))
+            .send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn delete_recurring_item(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/v1/finances/recurring/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn fetch_projection(&self, months: u32) -> Result<Vec<ProjectionPoint>> {
+        let url = format!("{}/api/v1/finances/projection?months={}", self.base_url, months);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
     }
 }

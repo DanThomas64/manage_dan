@@ -56,3 +56,9 @@ nb_notebook = "todo"
 # Base directory project folders are created under. Supports a leading "~/"
 # for the user's home directory.
 base_dir = "~/projects"
+
+[finances]
+# Path to the hledger journal file (relative to the working directory, or
+# absolute). The parent directory and an empty file are created
+# automatically if missing.
+journal_path = "data/finances.journal"

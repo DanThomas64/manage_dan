@@ -38,6 +38,15 @@ pub struct ProjectConfig {
     pub base_dir: String,
 }
 
+/// Configuration for the finances subsystem.
+#[derive(Debug, Deserialize, Clone)]
+pub struct FinancesConfig {
+    /// Path to the hledger journal file. Relative paths are resolved from
+    /// the process working directory. The parent directory and an empty
+    /// file are created automatically if missing.
+    pub journal_path: String,
+}
+
 /// File logging configuration.
 ///
 /// Override with `APP_LOGGING__FILE=/path/to/app.log` env var, or set
@@ -56,6 +65,7 @@ pub struct AppConfig {
     pub printer: PrinterConfig,
     pub todo: TodoConfig,
     pub project: ProjectConfig,
+    pub finances: FinancesConfig,
     /// TCP port the HTTP API server listens on. Overridable per-run (e.g. via
     /// `APP_API_PORT`) so a scratch/test instance can run alongside the real
     /// deployed service without a port conflict.
@@ -94,6 +104,7 @@ impl AppConfig {
 
             .set_default("todo.nb_notebook", "todo")?
             .set_default("project.base_dir", "~/projects")?
+            .set_default("finances.journal_path", "data/finances.journal")?
             .set_default("api_port", 8080u64)?
             .set_default("monitor_interval_secs", 30u64)?
             .set_default("summary_hour", 8u64)?

@@ -27,6 +27,7 @@ pub struct SystemsStatus {
     pub printer: Status,
     pub todo: Status,
     pub lists: Status,
+    pub finances: Status,
 }
 
 /// Holds the overall Go/NoGo status of the application.
@@ -121,6 +122,7 @@ impl SystemsStatus {
             printer: Status::Init,
             todo: Status::Init,
             lists: Status::Init,
+            finances: Status::Init,
         }
     }
     // TODO: Create Error handling for this
@@ -185,6 +187,15 @@ impl SystemsStatus {
             false => self.update("lists", Status::Nogo),
         };
 
+        // initialize finances (hledger backend)
+        match finances::init(&AppConfig::get().finances.journal_path)
+            .map_err(|e| AppError::Finances(e).print())
+            .is_ok()
+        {
+            true => self.update("finances", Status::Go),
+            false => self.update("finances", Status::Nogo),
+        };
+
         *self
     }
 
@@ -206,6 +217,7 @@ impl SystemsStatus {
             "printer" => self.printer = status,
             "todo" => self.todo = status,
             "lists" => self.lists = status,
+            "finances" => self.finances = status,
             _ => _ = Status::Unknown,
         }
         *self
@@ -230,6 +242,7 @@ impl Iterator for SystemsIter {
             4 => Some(("printer", self.systems.printer)),
             5 => Some(("todo", self.systems.todo)),
             6 => Some(("lists", self.systems.lists)),
+            7 => Some(("finances", self.systems.finances)),
             _ => None,
         };
         self.index += 1;

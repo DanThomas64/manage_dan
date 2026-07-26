@@ -25,6 +25,8 @@ pub enum AppError {
     Todo(#[from] TodoLibError),
     #[error(transparent)]
     Lists(#[from] ListsLibError),
+    #[error(transparent)]
+    Finances(#[from] FinancesLibError),
 
     #[error("systemstatus monitor has failed: {0}")]
     SystemStatusMonitorFail(String),
