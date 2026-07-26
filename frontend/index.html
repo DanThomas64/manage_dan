@@ -1190,6 +1190,10 @@
 
     .notes-panel, .log-panel, .todo-panel, .finances-panel { display: none; flex: 1; flex-direction: column; overflow: hidden; }
     .notes-panel.active, .log-panel.active, .todo-panel.active, .finances-panel.active { display: flex; }
+    /* Recurring's add-form + item list + preview builder + chart can add up
+       to more than one screen's worth of content — let the whole panel
+       scroll rather than clipping via the shared overflow:hidden above. */
+    .finances-panel { overflow-y: auto; overflow-x: hidden; }
 
     /* ── Home landing page ── */
     .home-hero {
@@ -1949,9 +1953,24 @@
       <div class="empty-state"><span class="icon">&#128257;</span><span>No recurring items yet</span></div>
     </div>
 
-    <div style="padding:12px 16px;">
-      <div class="field-label">Projected balance trend (12 months)</div>
-      <canvas id="fin-projection-chart" height="180"></canvas>
+    <div style="padding:8px 16px;border-top:1px dashed var(--border);flex-shrink:0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div class="field-label">Preview test items <span style="color:var(--text-dim)">(not saved — shows their combined effect on the chart below)</span></div>
+        <button class="btn-ghost btn-sm" onclick="addPreviewRow()">+ Add</button>
+      </div>
+      <div id="fin-preview-rows" style="margin-top:6px;"></div>
+      <div style="display:flex;gap:8px;margin-top:4px;">
+        <button class="btn-primary" style="flex:1;padding:8px;" onclick="submitProjectionPreview()">Preview</button>
+        <button class="btn-ghost btn-sm" id="fin-preview-clear-btn" style="display:none;" onclick="clearProjectionPreview()">Clear</button>
+      </div>
+    </div>
+
+    <div style="padding:12px 16px;flex-shrink:0;">
+      <div class="field-label">Projected balance trend (<span id="fin-months-label">12 months</span>)</div>
+      <input type="range" id="fin-months-slider" min="1" max="36" value="12" style="width:100%;" oninput="onMonthsSliderInput(this.value)" />
+      <div style="width:100%;">
+        <canvas id="fin-projection-chart"></canvas>
+      </div>
     </div>
   </div>
 
@@ -4793,20 +4812,34 @@
     }
   }
 
+  let lastRecurringItems = [];
+  let previewExcludedIds = new Set();
+
   async function loadRecurringItems() {
-    const list = document.getElementById('fin-recurring-list');
     try {
       const r = await fetch(`${FINANCES_API}/recurring`);
       if (!r.ok) throw 0;
-      const items = await r.json();
-      if (!items.length) {
-        list.innerHTML = '<div class="empty-state"><span class="icon">&#128257;</span><span>No recurring items yet</span></div>';
-      } else {
-        list.innerHTML = items.map(renderRecurringItem).join('');
-      }
+      lastRecurringItems = await r.json();
+      renderRecurringItemsList();
+      // The baseline changed — any previously previewed scenario is stale now.
+      previewExcludedIds = new Set();
+      previewRowKeys = [];
+      renderPreviewRows();
+      previewProjectionPoints = null;
+      document.getElementById('fin-preview-clear-btn').style.display = 'none';
       loadProjectionChart();
     } catch (_) {
-      list.innerHTML = '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load recurring items</span></div>';
+      document.getElementById('fin-recurring-list').innerHTML =
+        '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load recurring items</span></div>';
+    }
+  }
+
+  function renderRecurringItemsList() {
+    const list = document.getElementById('fin-recurring-list');
+    if (!lastRecurringItems.length) {
+      list.innerHTML = '<div class="empty-state"><span class="icon">&#128257;</span><span>No recurring items yet</span></div>';
+    } else {
+      list.innerHTML = lastRecurringItems.map(renderRecurringItem).join('');
     }
   }
 
@@ -4815,22 +4848,42 @@
     const freqLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', yearly: 'Yearly' };
     const refDateLine = item.reference_date ? ` &middot; from ${esc(item.reference_date)}` : '';
     const acctLine = item.account ? ` &middot; ${esc(accountDisplayName(item.account))}` : '';
+    const excluded = previewExcludedIds.has(item.id);
     return `
-      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
+      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;${excluded ? 'opacity:0.55;' : ''}">
         <div style="flex:1;">
-          <div style="font-weight:600;">${esc(item.name)}</div>
+          <div style="font-weight:600;${excluded ? 'text-decoration:line-through;' : ''}">${esc(item.name)}</div>
           <div class="field-label">${kindLabel} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)}${acctLine}${refDateLine}</div>
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(item.amount).toFixed(2)}</div>
+        <button class="btn-ghost btn-sm" title="${excluded ? 'Stop previewing removal' : 'Preview removing this item'}" onclick="toggleExcludeRecurring('${item.id}')">${excluded ? '&#8617;' : '&#128065;'}</button>
         <button class="btn-ghost btn-sm" onclick="deleteRecurringItem('${item.id}')">&times;</button>
       </div>`;
   }
 
+  function toggleExcludeRecurring(id) {
+    if (previewExcludedIds.has(id)) {
+      previewExcludedIds.delete(id);
+    } else {
+      previewExcludedIds.add(id);
+    }
+    renderRecurringItemsList();
+    if (previewExcludedIds.size > 0 || previewRowKeys.length > 0) {
+      submitProjectionPreview();
+    } else {
+      clearProjectionPreview();
+    }
+  }
+
   async function deleteRecurringItem(id) {
-    if (!confirm('Delete this recurring item?')) return;
+    const item = lastRecurringItems.find(i => i.id === id);
+    const kindWord = item && item.kind === 'income' ? 'income' : 'expense';
+    const detail = item ? `"${item.name}" ($${Number(item.amount).toFixed(2)} / ${item.frequency})` : 'this item';
+    if (!confirm(`Permanently delete the recurring ${kindWord} ${detail}?\n\nThis cannot be undone. Use the eye icon instead if you just want to preview removing it.`)) return;
     try {
       const r = await fetch(`${FINANCES_API}/recurring/${id}`, { method: 'DELETE' });
       if (!r.ok) throw 0;
+      previewExcludedIds.delete(id);
       loadRecurringItems();
     } catch (_) {
       toast('Failed to delete recurring item', true);
@@ -4867,49 +4920,179 @@
     }
   }
 
+  let lastProjectionPoints = [];
+  let previewProjectionPoints = null;
+  let projectionMonths = 12;
+  let previewRowKeys = [];
+  let previewRowCounter = 0;
+
+  function onMonthsSliderInput(v) {
+    projectionMonths = parseInt(v, 10);
+    document.getElementById('fin-months-label').textContent = projectionMonths + (projectionMonths === 1 ? ' month' : ' months');
+    scheduleMonthsRefresh();
+  }
+
+  let monthsRefreshTimer = null;
+  function scheduleMonthsRefresh() {
+    clearTimeout(monthsRefreshTimer);
+    monthsRefreshTimer = setTimeout(() => {
+      loadProjectionChart();
+      if (previewExcludedIds.size > 0 || previewRowKeys.length > 0) submitProjectionPreview();
+    }, 300);
+  }
+
+  function chartAspectRatio() {
+    const w = window.innerWidth;
+    if (w < 480) return 1.1;
+    if (w < 768) return 1.7;
+    if (w < 1200) return 2.4;
+    return 3.2;
+  }
+
   async function loadProjectionChart() {
     try {
-      const r = await fetch(`${FINANCES_API}/projection?months=12`);
+      const r = await fetch(`${FINANCES_API}/projection?months=${projectionMonths}`);
       if (!r.ok) throw 0;
-      const points = await r.json();
-      const labels = points.map(p => p.period_start);
-      const data = points.map(p => p.balance);
-      const draw = () => {
-        const ctx = document.getElementById('fin-projection-chart');
-        if (!ctx) return;
-        if (financesChart) financesChart.destroy();
-        financesChart = new window.Chart(ctx, {
-          type: 'line',
-          data: {
-            labels,
-            datasets: [{
-              label: 'Projected balance',
-              data,
-              borderColor: '#e8a33d',
-              backgroundColor: 'rgba(232,163,61,0.15)',
-              tension: 0.25,
-              fill: true,
-            }],
-          },
-          options: {
-            responsive: true,
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-              y: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-            },
-          },
-        });
-      };
-      if (window.Chart) {
-        draw();
-      } else {
-        const s = document.createElement('script');
-        s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
-        s.onload = draw;
-        document.head.appendChild(s);
-      }
+      lastProjectionPoints = await r.json();
+      renderProjectionChart();
     } catch (_) { /* chart is supplementary; leave it blank on failure */ }
+  }
+
+  function renderProjectionChart() {
+    const labels = lastProjectionPoints.map(p => p.period_start);
+    const datasets = [{
+      label: 'Projected balance',
+      data: lastProjectionPoints.map(p => p.balance),
+      borderColor: '#e8a33d',
+      backgroundColor: 'rgba(232,163,61,0.15)',
+      tension: 0.25,
+      fill: true,
+    }];
+    if (previewProjectionPoints) {
+      datasets.push({
+        label: 'Preview scenario',
+        data: previewProjectionPoints.map(p => p.balance),
+        borderColor: '#6ec1ff',
+        backgroundColor: 'rgba(110,193,255,0.08)',
+        borderDash: [6, 4],
+        tension: 0.25,
+        fill: false,
+      });
+    }
+    const draw = () => {
+      const ctx = document.getElementById('fin-projection-chart');
+      if (!ctx) return;
+      if (financesChart) financesChart.destroy();
+      financesChart = new window.Chart(ctx, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: chartAspectRatio(),
+          plugins: { legend: { display: !!previewProjectionPoints, labels: { color: '#a89b86' } } },
+          scales: {
+            x: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          },
+        },
+      });
+    };
+    if (window.Chart) {
+      draw();
+    } else {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+      s.onload = draw;
+      document.head.appendChild(s);
+    }
+  }
+
+  let chartResizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(chartResizeTimer);
+    chartResizeTimer = setTimeout(() => {
+      if (document.getElementById('fpanel-recurring').classList.contains('active')) renderProjectionChart();
+    }, 200);
+  });
+
+  function addPreviewRow() {
+    previewRowKeys.push(previewRowCounter++);
+    renderPreviewRows();
+  }
+
+  function removePreviewRow(key) {
+    previewRowKeys = previewRowKeys.filter(k => k !== key);
+    renderPreviewRows();
+  }
+
+  function accountOptionsHtml(accounts) {
+    return accounts.map(a =>
+      `<option value="${esc(a.kind === 'asset' ? 'assets' : 'liabilities')}:${esc(a.slug)}">${esc(a.name)} (${a.kind === 'asset' ? 'Asset' : 'Liability'})</option>`
+    ).join('');
+  }
+
+  function previewRowHtml(key) {
+    return `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;" data-preview-row="${key}">
+        <input type="text" id="fin-preview-name-${key}" class="lc-first" placeholder="Name" style="flex:2;min-width:100px;" autocomplete="off" />
+        <select id="fin-preview-kind-${key}" style="flex:1;min-width:80px;">
+          <option value="expense">Expense</option>
+          <option value="income">Income</option>
+        </select>
+        <input type="number" id="fin-preview-amount-${key}" step="0.01" min="0" placeholder="Amt" style="flex:1;min-width:70px;" />
+        <select id="fin-preview-frequency-${key}" style="flex:1;min-width:90px;">
+          <option value="weekly">Weekly</option>
+          <option value="biweekly">Biweekly</option>
+          <option value="monthly" selected>Monthly</option>
+          <option value="yearly">Yearly</option>
+        </select>
+        <select id="fin-preview-account-${key}" style="flex:1;min-width:90px;">${accountOptionsHtml(accountsCache)}</select>
+        <button class="btn-ghost btn-sm" onclick="removePreviewRow(${key})">&times;</button>
+      </div>`;
+  }
+
+  function renderPreviewRows() {
+    document.getElementById('fin-preview-rows').innerHTML = previewRowKeys.map(previewRowHtml).join('');
+  }
+
+  async function submitProjectionPreview() {
+    const items = [];
+    for (const key of previewRowKeys) {
+      const name = document.getElementById(`fin-preview-name-${key}`).value.trim();
+      const kind = document.getElementById(`fin-preview-kind-${key}`).value;
+      const amount = parseFloat(document.getElementById(`fin-preview-amount-${key}`).value);
+      const frequency = document.getElementById(`fin-preview-frequency-${key}`).value;
+      const account = document.getElementById(`fin-preview-account-${key}`).value;
+      if (!name || !amount || amount <= 0 || !account) continue;
+      items.push({ name, kind, amount, frequency, account, reference_date: null });
+    }
+    const exclude_recurring_ids = [...previewExcludedIds];
+    if (!items.length && !exclude_recurring_ids.length) {
+      toast('Add a test item, or use the eye icon to preview removing one', true);
+      return;
+    }
+    try {
+      const r = await fetch(`${FINANCES_API}/projection/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, exclude_recurring_ids, months: projectionMonths }),
+      });
+      if (!r.ok) throw 0;
+      previewProjectionPoints = await r.json();
+      document.getElementById('fin-preview-clear-btn').style.display = '';
+      renderProjectionChart();
+    } catch (_) {
+      toast('Failed to compute preview', true);
+    }
+  }
+
+  function clearProjectionPreview() {
+    previewProjectionPoints = null;
+    previewExcludedIds = new Set();
+    document.getElementById('fin-preview-clear-btn').style.display = 'none';
+    renderRecurringItemsList();
+    renderProjectionChart();
   }
 
   async function fetchAccountsList() {
@@ -4924,9 +5107,7 @@
     for (const selectId of ['fin-account', 'fin-rec-account']) {
       const select = document.getElementById(selectId);
       const previous = select.value;
-      select.innerHTML = accounts.map(a =>
-        `<option value="${esc(a.kind === 'asset' ? 'assets' : 'liabilities')}:${esc(a.slug)}">${esc(a.name)} (${a.kind === 'asset' ? 'Asset' : 'Liability'})</option>`
-      ).join('');
+      select.innerHTML = accountOptionsHtml(accounts);
       if ([...select.options].some(o => o.value === previous)) select.value = previous;
     }
   }

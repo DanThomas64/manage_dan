@@ -160,6 +160,20 @@ pub struct RecurringItem {
     pub account: String,
 }
 
+/// One hypothetical, never-persisted recurring item fed into
+/// `preview_projection` — same shape as `RecurringItem`'s creation fields,
+/// minus an `id` (each gets a fresh scratch-only one) and plus a
+/// user-facing `name` so several can be told apart in the preview UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviewItem {
+    pub name: String,
+    pub amount: f64,
+    pub kind: TxnKind,
+    pub frequency: Frequency,
+    pub reference_date: Option<NaiveDate>,
+    pub account: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionPoint {
     pub period_start: NaiveDate,

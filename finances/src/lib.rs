@@ -16,7 +16,7 @@ pub mod models;
 
 use crate::finances_prelude::*;
 use crate::models::{
-    Account, AccountKind, CategoryTotals, Frequency, ProjectionPoint, RecurringItem,
+    Account, AccountKind, CategoryTotals, Frequency, PreviewItem, ProjectionPoint, RecurringItem,
     SpendingCategory, SpendingEntry, TxnKind,
 };
 use chrono::{Local, Months, NaiveDate};
@@ -419,4 +419,67 @@ pub async fn projection(
         .collect();
 
     Ok(points)
+}
+
+/// Previews the effect of adding any number of hypothetical recurring items
+/// and/or excluding existing ones from the projected balance trend, without
+/// persisting anything to the real journal — reuses hledger's own forecast
+/// math (rather than approximating it) by writing a scratch copy of the
+/// journal (real content, minus any blocks tagged with an id in
+/// `exclude_recurring_ids`, plus one extra periodic rule per hypothetical
+/// item) and running the normal `projection()` against that, then deleting
+/// the scratch file regardless of outcome. If both `items` and
+/// `exclude_recurring_ids` are empty, skips the scratch file entirely and
+/// just re-runs the real projection.
+pub async fn preview_projection(
+    journal_path: &str,
+    months_ahead: u32,
+    items: &[PreviewItem],
+    exclude_recurring_ids: &[String],
+) -> FinancesLibResult<Vec<ProjectionPoint>> {
+    if items.is_empty() && exclude_recurring_ids.is_empty() {
+        return projection(journal_path, months_ahead).await;
+    }
+
+    let real_content = tokio::fs::read_to_string(journal_path)
+        .await
+        .map_err(FinancesLibError::Io)?;
+
+    let mut combined = if exclude_recurring_ids.is_empty() {
+        real_content
+    } else {
+        real_content
+            .split("\n\n")
+            .filter(|block| {
+                !exclude_recurring_ids
+                    .iter()
+                    .any(|id| block.contains(&format!("id:{id}")))
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+
+    for item in items {
+        let scratch_id = format!("preview-{}", uuid::Uuid::new_v4());
+        let name = if item.name.trim().is_empty() { "Preview" } else { item.name.trim() };
+        combined.push('\n');
+        combined.push_str(&journal_writer::format_recurring_item(
+            &scratch_id,
+            name,
+            item.amount,
+            item.kind,
+            "preview",
+            item.frequency,
+            item.reference_date,
+            &item.account,
+        ));
+    }
+    let scratch_path = format!("{journal_path}.preview-{}.tmp", uuid::Uuid::new_v4());
+    tokio::fs::write(&scratch_path, combined.as_bytes())
+        .await
+        .map_err(FinancesLibError::Io)?;
+
+    let result = projection(&scratch_path, months_ahead).await;
+    let _ = tokio::fs::remove_file(&scratch_path).await;
+    result
 }
