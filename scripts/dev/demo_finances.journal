@@ -1,38 +1,116 @@
-2026-06-02 Rent  ; id:demo-rent-jun
-    expenses:rent    $1200.00
+account assets:checking  ; id:demo-acct-checking name:Checking
+
+account assets:savings  ; id:demo-acct-savings name:Savings
+
+account liabilities:visa  ; id:demo-acct-visa name:Visa
+
+2026-05-01 Salary  ; id:demo-salary-may
+    assets:checking    $2200.00
+    income:salary
+
+2026-05-04 Grocery run  ; id:demo-groc-0
+    expenses:survival    $77.85
+    assets:checking
+
+2026-05-09 Concert tickets  ; id:demo-impulse-0
+    expenses:stupid    $145.00
+    liabilities:visa
+
+2026-05-15 Salary  ; id:demo-salary-may-2
+    assets:checking    $2200.00
+    income:salary
+
+2026-05-20 Transfer to savings  ; id:demo-transfer-0
+    assets:savings    $300.00
     assets:checking
 
 2026-06-01 Salary  ; id:demo-salary-jun
     assets:checking    $2200.00
     income:salary
 
+2026-06-02 Rent  ; id:demo-rent-jun
+    expenses:rent    $1200.00
+    assets:checking
+
 2026-06-05 Grocery run  ; id:demo-groc-1
     expenses:survival    $84.32
     assets:checking
+
+2026-06-09 New shoes  ; id:demo-impulse-2
+    expenses:stupid    $89.99
+    liabilities:visa
 
 2026-06-12 Impulse buy  ; id:demo-impulse-1
     expenses:stupid    $22.50
     assets:checking
 
+2026-06-15 Salary  ; id:demo-salary-jun-2
+    assets:checking    $2200.00
+    income:salary
+
+2026-06-18 Pharmacy  ; id:demo-survival-2
+    expenses:survival    $34.60
+    liabilities:visa
+
+2026-06-20 Visa payment  ; id:demo-visa-payment-jun
+    liabilities:visa    $150.00
+    assets:checking
+
+2026-06-25 Balance adjustment  ; id:demo-adjustment-savings
+    assets:savings    $-5.00
+    equity:adjustments
+
 2026-07-01 Salary  ; id:demo-salary-jul
     assets:checking    $2200.00
     income:salary
+
+2026-07-02 Rent  ; id:demo-rent-jul
+    expenses:rent    $1200.00
+    assets:checking
 
 2026-07-03 Grocery run  ; id:demo-groc-2
     expenses:survival    $91.10
     assets:checking
 
+2026-07-08 Bar night  ; id:demo-impulse-3
+    expenses:stupid    $56.20
+    liabilities:visa
+
 2026-07-10 Takeout  ; id:demo-stupid-2
     expenses:stupid    $38.75
     assets:checking
 
-~ monthly  ; id:demo-rec-netflix name:Netflix
-    expenses:netflix    $15.49
+2026-07-15 Salary  ; id:demo-salary-jul-2
+    assets:checking    $2200.00
+    income:salary
+
+2026-07-18 Dentist  ; id:demo-survival-3
+    expenses:survival    $210.00
+    assets:checking
+
+2026-07-20 Visa payment  ; id:demo-visa-payment-jul
+    liabilities:visa    $180.00
     assets:checking
 
 ~ every 2 weeks from 2026-01-06  ; id:demo-rec-salary name:Salary
     assets:checking    $2200.00
     income:salary
+
+~ monthly  ; id:demo-rec-rent name:Rent
+    expenses:rent    $1200.00
+    assets:checking
+
+~ monthly  ; id:demo-rec-netflix name:Netflix
+    expenses:netflix    $15.49
+    liabilities:visa
+
+~ weekly  ; id:demo-rec-coffee name:Coffee subscription
+    expenses:stupid    $6.50
+    liabilities:visa
+
+~ monthly  ; id:demo-rec-gym name:Gym membership
+    expenses:survival    $42.00
+    liabilities:visa
 
 ~ yearly  ; id:demo-rec-insurance name:Insurance
     expenses:insurance    $640.00

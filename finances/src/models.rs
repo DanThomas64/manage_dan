@@ -90,6 +90,54 @@ pub fn parse_period_phrase(period: &str) -> Option<(Frequency, Option<NaiveDate>
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountKind {
+    Asset,
+    Liability,
+}
+
+impl AccountKind {
+    /// The hledger top-level account this kind posts under.
+    pub fn prefix(&self) -> &'static str {
+        match self {
+            AccountKind::Asset => "assets",
+            AccountKind::Liability => "liabilities",
+        }
+    }
+
+    pub fn from_prefix(prefix: &str) -> Option<Self> {
+        match prefix {
+            "assets" => Some(AccountKind::Asset),
+            "liabilities" => Some(AccountKind::Liability),
+            _ => None,
+        }
+    }
+}
+
+/// A user-managed account (checking, savings, a credit card, ...) that
+/// spending entries and recurring items post their non-category leg against.
+/// Registered in the journal via an `account` directive line (declares the
+/// name without requiring a transaction); `balance` is populated separately
+/// from a live `hledger balance` query, never stored — hledger, not this
+/// struct, is the source of truth for the number itself.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub id: String,
+    pub name: String,
+    pub kind: AccountKind,
+    pub slug: String,
+    pub balance: f64,
+}
+
+impl Account {
+    /// The full hledger account path this account posts against, e.g.
+    /// `assets:checking` or `liabilities:visa`.
+    pub fn hledger_account(&self) -> String {
+        format!("{}:{}", self.kind.prefix(), self.slug)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendingEntry {
     pub id: String,
@@ -97,6 +145,7 @@ pub struct SpendingEntry {
     pub description: String,
     pub category: SpendingCategory,
     pub amount: f64,
+    pub account: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +157,7 @@ pub struct RecurringItem {
     pub label: String,
     pub frequency: Frequency,
     pub reference_date: Option<NaiveDate>,
+    pub account: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
