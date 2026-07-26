@@ -58,7 +58,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "app"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "finances"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3425,7 +3425,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tui"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "anyhow",
  "chrono",

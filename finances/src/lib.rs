@@ -232,8 +232,18 @@ pub async fn add_recurring_item(
     kind: TxnKind,
     label: &str,
     frequency: Frequency,
+    reference_date: Option<NaiveDate>,
 ) -> FinancesLibResult<RecurringItem> {
-    journal_writer::append_recurring_item(journal_path, name, amount, kind, label, frequency).await
+    journal_writer::append_recurring_item(
+        journal_path,
+        name,
+        amount,
+        kind,
+        label,
+        frequency,
+        reference_date,
+    )
+    .await
 }
 
 pub async fn list_recurring_items(journal_path: &str) -> FinancesLibResult<Vec<RecurringItem>> {

@@ -247,6 +247,7 @@ pub struct RecurringItem {
     pub kind: TxnKind,
     pub label: String,
     pub frequency: Frequency,
+    pub reference_date: Option<chrono::NaiveDate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -618,10 +619,11 @@ impl ApiClient {
         kind: TxnKind,
         label: &str,
         frequency: Frequency,
+        reference_date: Option<chrono::NaiveDate>,
     ) -> Result<RecurringItem> {
         let url = format!("{}/api/v1/finances/recurring", self.base_url);
         Ok(self.client.post(&url)
-            .json(&serde_json::json!({ "name": name, "amount": amount, "kind": kind, "label": label, "frequency": frequency }))
+            .json(&serde_json::json!({ "name": name, "amount": amount, "kind": kind, "label": label, "frequency": frequency, "reference_date": reference_date }))
             .send().await?.error_for_status()?.json().await?)
     }
 

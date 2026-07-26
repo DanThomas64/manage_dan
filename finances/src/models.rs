@@ -64,6 +64,32 @@ impl Frequency {
     }
 }
 
+/// Builds the full hledger period expression for a periodic-rule header —
+/// just `frequency.period_phrase()` if there's no reference date, or that
+/// phrase plus hledger's own `from <date>` anchor clause otherwise, so a
+/// biweekly/etc. item's forecasted occurrences actually land on the
+/// reference date's cadence instead of hledger's default anchor (today /
+/// the report's start date).
+pub fn build_period_phrase(frequency: Frequency, reference_date: Option<NaiveDate>) -> String {
+    match reference_date {
+        Some(d) => format!("{} from {}", frequency.period_phrase(), d.format("%Y-%m-%d")),
+        None => frequency.period_phrase().to_string(),
+    }
+}
+
+/// Inverse of `build_period_phrase`: splits a period expression back into its
+/// `Frequency` and optional reference date.
+pub fn parse_period_phrase(period: &str) -> Option<(Frequency, Option<NaiveDate>)> {
+    match period.split_once(" from ") {
+        Some((phrase, date_str)) => {
+            let frequency = Frequency::from_period_phrase(phrase.trim())?;
+            let reference_date = NaiveDate::parse_from_str(date_str.trim(), "%Y-%m-%d").ok();
+            Some((frequency, reference_date))
+        }
+        None => Frequency::from_period_phrase(period.trim()).map(|f| (f, None)),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendingEntry {
     pub id: String,
@@ -81,6 +107,7 @@ pub struct RecurringItem {
     pub kind: TxnKind,
     pub label: String,
     pub frequency: Frequency,
+    pub reference_date: Option<NaiveDate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

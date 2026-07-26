@@ -6,7 +6,9 @@
 //! reads them back.
 
 use crate::finances_prelude::*;
-use crate::models::{Frequency, RecurringItem, SpendingCategory, SpendingEntry, TxnKind};
+use crate::models::{
+    build_period_phrase, Frequency, RecurringItem, SpendingCategory, SpendingEntry, TxnKind,
+};
 use chrono::NaiveDate;
 use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
@@ -48,6 +50,7 @@ pub fn format_recurring_item(
     kind: TxnKind,
     label: &str,
     frequency: Frequency,
+    reference_date: Option<NaiveDate>,
 ) -> String {
     let label = sanitize_account_leaf(label);
     let (debit, credit) = match kind {
@@ -56,7 +59,7 @@ pub fn format_recurring_item(
     };
     format!(
         "~ {period}  ; id:{id} name:{name}\n    {debit}    ${amount:.2}\n    {credit}\n\n",
-        period = frequency.period_phrase(),
+        period = build_period_phrase(frequency, reference_date),
         id = id,
         name = sanitize_line(name),
         debit = debit,
@@ -104,9 +107,10 @@ pub async fn append_recurring_item(
     kind: TxnKind,
     label: &str,
     frequency: Frequency,
+    reference_date: Option<NaiveDate>,
 ) -> FinancesLibResult<RecurringItem> {
     let id = Uuid::new_v4().to_string();
-    let text = format_recurring_item(&id, name, amount, kind, label, frequency);
+    let text = format_recurring_item(&id, name, amount, kind, label, frequency, reference_date);
     append(journal_path, &text).await?;
     Ok(RecurringItem {
         id,
@@ -115,6 +119,7 @@ pub async fn append_recurring_item(
         kind,
         label: sanitize_account_leaf(label),
         frequency,
+        reference_date,
     })
 }
 
@@ -180,6 +185,7 @@ mod tests {
             TxnKind::Expense,
             "netflix",
             Frequency::Monthly,
+            None,
         );
         assert_eq!(
             text,
@@ -196,10 +202,29 @@ mod tests {
             TxnKind::Income,
             "salary",
             Frequency::Biweekly,
+            None,
         );
         assert_eq!(
             text,
             "~ every 2 weeks  ; id:rec-2 name:Salary\n    assets:checking    $2000.00\n    income:salary\n\n"
+        );
+    }
+
+    #[test]
+    fn recurring_item_with_reference_date_embeds_from_clause() {
+        let reference_date = NaiveDate::from_ymd_opt(2026, 1, 6).unwrap();
+        let text = format_recurring_item(
+            "rec-3",
+            "Rent",
+            1200.0,
+            TxnKind::Expense,
+            "rent",
+            Frequency::Biweekly,
+            Some(reference_date),
+        );
+        assert_eq!(
+            text,
+            "~ every 2 weeks from 2026-01-06  ; id:rec-3 name:Rent\n    expenses:rent    $1200.00\n    assets:checking\n\n"
         );
     }
 

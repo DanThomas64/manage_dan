@@ -1925,6 +1925,10 @@
           </select>
         </div>
       </div>
+      <div>
+        <div class="field-label">Reference Date <span style="color:var(--text-dim)">(optional — anchors the cadence, e.g. a known payday)</span></div>
+        <input type="date" id="fin-rec-refdate" style="width:100%;" />
+      </div>
       <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitRecurringItem()">Add Recurring Item</button>
     </div>
 
@@ -4758,11 +4762,12 @@
   function renderRecurringItem(item) {
     const kindLabel = item.kind === 'income' ? 'Income' : 'Expense';
     const freqLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', yearly: 'Yearly' };
+    const refDateLine = item.reference_date ? ` &middot; from ${esc(item.reference_date)}` : '';
     return `
       <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
         <div style="flex:1;">
           <div style="font-weight:600;">${esc(item.name)}</div>
-          <div class="field-label">${kindLabel} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)}</div>
+          <div class="field-label">${kindLabel} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)}${refDateLine}</div>
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(item.amount).toFixed(2)}</div>
         <button class="btn-ghost btn-sm" onclick="deleteRecurringItem('${item.id}')">&times;</button>
@@ -4786,6 +4791,7 @@
     const amount = parseFloat(document.getElementById('fin-rec-amount').value);
     const label = document.getElementById('fin-rec-label').value.trim();
     const frequency = document.getElementById('fin-rec-frequency').value;
+    const reference_date = document.getElementById('fin-rec-refdate').value || null;
     if (!name) { toast('Enter a name', true); return; }
     if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
     if (!label) { toast('Enter a label', true); return; }
@@ -4793,12 +4799,13 @@
       const r = await fetch(`${FINANCES_API}/recurring`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, amount, kind, label, frequency }),
+        body: JSON.stringify({ name, amount, kind, label, frequency, reference_date }),
       });
       if (!r.ok) throw 0;
       document.getElementById('fin-rec-name').value = '';
       document.getElementById('fin-rec-amount').value = '';
       document.getElementById('fin-rec-label').value = '';
+      document.getElementById('fin-rec-refdate').value = '';
       toast('Recurring item added');
       loadRecurringItems();
     } catch (_) {

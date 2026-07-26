@@ -1,0 +1,39 @@
+2026-06-02 Rent  ; id:demo-rent-jun
+    expenses:rent    $1200.00
+    assets:checking
+
+2026-06-01 Salary  ; id:demo-salary-jun
+    assets:checking    $2200.00
+    income:salary
+
+2026-06-05 Grocery run  ; id:demo-groc-1
+    expenses:survival    $84.32
+    assets:checking
+
+2026-06-12 Impulse buy  ; id:demo-impulse-1
+    expenses:stupid    $22.50
+    assets:checking
+
+2026-07-01 Salary  ; id:demo-salary-jul
+    assets:checking    $2200.00
+    income:salary
+
+2026-07-03 Grocery run  ; id:demo-groc-2
+    expenses:survival    $91.10
+    assets:checking
+
+2026-07-10 Takeout  ; id:demo-stupid-2
+    expenses:stupid    $38.75
+    assets:checking
+
+~ monthly  ; id:demo-rec-netflix name:Netflix
+    expenses:netflix    $15.49
+    assets:checking
+
+~ every 2 weeks from 2026-01-06  ; id:demo-rec-salary name:Salary
+    assets:checking    $2200.00
+    income:salary
+
+~ yearly  ; id:demo-rec-insurance name:Insurance
+    expenses:insurance    $640.00
+    assets:checking

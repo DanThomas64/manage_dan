@@ -5,7 +5,7 @@
 //! of shelling out. Only ever parses blocks in the exact shape
 //! `journal_writer::format_recurring_item` itself writes.
 
-use crate::models::{Frequency, RecurringItem, TxnKind};
+use crate::models::{parse_period_phrase, RecurringItem, TxnKind};
 
 fn parse_amount(posting_line: &str) -> Option<f64> {
     let dollar_idx = posting_line.find('$')?;
@@ -22,7 +22,7 @@ fn parse_block(block: &str) -> Option<RecurringItem> {
     let header = header.strip_prefix("~ ")?;
     let (period, comment) = header.split_once("; ")?;
     let period = period.trim();
-    let frequency = Frequency::from_period_phrase(period)?;
+    let (frequency, reference_date) = parse_period_phrase(period)?;
 
     let comment = comment.trim().strip_prefix("id:")?;
     let (id, name) = comment.split_once(" name:")?;
@@ -51,6 +51,7 @@ fn parse_block(block: &str) -> Option<RecurringItem> {
         kind,
         label,
         frequency,
+        reference_date,
     })
 }
 
@@ -66,6 +67,8 @@ pub fn parse_recurring_items(content: &str) -> Vec<RecurringItem> {
 mod tests {
     use super::*;
     use crate::journal_writer::format_recurring_item;
+    use crate::models::Frequency;
+    use chrono::NaiveDate;
 
     #[test]
     fn round_trips_expense_item() {
@@ -76,6 +79,7 @@ mod tests {
             TxnKind::Expense,
             "netflix",
             Frequency::Monthly,
+            None,
         );
         let items = parse_recurring_items(&text);
         assert_eq!(items.len(), 1);
@@ -86,6 +90,7 @@ mod tests {
         assert_eq!(item.kind, TxnKind::Expense);
         assert_eq!(item.label, "netflix");
         assert_eq!(item.frequency, Frequency::Monthly);
+        assert_eq!(item.reference_date, None);
     }
 
     #[test]
@@ -97,6 +102,7 @@ mod tests {
             TxnKind::Income,
             "salary",
             Frequency::Biweekly,
+            None,
         );
         let items = parse_recurring_items(&text);
         assert_eq!(items.len(), 1);
@@ -105,6 +111,23 @@ mod tests {
         assert_eq!(item.label, "salary");
         assert_eq!(item.frequency, Frequency::Biweekly);
         assert_eq!(item.amount, 2000.0);
+    }
+
+    #[test]
+    fn round_trips_reference_date() {
+        let reference_date = NaiveDate::from_ymd_opt(2026, 1, 6).unwrap();
+        let text = format_recurring_item(
+            "rec-3",
+            "Rent",
+            1200.0,
+            TxnKind::Expense,
+            "rent",
+            Frequency::Biweekly,
+            Some(reference_date),
+        );
+        let items = parse_recurring_items(&text);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].reference_date, Some(reference_date));
     }
 
     #[test]
@@ -117,8 +140,8 @@ mod tests {
     fn parses_multiple_blocks_mixed_with_transactions() {
         let mut content = String::new();
         content.push_str("2026-07-01 Salary  ; id:t1\n    assets:checking    $2000.00\n    income:salary\n\n");
-        content.push_str(&format_recurring_item("rec-1", "Netflix", 15.0, TxnKind::Expense, "netflix", Frequency::Monthly));
-        content.push_str(&format_recurring_item("rec-2", "Taxes", 500.0, TxnKind::Expense, "taxes", Frequency::Yearly));
+        content.push_str(&format_recurring_item("rec-1", "Netflix", 15.0, TxnKind::Expense, "netflix", Frequency::Monthly, None));
+        content.push_str(&format_recurring_item("rec-2", "Taxes", 500.0, TxnKind::Expense, "taxes", Frequency::Yearly, None));
         let items = parse_recurring_items(&content);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, "rec-1");
