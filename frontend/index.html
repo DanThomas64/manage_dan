@@ -742,6 +742,7 @@
        native light-theme chrome breaks the dark ticket styling. */
     input[type="date"],
     input[type="time"],
+    input[type="number"],
     select {
       background: var(--surface2);
       border: none;
@@ -759,7 +760,10 @@
 
     input[type="date"]:focus,
     input[type="time"]:focus,
+    input[type="number"]:focus,
     select:focus { border-bottom-color: var(--accent); }
+    input[type="number"] { cursor: text; }
+    input[type="number"]::placeholder { color: var(--text-muted); }
 
     /* Recolor the native calendar/clock glyph to match the light-on-dark text */
     input[type="date"]::-webkit-calendar-picker-indicator,
