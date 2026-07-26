@@ -58,7 +58,7 @@ checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
 
 [[package]]
 name = "app"
-version = "0.11.2"
+version = "0.11.4"
 dependencies = [
  "anyhow",
  "chrono",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "finances"
-version = "0.3.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "chrono",

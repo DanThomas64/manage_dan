@@ -9,7 +9,7 @@ use todo::todo_prelude::TodoItem;
 use warp::query::query; // NEW: Import query filter
 use chrono::{Local, NaiveDate};
 use finances::finances_error::FinancesLibError;
-use finances::models::{AccountKind, Frequency, SpendingCategory, TxnKind};
+use finances::models::{AccountKind, Frequency, PreviewItem, SpendingCategory, TxnKind};
 
 /// State shared across API handlers.
 #[derive(Clone)]
@@ -1594,6 +1594,33 @@ pub async fn projection_handler(query: ProjectionQuery) -> Result<impl Reply, Re
 }
 
 #[derive(Deserialize)]
+pub struct PreviewProjectionBody {
+    pub items: Vec<PreviewItem>,
+    #[serde(default)]
+    pub exclude_recurring_ids: Vec<String>,
+    pub months: Option<u32>,
+}
+
+/// POST /api/v1/finances/projection/preview
+pub async fn preview_projection_handler(body: PreviewProjectionBody) -> Result<impl Reply, Rejection> {
+    let months = body.months.unwrap_or(12);
+    match finances::preview_projection(
+        &finances_journal_path(),
+        months,
+        &body.items,
+        &body.exclude_recurring_ids,
+    )
+    .await
+    {
+        Ok(points) => Ok(warp::reply::json(&points)),
+        Err(e) => {
+            error!("Failed to compute preview projection: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
 pub struct AddAccountBody {
     pub name: String,
     pub kind: AccountKind,
@@ -2022,6 +2049,7 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
 ///   /api/v1/finances/recurring           — recurring items (periodic rules) CRUD
 ///   /api/v1/finances/accounts            — accounts CRUD + quick balance update
 ///   /api/v1/finances/projection          — projected assets/liabilities trend
+///   /api/v1/finances/projection/preview  — same, plus one hypothetical recurring item (never persisted)
 fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let finances = warp::path("finances");
     let spending = warp::path("spending");
@@ -2092,6 +2120,15 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(query::<ProjectionQuery>())
         .and_then(projection_handler);
 
+    // POST /api/v1/finances/projection/preview
+    let preview_projection = finances
+        .and(warp::path("projection"))
+        .and(warp::path("preview"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(preview_projection_handler);
+
     // GET /api/v1/finances/accounts
     let list_accounts = finances
         .and(accounts)
@@ -2133,6 +2170,7 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .or(add_recurring)
         .or(delete_recurring)
         .or(projection)
+        .or(preview_projection)
         .or(list_accounts)
         .or(add_account)
         .or(delete_account)
