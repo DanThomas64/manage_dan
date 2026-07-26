@@ -230,6 +230,32 @@ pub enum Frequency {
     Yearly,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountKind {
+    Asset,
+    Liability,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub id: String,
+    pub name: String,
+    pub kind: AccountKind,
+    pub slug: String,
+    pub balance: f64,
+}
+
+impl Account {
+    pub fn hledger_account(&self) -> String {
+        let prefix = match self.kind {
+            AccountKind::Asset => "assets",
+            AccountKind::Liability => "liabilities",
+        };
+        format!("{}:{}", prefix, self.slug)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpendingEntry {
     pub id: String,
@@ -237,6 +263,7 @@ pub struct SpendingEntry {
     pub description: String,
     pub category: SpendingCategory,
     pub amount: f64,
+    pub account: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -248,6 +275,7 @@ pub struct RecurringItem {
     pub label: String,
     pub frequency: Frequency,
     pub reference_date: Option<chrono::NaiveDate>,
+    pub account: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -589,10 +617,11 @@ impl ApiClient {
         amount: f64,
         description: &str,
         date: chrono::NaiveDate,
+        account: &str,
     ) -> Result<SpendingEntry> {
         let url = format!("{}/api/v1/finances/spending", self.base_url);
         Ok(self.client.post(&url)
-            .json(&serde_json::json!({ "category": category, "amount": amount, "description": description, "date": date }))
+            .json(&serde_json::json!({ "category": category, "amount": amount, "description": description, "date": date, "account": account }))
             .send().await?.error_for_status()?.json().await?)
     }
 
@@ -620,10 +649,11 @@ impl ApiClient {
         label: &str,
         frequency: Frequency,
         reference_date: Option<chrono::NaiveDate>,
+        account: &str,
     ) -> Result<RecurringItem> {
         let url = format!("{}/api/v1/finances/recurring", self.base_url);
         Ok(self.client.post(&url)
-            .json(&serde_json::json!({ "name": name, "amount": amount, "kind": kind, "label": label, "frequency": frequency, "reference_date": reference_date }))
+            .json(&serde_json::json!({ "name": name, "amount": amount, "kind": kind, "label": label, "frequency": frequency, "reference_date": reference_date, "account": account }))
             .send().await?.error_for_status()?.json().await?)
     }
 
@@ -636,5 +666,30 @@ impl ApiClient {
     pub async fn fetch_projection(&self, months: u32) -> Result<Vec<ProjectionPoint>> {
         let url = format!("{}/api/v1/finances/projection?months={}", self.base_url, months);
         Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn fetch_accounts(&self) -> Result<Vec<Account>> {
+        let url = format!("{}/api/v1/finances/accounts", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn add_account(&self, name: &str, kind: AccountKind) -> Result<Account> {
+        let url = format!("{}/api/v1/finances/accounts", self.base_url);
+        Ok(self.client.post(&url)
+            .json(&serde_json::json!({ "name": name, "kind": kind }))
+            .send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn delete_account(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/v1/finances/accounts/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn set_account_balance(&self, id: &str, balance: f64) -> Result<Account> {
+        let url = format!("{}/api/v1/finances/accounts/{}/balance", self.base_url, id);
+        Ok(self.client.patch(&url)
+            .json(&serde_json::json!({ "balance": balance }))
+            .send().await?.error_for_status()?.json().await?)
     }
 }

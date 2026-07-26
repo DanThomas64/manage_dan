@@ -9,7 +9,7 @@ use todo::todo_prelude::TodoItem;
 use warp::query::query; // NEW: Import query filter
 use chrono::{Local, NaiveDate};
 use finances::finances_error::FinancesLibError;
-use finances::models::{Frequency, SpendingCategory, TxnKind};
+use finances::models::{AccountKind, Frequency, SpendingCategory, TxnKind};
 
 /// State shared across API handlers.
 #[derive(Clone)]
@@ -1459,6 +1459,7 @@ pub struct AddSpendingBody {
     pub amount: f64,
     pub description: String,
     pub date: NaiveDate,
+    pub account: String,
 }
 
 /// GET /api/v1/finances/spending?from=&to=
@@ -1482,6 +1483,7 @@ pub async fn add_spending_handler(body: AddSpendingBody) -> Result<impl Reply, R
         body.amount,
         &body.description,
         body.date,
+        &body.account,
     )
     .await
     {
@@ -1526,6 +1528,7 @@ pub struct AddRecurringBody {
     pub label: String,
     pub frequency: Frequency,
     pub reference_date: Option<NaiveDate>,
+    pub account: String,
 }
 
 /// GET /api/v1/finances/recurring
@@ -1549,6 +1552,7 @@ pub async fn add_recurring_handler(body: AddRecurringBody) -> Result<impl Reply,
         &body.label,
         body.frequency,
         body.reference_date,
+        &body.account,
     )
     .await
     {
@@ -1584,6 +1588,66 @@ pub async fn projection_handler(query: ProjectionQuery) -> Result<impl Reply, Re
         Ok(points) => Ok(warp::reply::json(&points)),
         Err(e) => {
             error!("Failed to compute projection: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AddAccountBody {
+    pub name: String,
+    pub kind: AccountKind,
+}
+
+#[derive(Deserialize)]
+pub struct SetAccountBalanceBody {
+    pub balance: f64,
+}
+
+/// GET /api/v1/finances/accounts
+pub async fn list_accounts_handler() -> Result<impl Reply, Rejection> {
+    match finances::list_accounts(&finances_journal_path()).await {
+        Ok(accounts) => Ok(warp::reply::json(&accounts)),
+        Err(e) => {
+            error!("Failed to list accounts: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/finances/accounts
+pub async fn add_account_handler(body: AddAccountBody) -> Result<impl Reply, Rejection> {
+    match finances::create_account(&finances_journal_path(), &body.name, body.kind).await {
+        Ok(account) => Ok(warp::reply::with_status(warp::reply::json(&account), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to create account: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/finances/accounts/:id
+pub async fn delete_account_handler(id: String) -> Result<impl Reply, Rejection> {
+    match finances::delete_account(&finances_journal_path(), &id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(FinancesLibError::AccountNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to delete account {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// PATCH /api/v1/finances/accounts/:id/balance
+pub async fn set_account_balance_handler(
+    id: String,
+    body: SetAccountBalanceBody,
+) -> Result<impl Reply, Rejection> {
+    match finances::set_account_balance(&finances_journal_path(), &id, body.balance).await {
+        Ok(account) => Ok(warp::reply::json(&account)),
+        Err(FinancesLibError::AccountNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to set balance for account {}: {}", id, e);
             Err(warp::reject::custom(ApiError::FinancesOperationFailed))
         }
     }
@@ -1956,11 +2020,13 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
 ///   /api/v1/finances/spending            — spending entries CRUD
 ///   /api/v1/finances/spending/stats      — category totals for a date range
 ///   /api/v1/finances/recurring           — recurring items (periodic rules) CRUD
+///   /api/v1/finances/accounts            — accounts CRUD + quick balance update
 ///   /api/v1/finances/projection          — projected assets/liabilities trend
 fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let finances = warp::path("finances");
     let spending = warp::path("spending");
     let recurring = warp::path("recurring");
+    let accounts = warp::path("accounts");
 
     // GET /api/v1/finances/spending?from=&to=
     let list_spending = finances
@@ -2026,6 +2092,39 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(query::<ProjectionQuery>())
         .and_then(projection_handler);
 
+    // GET /api/v1/finances/accounts
+    let list_accounts = finances
+        .and(accounts)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_accounts_handler);
+
+    // POST /api/v1/finances/accounts
+    let add_account = finances
+        .and(accounts)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(add_account_handler);
+
+    // DELETE /api/v1/finances/accounts/:id
+    let delete_account = finances
+        .and(accounts)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_account_handler);
+
+    // PATCH /api/v1/finances/accounts/:id/balance
+    let set_account_balance = finances
+        .and(accounts)
+        .and(warp::path::param::<String>())
+        .and(warp::path("balance"))
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(set_account_balance_handler);
+
     list_spending
         .or(add_spending)
         .or(spending_stats)
@@ -2034,6 +2133,10 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .or(add_recurring)
         .or(delete_recurring)
         .or(projection)
+        .or(list_accounts)
+        .or(add_account)
+        .or(delete_account)
+        .or(set_account_balance)
 }
 
 /// Defines routes for the notes subsystem.

@@ -1844,6 +1844,7 @@
     <div class="hbar-scroll">
       <button class="finances-tab active" id="ftab-spending" onclick="financesShowTab('spending')">Spending</button>
       <button class="finances-tab" id="ftab-recurring" onclick="financesShowTab('recurring')">Recurring</button>
+      <button class="finances-tab" id="ftab-accounts" onclick="financesShowTab('accounts')">Accounts</button>
     </div>
   </div>
 
@@ -1867,9 +1868,15 @@
         <div class="field-label">Description</div>
         <input type="text" id="fin-description" placeholder="e.g. Junk food" autocomplete="off" />
       </div>
-      <div>
-        <div class="field-label">Date</div>
-        <input type="date" id="fin-date" style="width:100%;" />
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;">
+          <div class="field-label">Account</div>
+          <select id="fin-account" style="width:100%;"></select>
+        </div>
+        <div style="flex:1;">
+          <div class="field-label">Date</div>
+          <input type="date" id="fin-date" style="width:100%;" />
+        </div>
       </div>
       <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitSpendingEntry()">Add Entry</button>
     </div>
@@ -1912,7 +1919,7 @@
       </div>
       <div style="display:flex;gap:12px;">
         <div style="flex:1;">
-          <div class="field-label">Label <span style="color:var(--text-dim)">(account)</span></div>
+          <div class="field-label">Label <span style="color:var(--text-dim)">(category)</span></div>
           <input type="text" id="fin-rec-label" placeholder="e.g. salary, netflix, taxes" autocomplete="off" />
         </div>
         <div style="flex:1;">
@@ -1925,9 +1932,15 @@
           </select>
         </div>
       </div>
-      <div>
-        <div class="field-label">Reference Date <span style="color:var(--text-dim)">(optional — anchors the cadence, e.g. a known payday)</span></div>
-        <input type="date" id="fin-rec-refdate" style="width:100%;" />
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;">
+          <div class="field-label">Account</div>
+          <select id="fin-rec-account" style="width:100%;"></select>
+        </div>
+        <div style="flex:1;">
+          <div class="field-label">Reference Date <span style="color:var(--text-dim)">(optional)</span></div>
+          <input type="date" id="fin-rec-refdate" style="width:100%;" />
+        </div>
       </div>
       <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitRecurringItem()">Add Recurring Item</button>
     </div>
@@ -1939,6 +1952,30 @@
     <div style="padding:12px 16px;">
       <div class="field-label">Projected balance trend (12 months)</div>
       <canvas id="fin-projection-chart" height="180"></canvas>
+    </div>
+  </div>
+
+  <!-- Accounts panel -->
+  <div class="finances-panel" id="fpanel-accounts">
+    <div class="quick-note-form">
+      <div style="display:flex;gap:12px;">
+        <div style="flex:1;">
+          <div class="field-label">Name</div>
+          <input type="text" id="fin-acct-name" class="lc-first" placeholder="e.g. Checking, Visa" autocomplete="off" />
+        </div>
+        <div style="width:130px;">
+          <div class="field-label">Kind</div>
+          <select id="fin-acct-kind" style="width:100%;">
+            <option value="asset">Asset</option>
+            <option value="liability">Liability</option>
+          </select>
+        </div>
+      </div>
+      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitAccount()">Add Account</button>
+    </div>
+
+    <div class="notes-list" id="fin-accounts-list">
+      <div class="empty-state"><span class="icon">&#127974;</span><span>No accounts yet</span></div>
     </div>
   </div>
 
@@ -4637,6 +4674,12 @@
   const FINANCES_API = '/api/v1/finances';
   let financesLoaded = false;
   let financesChart = null;
+  let accountsCache = [];
+
+  function accountDisplayName(hledgerAccount) {
+    const match = accountsCache.find(a => `${a.kind === 'asset' ? 'assets' : 'liabilities'}:${a.slug}` === hledgerAccount);
+    return match ? match.name : hledgerAccount;
+  }
 
   function financesShowTab(tab) {
     document.querySelectorAll('.finances-tab').forEach(t => t.classList.remove('active'));
@@ -4644,6 +4687,7 @@
     document.querySelectorAll('.finances-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('fpanel-' + tab).classList.add('active');
     if (tab === 'recurring') loadRecurringItems();
+    if (tab === 'accounts') loadAccounts();
   }
 
   function financesOnOpen() {
@@ -4652,8 +4696,12 @@
     }
     loadSpendingEntries();
     loadSpendingStats();
+    loadAccountsForDropdowns();
     if (document.getElementById('fpanel-recurring').classList.contains('active')) {
       loadRecurringItems();
+    }
+    if (document.getElementById('fpanel-accounts').classList.contains('active')) {
+      loadAccounts();
     }
     financesLoaded = true;
   }
@@ -4684,11 +4732,12 @@
 
   function renderSpendingEntry(e) {
     const catLabel = e.category === 'stupid' ? 'Stupid' : 'Survival';
+    const acctLabel = e.account ? ` &middot; ${esc(accountDisplayName(e.account))}` : '';
     return `
       <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
         <div style="flex:1;">
           <div style="font-weight:600;">${esc(e.description || '(no description)')}</div>
-          <div class="field-label">${esc(e.date)} &middot; ${catLabel}</div>
+          <div class="field-label">${esc(e.date)} &middot; ${catLabel}${acctLabel}</div>
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(e.amount).toFixed(2)}</div>
         <button class="btn-ghost btn-sm" onclick="deleteSpendingEntry('${e.id}')">&times;</button>
@@ -4723,13 +4772,15 @@
     const amount = parseFloat(document.getElementById('fin-amount').value);
     const description = document.getElementById('fin-description').value.trim();
     const date = document.getElementById('fin-date').value;
+    const account = document.getElementById('fin-account').value;
     if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
     if (!date) { toast('Pick a date', true); return; }
+    if (!account) { toast('Add an account first (Accounts tab)', true); return; }
     try {
       const r = await fetch(`${FINANCES_API}/spending`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category, amount, description, date }),
+        body: JSON.stringify({ category, amount, description, date, account }),
       });
       if (!r.ok) throw 0;
       document.getElementById('fin-amount').value = '';
@@ -4763,11 +4814,12 @@
     const kindLabel = item.kind === 'income' ? 'Income' : 'Expense';
     const freqLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', yearly: 'Yearly' };
     const refDateLine = item.reference_date ? ` &middot; from ${esc(item.reference_date)}` : '';
+    const acctLine = item.account ? ` &middot; ${esc(accountDisplayName(item.account))}` : '';
     return `
       <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
         <div style="flex:1;">
           <div style="font-weight:600;">${esc(item.name)}</div>
-          <div class="field-label">${kindLabel} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)}${refDateLine}</div>
+          <div class="field-label">${kindLabel} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)}${acctLine}${refDateLine}</div>
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(item.amount).toFixed(2)}</div>
         <button class="btn-ghost btn-sm" onclick="deleteRecurringItem('${item.id}')">&times;</button>
@@ -4792,14 +4844,16 @@
     const label = document.getElementById('fin-rec-label').value.trim();
     const frequency = document.getElementById('fin-rec-frequency').value;
     const reference_date = document.getElementById('fin-rec-refdate').value || null;
+    const account = document.getElementById('fin-rec-account').value;
     if (!name) { toast('Enter a name', true); return; }
     if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
     if (!label) { toast('Enter a label', true); return; }
+    if (!account) { toast('Add an account first (Accounts tab)', true); return; }
     try {
       const r = await fetch(`${FINANCES_API}/recurring`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, amount, kind, label, frequency, reference_date }),
+        body: JSON.stringify({ name, amount, kind, label, frequency, reference_date, account }),
       });
       if (!r.ok) throw 0;
       document.getElementById('fin-rec-name').value = '';
@@ -4856,6 +4910,109 @@
         document.head.appendChild(s);
       }
     } catch (_) { /* chart is supplementary; leave it blank on failure */ }
+  }
+
+  async function fetchAccountsList() {
+    const r = await fetch(`${FINANCES_API}/accounts`);
+    if (!r.ok) throw 0;
+    const accounts = await r.json();
+    accountsCache = accounts;
+    return accounts;
+  }
+
+  function populateAccountSelects(accounts) {
+    for (const selectId of ['fin-account', 'fin-rec-account']) {
+      const select = document.getElementById(selectId);
+      const previous = select.value;
+      select.innerHTML = accounts.map(a =>
+        `<option value="${esc(a.kind === 'asset' ? 'assets' : 'liabilities')}:${esc(a.slug)}">${esc(a.name)} (${a.kind === 'asset' ? 'Asset' : 'Liability'})</option>`
+      ).join('');
+      if ([...select.options].some(o => o.value === previous)) select.value = previous;
+    }
+  }
+
+  async function loadAccountsForDropdowns() {
+    try {
+      populateAccountSelects(await fetchAccountsList());
+    } catch (_) { /* dropdowns just stay empty; the add forms will prompt to add an account */ }
+  }
+
+  async function loadAccounts() {
+    const list = document.getElementById('fin-accounts-list');
+    try {
+      const accounts = await fetchAccountsList();
+      populateAccountSelects(accounts);
+      if (!accounts.length) {
+        list.innerHTML = '<div class="empty-state"><span class="icon">&#127974;</span><span>No accounts yet</span></div>';
+        return;
+      }
+      list.innerHTML = accounts.map(renderAccountCard).join('');
+    } catch (_) {
+      list.innerHTML = '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load accounts</span></div>';
+    }
+  }
+
+  function renderAccountCard(a) {
+    const kindLabel = a.kind === 'asset' ? 'Asset' : 'Liability';
+    return `
+      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
+        <div style="flex:1;">
+          <div style="font-weight:600;">${esc(a.name)}</div>
+          <div class="field-label">${kindLabel}</div>
+        </div>
+        <div style="font-family:var(--font-mono);font-weight:700;">$${Number(a.balance).toFixed(2)}</div>
+        <button class="btn-ghost btn-sm" onclick="updateAccountBalance('${a.id}', ${a.balance})">Update</button>
+        <button class="btn-ghost btn-sm" onclick="deleteAccount('${a.id}')">&times;</button>
+      </div>`;
+  }
+
+  async function submitAccount() {
+    const name = document.getElementById('fin-acct-name').value.trim();
+    const kind = document.getElementById('fin-acct-kind').value;
+    if (!name) { toast('Enter a name', true); return; }
+    try {
+      const r = await fetch(`${FINANCES_API}/accounts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, kind }),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('fin-acct-name').value = '';
+      toast('Account added');
+      loadAccounts();
+    } catch (_) {
+      toast('Failed to add account', true);
+    }
+  }
+
+  async function deleteAccount(id) {
+    if (!confirm('Delete this account? Past transactions keep their history; only the account registration goes away.')) return;
+    try {
+      const r = await fetch(`${FINANCES_API}/accounts/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw 0;
+      loadAccounts();
+    } catch (_) {
+      toast('Failed to delete account', true);
+    }
+  }
+
+  async function updateAccountBalance(id, currentBalance) {
+    const input = prompt('Enter the current actual balance:', Number(currentBalance).toFixed(2));
+    if (input === null) return;
+    const balance = parseFloat(input);
+    if (Number.isNaN(balance)) { toast('Enter a valid number', true); return; }
+    try {
+      const r = await fetch(`${FINANCES_API}/accounts/${id}/balance`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ balance }),
+      });
+      if (!r.ok) throw 0;
+      toast('Balance updated');
+      loadAccounts();
+    } catch (_) {
+      toast('Failed to update balance', true);
+    }
   }
 </script>
 </body>

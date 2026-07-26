@@ -18,6 +18,9 @@ pub enum FinancesLibError {
     #[error("recurring item not found: {0}")]
     RecurringItemNotFound(String),
 
+    #[error("account not found: {0}")]
+    AccountNotFound(String),
+
     #[error("hledger command failed: {0}")]
     Hledger(String),
 

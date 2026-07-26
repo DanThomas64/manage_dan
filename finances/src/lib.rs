@@ -16,8 +16,8 @@ pub mod models;
 
 use crate::finances_prelude::*;
 use crate::models::{
-    CategoryTotals, Frequency, ProjectionPoint, RecurringItem, SpendingCategory, SpendingEntry,
-    TxnKind,
+    Account, AccountKind, CategoryTotals, Frequency, ProjectionPoint, RecurringItem,
+    SpendingCategory, SpendingEntry, TxnKind,
 };
 use chrono::{Local, Months, NaiveDate};
 use serde::Deserialize;
@@ -27,7 +27,14 @@ pub use finances_error::FinancesLibError;
 
 /// Initialises the finances subsystem: confirms `hledger` is installed and
 /// ensures the configured journal file exists (an empty file is valid
-/// hledger input; a missing one is not — confirmed via manual testing).
+/// hledger input; a missing one is not — confirmed via manual testing). A
+/// journal that didn't exist at all (a brand-new deployment, or a fresh
+/// `data/` dir) is seeded with one default "Checking" asset account rather
+/// than left completely empty, so the app isn't accountless — spending and
+/// recurring entries can't be created without at least one account to post
+/// against — until someone thinks to add one by hand. An already-existing
+/// (even empty) journal is left untouched: only true absence counts as
+/// "new", so this never re-seeds a journal a user has deliberately cleared.
 pub fn init(journal_path: &str) -> FinancesLibResult {
     info!("initializing finances");
     let out = std::process::Command::new("hledger")
@@ -47,7 +54,11 @@ pub fn init(journal_path: &str) -> FinancesLibResult {
         }
     }
     if !path.exists() {
-        std::fs::File::create(path).map_err(FinancesLibError::Io)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        let seed =
+            journal_writer::format_account_directive(&id, "Checking", AccountKind::Asset, "checking");
+        std::fs::write(path, seed.as_bytes()).map_err(FinancesLibError::Io)?;
+        info!("finances: seeded new journal with default Checking account");
     }
 
     Ok(())
@@ -116,8 +127,10 @@ pub async fn add_spending_entry(
     amount: f64,
     description: &str,
     date: NaiveDate,
+    account: &str,
 ) -> FinancesLibResult<SpendingEntry> {
-    journal_writer::append_spending_entry(journal_path, category, amount, description, date).await
+    journal_writer::append_spending_entry(journal_path, category, amount, description, date, account)
+        .await
 }
 
 pub async fn list_spending_entries(
@@ -156,6 +169,12 @@ pub async fn list_spending_entries(
                 .iter()
                 .find(|p| SpendingCategory::from_account(&p.paccount).is_some())?;
             let amount = amount_total(&amount_posting.pamount);
+            let account = t
+                .tpostings
+                .iter()
+                .find(|p| SpendingCategory::from_account(&p.paccount).is_none())
+                .map(|p| p.paccount.clone())
+                .unwrap_or_default();
             let id = t
                 .ttags
                 .iter()
@@ -169,6 +188,7 @@ pub async fn list_spending_entries(
                 description: t.tdescription,
                 category,
                 amount,
+                account,
             })
         })
         .collect();
@@ -233,6 +253,7 @@ pub async fn add_recurring_item(
     label: &str,
     frequency: Frequency,
     reference_date: Option<NaiveDate>,
+    account: &str,
 ) -> FinancesLibResult<RecurringItem> {
     journal_writer::append_recurring_item(
         journal_path,
@@ -242,6 +263,7 @@ pub async fn add_recurring_item(
         label,
         frequency,
         reference_date,
+        account,
     )
     .await
 }
@@ -259,6 +281,88 @@ pub async fn delete_recurring_item(journal_path: &str, id: &str) -> FinancesLibR
         return Err(FinancesLibError::RecurringItemNotFound(id.to_string()));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Accounts
+// ---------------------------------------------------------------------------
+
+pub async fn create_account(
+    journal_path: &str,
+    name: &str,
+    kind: AccountKind,
+) -> FinancesLibResult<Account> {
+    journal_writer::append_account(journal_path, name, kind).await
+}
+
+/// Lists registered accounts with their live hledger-computed balances (one
+/// combined `hledger balance` call for all of them, not one query each).
+pub async fn list_accounts(journal_path: &str) -> FinancesLibResult<Vec<Account>> {
+    let content = tokio::fs::read_to_string(journal_path)
+        .await
+        .map_err(FinancesLibError::Io)?;
+    let mut accounts = journal_parser::parse_accounts(&content);
+    if accounts.is_empty() {
+        return Ok(accounts);
+    }
+
+    let paths: Vec<String> = accounts.iter().map(|a| a.hledger_account()).collect();
+    let mut args: Vec<&str> = vec!["balance"];
+    args.extend(paths.iter().map(|p| p.as_str()));
+    args.extend(["--flat", "-O", "json"]);
+    let out = hledger_client::run(journal_path, &args).await?;
+    let (rows, _totals): (Vec<(String, String, i64, Vec<HlAmount>)>, Vec<HlAmount>) =
+        serde_json::from_str(&out)?;
+
+    for account in accounts.iter_mut() {
+        let target = account.hledger_account();
+        account.balance = rows
+            .iter()
+            .filter(|(acct, ..)| *acct == target)
+            .map(|(_, _, _, amounts)| amount_total(amounts))
+            .sum();
+    }
+
+    Ok(accounts)
+}
+
+pub async fn delete_account(journal_path: &str, id: &str) -> FinancesLibResult<()> {
+    let removed = journal_writer::remove_block_with_id(journal_path, id).await?;
+    if !removed {
+        return Err(FinancesLibError::AccountNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+/// "Quickly update the current balance": rather than storing the balance
+/// directly, this posts an adjustment transaction for the difference
+/// between the entered target and hledger's currently-computed balance —
+/// hledger stays the sole source of truth, and every correction leaves a
+/// dated, auditable entry rather than silently overwriting a number.
+pub async fn set_account_balance(
+    journal_path: &str,
+    account_id: &str,
+    target_balance: f64,
+) -> FinancesLibResult<Account> {
+    let accounts = list_accounts(journal_path).await?;
+    let mut account = accounts
+        .into_iter()
+        .find(|a| a.id == account_id)
+        .ok_or_else(|| FinancesLibError::AccountNotFound(account_id.to_string()))?;
+
+    let diff = target_balance - account.balance;
+    if diff != 0.0 {
+        let today = Local::now().date_naive();
+        journal_writer::append_adjustment_transaction(
+            journal_path,
+            &account.hledger_account(),
+            diff,
+            today,
+        )
+        .await?;
+    }
+    account.balance = target_balance;
+    Ok(account)
 }
 
 // ---------------------------------------------------------------------------

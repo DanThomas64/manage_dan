@@ -7,7 +7,8 @@
 
 use crate::finances_prelude::*;
 use crate::models::{
-    build_period_phrase, Frequency, RecurringItem, SpendingCategory, SpendingEntry, TxnKind,
+    build_period_phrase, Account, AccountKind, Frequency, RecurringItem, SpendingCategory,
+    SpendingEntry, TxnKind,
 };
 use chrono::NaiveDate;
 use tokio::fs::OpenOptions;
@@ -32,14 +33,16 @@ pub fn format_spending_entry(
     description: &str,
     category: SpendingCategory,
     amount: f64,
+    account: &str,
 ) -> String {
     format!(
-        "{date} {description}  ; id:{id}\n    {account}    ${amount:.2}\n    assets:checking\n\n",
+        "{date} {description}  ; id:{id}\n    {category_account}    ${amount:.2}\n    {account}\n\n",
         date = date.format("%Y-%m-%d"),
         description = sanitize_line(description),
         id = id,
-        account = category.account(),
+        category_account = category.account(),
         amount = amount,
+        account = account,
     )
 }
 
@@ -51,11 +54,12 @@ pub fn format_recurring_item(
     label: &str,
     frequency: Frequency,
     reference_date: Option<NaiveDate>,
+    account: &str,
 ) -> String {
     let label = sanitize_account_leaf(label);
     let (debit, credit) = match kind {
-        TxnKind::Income => ("assets:checking".to_string(), format!("income:{label}")),
-        TxnKind::Expense => (format!("expenses:{label}"), "assets:checking".to_string()),
+        TxnKind::Income => (account.to_string(), format!("income:{label}")),
+        TxnKind::Expense => (format!("expenses:{label}"), account.to_string()),
     };
     format!(
         "~ {period}  ; id:{id} name:{name}\n    {debit}    ${amount:.2}\n    {credit}\n\n",
@@ -65,6 +69,31 @@ pub fn format_recurring_item(
         debit = debit,
         amount = amount,
         credit = credit,
+    )
+}
+
+/// The `account` directive: registers a named account so it shows up
+/// (with a balance of $0) even before any transaction references it.
+/// hledger itself never needs this to *use* an account, but it's how this
+/// crate lets a user create one ahead of time to appear in dropdowns.
+pub fn format_account_directive(id: &str, name: &str, kind: AccountKind, slug: &str) -> String {
+    format!(
+        "account {prefix}:{slug}  ; id:{id} name:{name}\n\n",
+        prefix = kind.prefix(),
+        slug = slug,
+        id = id,
+        name = sanitize_line(name),
+    )
+}
+
+/// A reconciliation transaction that nudges an account's hledger-computed
+/// balance to a user-entered actual balance, via an offsetting posting to
+/// `equity:adjustments` — the standard hledger idiom for "setting" a
+/// balance without breaking double-entry bookkeeping.
+pub fn format_adjustment_transaction(id: &str, date: NaiveDate, account: &str, diff: f64) -> String {
+    format!(
+        "{date} Balance adjustment  ; id:{id}\n    {account}    ${diff:.2}\n    equity:adjustments\n\n",
+        date = date.format("%Y-%m-%d"),
     )
 }
 
@@ -87,9 +116,10 @@ pub async fn append_spending_entry(
     amount: f64,
     description: &str,
     date: NaiveDate,
+    account: &str,
 ) -> FinancesLibResult<SpendingEntry> {
     let id = Uuid::new_v4().to_string();
-    let text = format_spending_entry(&id, date, description, category, amount);
+    let text = format_spending_entry(&id, date, description, category, amount, account);
     append(journal_path, &text).await?;
     Ok(SpendingEntry {
         id,
@@ -97,6 +127,7 @@ pub async fn append_spending_entry(
         description: sanitize_line(description),
         category,
         amount,
+        account: account.to_string(),
     })
 }
 
@@ -108,9 +139,19 @@ pub async fn append_recurring_item(
     label: &str,
     frequency: Frequency,
     reference_date: Option<NaiveDate>,
+    account: &str,
 ) -> FinancesLibResult<RecurringItem> {
     let id = Uuid::new_v4().to_string();
-    let text = format_recurring_item(&id, name, amount, kind, label, frequency, reference_date);
+    let text = format_recurring_item(
+        &id,
+        name,
+        amount,
+        kind,
+        label,
+        frequency,
+        reference_date,
+        account,
+    );
     append(journal_path, &text).await?;
     Ok(RecurringItem {
         id,
@@ -120,7 +161,37 @@ pub async fn append_recurring_item(
         label: sanitize_account_leaf(label),
         frequency,
         reference_date,
+        account: account.to_string(),
     })
+}
+
+pub async fn append_account(
+    journal_path: &str,
+    name: &str,
+    kind: AccountKind,
+) -> FinancesLibResult<Account> {
+    let id = Uuid::new_v4().to_string();
+    let slug = sanitize_account_leaf(name).to_lowercase();
+    let text = format_account_directive(&id, name, kind, &slug);
+    append(journal_path, &text).await?;
+    Ok(Account {
+        id,
+        name: sanitize_line(name),
+        kind,
+        slug,
+        balance: 0.0,
+    })
+}
+
+pub async fn append_adjustment_transaction(
+    journal_path: &str,
+    account: &str,
+    diff: f64,
+    date: NaiveDate,
+) -> FinancesLibResult<()> {
+    let id = Uuid::new_v4().to_string();
+    let text = format_adjustment_transaction(&id, date, account, diff);
+    append(journal_path, &text).await
 }
 
 /// Removes the blank-line-delimited block containing the given `; id:<id>`
@@ -169,6 +240,7 @@ mod tests {
             "Junk food",
             SpendingCategory::Stupid,
             12.5,
+            "assets:checking",
         );
         assert_eq!(
             text,
@@ -186,6 +258,7 @@ mod tests {
             "netflix",
             Frequency::Monthly,
             None,
+            "assets:checking",
         );
         assert_eq!(
             text,
@@ -203,6 +276,7 @@ mod tests {
             "salary",
             Frequency::Biweekly,
             None,
+            "assets:checking",
         );
         assert_eq!(
             text,
@@ -221,10 +295,29 @@ mod tests {
             "rent",
             Frequency::Biweekly,
             Some(reference_date),
+            "assets:checking",
         );
         assert_eq!(
             text,
             "~ every 2 weeks from 2026-01-06  ; id:rec-3 name:Rent\n    expenses:rent    $1200.00\n    assets:checking\n\n"
+        );
+    }
+
+    #[test]
+    fn recurring_item_uses_selected_account() {
+        let text = format_recurring_item(
+            "rec-4",
+            "Visa payment",
+            50.0,
+            TxnKind::Expense,
+            "visa-payment",
+            Frequency::Monthly,
+            None,
+            "liabilities:visa",
+        );
+        assert_eq!(
+            text,
+            "~ monthly  ; id:rec-4 name:Visa payment\n    expenses:visa-payment    $50.00\n    liabilities:visa\n\n"
         );
     }
 
@@ -237,8 +330,31 @@ mod tests {
             "line1\nline2",
             SpendingCategory::Survival,
             1.0,
+            "assets:checking",
         );
         assert!(!text.contains("line1\nline2"));
         assert!(text.starts_with("2026-01-01 line1 line2"));
+    }
+
+    #[test]
+    fn account_directive_format_is_exact() {
+        let text = format_account_directive("acc-1", "Checking", AccountKind::Asset, "checking");
+        assert_eq!(text, "account assets:checking  ; id:acc-1 name:Checking\n\n");
+    }
+
+    #[test]
+    fn liability_account_directive_format_is_exact() {
+        let text = format_account_directive("acc-2", "Visa", AccountKind::Liability, "visa");
+        assert_eq!(text, "account liabilities:visa  ; id:acc-2 name:Visa\n\n");
+    }
+
+    #[test]
+    fn adjustment_transaction_format_is_exact() {
+        let date = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let text = format_adjustment_transaction("adj-1", date, "assets:checking", -42.5);
+        assert_eq!(
+            text,
+            "2026-07-26 Balance adjustment  ; id:adj-1\n    assets:checking    $-42.50\n    equity:adjustments\n\n"
+        );
     }
 }

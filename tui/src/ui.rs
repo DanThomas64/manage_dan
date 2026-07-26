@@ -115,6 +115,7 @@ pub enum LogCreateFocus {
 pub enum FinancesFocus {
     Spending,
     Recurring,
+    Accounts,
 }
 
 /// Which sub-mode the Finances screen is in.
@@ -123,6 +124,8 @@ pub enum FinancesMode {
     Normal,
     AddingSpending,
     AddingRecurring,
+    AddingAccount,
+    UpdatingBalance,
 }
 
 /// Which field is focused in the Finances "add spending entry" form.
@@ -131,6 +134,7 @@ pub enum FinancesSpendingFocus {
     Category,
     Amount,
     Description,
+    Account,
     Date,
     Submit,
 }
@@ -143,7 +147,16 @@ pub enum FinancesRecurringFocus {
     Amount,
     Label,
     Frequency,
+    Account,
     ReferenceDate,
+    Submit,
+}
+
+/// Which field is focused in the Finances "add account" form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FinancesAccountFocus {
+    Name,
+    Kind,
     Submit,
 }
 
@@ -261,6 +274,8 @@ pub struct App {
     pub finances_spending_state: ListState,
     pub finances_recurring: Vec<crate::api::RecurringItem>,
     pub finances_recurring_state: ListState,
+    pub finances_accounts: Vec<crate::api::Account>,
+    pub finances_accounts_state: ListState,
     pub finances_projection: Vec<crate::api::ProjectionPoint>,
     pub finances_category_totals: crate::api::CategoryTotals,
     pub finances_focus: FinancesFocus,
@@ -270,6 +285,7 @@ pub struct App {
     pub fin_amount_buffer: String,
     pub fin_description_buffer: String,
     pub fin_date_buffer: String,
+    pub fin_account_buffer: String,
     pub finances_recurring_focus: FinancesRecurringFocus,
     pub fin_rec_name_buffer: String,
     pub fin_rec_kind_buffer: String,
@@ -277,6 +293,11 @@ pub struct App {
     pub fin_rec_label_buffer: String,
     pub fin_rec_frequency_buffer: String,
     pub fin_rec_refdate_buffer: String,
+    pub fin_rec_account_buffer: String,
+    pub finances_account_focus: FinancesAccountFocus,
+    pub fin_acct_name_buffer: String,
+    pub fin_acct_kind_buffer: String,
+    pub fin_balance_buffer: String,
 }
 
 /// Parses the multiline subtasks input buffer into a `Vec<Subtask>`.
@@ -393,6 +414,8 @@ impl App {
             finances_spending_state: ListState::default(),
             finances_recurring: Vec::new(),
             finances_recurring_state: ListState::default(),
+            finances_accounts: Vec::new(),
+            finances_accounts_state: ListState::default(),
             finances_projection: Vec::new(),
             finances_category_totals: crate::api::CategoryTotals::default(),
             finances_focus: FinancesFocus::Spending,
@@ -402,6 +425,7 @@ impl App {
             fin_amount_buffer: String::new(),
             fin_description_buffer: String::new(),
             fin_date_buffer: now.format("%Y-%m-%d").to_string(),
+            fin_account_buffer: String::new(),
             finances_recurring_focus: FinancesRecurringFocus::Name,
             fin_rec_name_buffer: String::new(),
             fin_rec_kind_buffer: String::from("expense"),
@@ -409,6 +433,11 @@ impl App {
             fin_rec_label_buffer: String::new(),
             fin_rec_frequency_buffer: String::from("monthly"),
             fin_rec_refdate_buffer: String::new(),
+            fin_rec_account_buffer: String::new(),
+            finances_account_focus: FinancesAccountFocus::Name,
+            fin_acct_name_buffer: String::new(),
+            fin_acct_kind_buffer: String::from("asset"),
+            fin_balance_buffer: String::new(),
         }
     }
 
@@ -1243,13 +1272,46 @@ impl App {
         }
     }
 
+    pub async fn fetch_accounts(&mut self) {
+        match self.api_client.fetch_accounts().await {
+            Ok(accounts) => {
+                self.finances_accounts = accounts;
+                let len = self.finances_accounts.len();
+                if len == 0 {
+                    self.finances_accounts_state.select(None);
+                } else {
+                    let sel = self.finances_accounts_state.selected().unwrap_or(0).min(len - 1);
+                    self.finances_accounts_state.select(Some(sel));
+                }
+                self.last_error = None;
+            }
+            Err(e) => self.last_error = Some(format!("Failed to fetch accounts: {}", e)),
+        }
+    }
+
     pub async fn fetch_finances_all(&mut self) {
         self.fetch_spending_entries().await;
         self.fetch_recurring_items().await;
         self.fetch_projection().await;
+        self.fetch_accounts().await;
         if let Ok(totals) = self.api_client.fetch_spending_stats().await {
             self.finances_category_totals = totals;
         }
+    }
+
+    /// Cycles the account picker in the spending/recurring add forms: finds
+    /// `current` among the loaded accounts and returns the next/previous
+    /// one's hledger path, wrapping around; unchanged if there are none.
+    fn finances_cycle_account(&self, current: &str, forward: bool) -> String {
+        if self.finances_accounts.is_empty() {
+            return current.to_string();
+        }
+        let paths: Vec<String> = self.finances_accounts.iter().map(|a| a.hledger_account()).collect();
+        let len = paths.len() as i32;
+        let cur_idx = paths.iter().position(|p| p == current).unwrap_or(0) as i32;
+        let delta = if forward { 1 } else { -1 };
+        let next = (cur_idx + delta).rem_euclid(len) as usize;
+        paths[next].clone()
     }
 
     fn finances_move_selection(&mut self, delta: i32) {
@@ -1267,6 +1329,13 @@ impl App {
                 let cur = self.finances_recurring_state.selected().unwrap_or(0) as i32;
                 let next = (cur + delta).rem_euclid(len as i32) as usize;
                 self.finances_recurring_state.select(Some(next));
+            }
+            FinancesFocus::Accounts => {
+                let len = self.finances_accounts.len();
+                if len == 0 { return; }
+                let cur = self.finances_accounts_state.selected().unwrap_or(0) as i32;
+                let next = (cur + delta).rem_euclid(len as i32) as usize;
+                self.finances_accounts_state.select(Some(next));
             }
         }
     }
@@ -1295,7 +1364,19 @@ impl App {
                     Err(e) => self.last_error = Some(format!("Delete failed: {}", e)),
                 }
             }
+            FinancesFocus::Accounts => {
+                let Some(account) = self.finances_accounts_state.selected()
+                    .and_then(|i| self.finances_accounts.get(i)).cloned() else { return; };
+                match self.api_client.delete_account(&account.id).await {
+                    Ok(()) => self.fetch_accounts().await,
+                    Err(e) => self.last_error = Some(format!("Delete failed: {}", e)),
+                }
+            }
         }
+    }
+
+    fn finances_default_account_buffer(&self) -> String {
+        self.finances_accounts.first().map(|a| a.hledger_account()).unwrap_or_default()
     }
 
     fn finances_reset_spending_form(&mut self) {
@@ -1304,6 +1385,7 @@ impl App {
         self.fin_amount_buffer.clear();
         self.fin_description_buffer.clear();
         self.fin_date_buffer = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        self.fin_account_buffer = self.finances_default_account_buffer();
     }
 
     fn finances_reset_recurring_form(&mut self) {
@@ -1314,6 +1396,13 @@ impl App {
         self.fin_rec_label_buffer.clear();
         self.fin_rec_frequency_buffer = "monthly".to_string();
         self.fin_rec_refdate_buffer.clear();
+        self.fin_rec_account_buffer = self.finances_default_account_buffer();
+    }
+
+    fn finances_reset_account_form(&mut self) {
+        self.finances_account_focus = FinancesAccountFocus::Name;
+        self.fin_acct_name_buffer.clear();
+        self.fin_acct_kind_buffer = "asset".to_string();
     }
 
     pub async fn finances_submit_spending(&mut self) {
@@ -1325,12 +1414,16 @@ impl App {
             Ok(d) => d,
             Err(_) => { self.last_error = Some("Date must be YYYY-MM-DD".to_string()); return; }
         };
+        if self.fin_account_buffer.trim().is_empty() {
+            self.last_error = Some("Add an account first (Accounts tab)".to_string());
+            return;
+        }
         let category = if self.fin_category_buffer == "survival" {
             crate::api::SpendingCategory::Survival
         } else {
             crate::api::SpendingCategory::Stupid
         };
-        match self.api_client.add_spending_entry(category, amount, self.fin_description_buffer.trim(), date).await {
+        match self.api_client.add_spending_entry(category, amount, self.fin_description_buffer.trim(), date, &self.fin_account_buffer).await {
             Ok(_) => {
                 self.finances_mode = FinancesMode::Normal;
                 self.fetch_spending_entries().await;
@@ -1355,6 +1448,10 @@ impl App {
             self.last_error = Some("Enter a label".to_string());
             return;
         }
+        if self.fin_rec_account_buffer.trim().is_empty() {
+            self.last_error = Some("Add an account first (Accounts tab)".to_string());
+            return;
+        }
         let kind = if self.fin_rec_kind_buffer == "income" {
             crate::api::TxnKind::Income
         } else {
@@ -1374,13 +1471,52 @@ impl App {
                 Err(_) => { self.last_error = Some("Reference date must be YYYY-MM-DD".to_string()); return; }
             }
         };
-        match self.api_client.add_recurring_item(&name, amount, kind, &label, frequency, reference_date).await {
+        match self.api_client.add_recurring_item(&name, amount, kind, &label, frequency, reference_date, &self.fin_rec_account_buffer).await {
             Ok(_) => {
                 self.finances_mode = FinancesMode::Normal;
                 self.fetch_recurring_items().await;
                 self.fetch_projection().await;
             }
             Err(e) => self.last_error = Some(format!("Add recurring item failed: {}", e)),
+        }
+    }
+
+    pub async fn finances_submit_account(&mut self) {
+        let name = self.fin_acct_name_buffer.trim().to_string();
+        if name.is_empty() {
+            self.last_error = Some("Enter a name".to_string());
+            return;
+        }
+        let kind = if self.fin_acct_kind_buffer == "liability" {
+            crate::api::AccountKind::Liability
+        } else {
+            crate::api::AccountKind::Asset
+        };
+        match self.api_client.add_account(&name, kind).await {
+            Ok(_) => {
+                self.finances_mode = FinancesMode::Normal;
+                self.fetch_accounts().await;
+            }
+            Err(e) => self.last_error = Some(format!("Add account failed: {}", e)),
+        }
+    }
+
+    pub async fn finances_submit_balance(&mut self) {
+        let Some(account) = self.finances_accounts_state.selected()
+            .and_then(|i| self.finances_accounts.get(i)).cloned() else {
+            self.finances_mode = FinancesMode::Normal;
+            return;
+        };
+        let balance: f64 = match self.fin_balance_buffer.trim().parse() {
+            Ok(b) => b,
+            Err(_) => { self.last_error = Some("Enter a valid number".to_string()); return; }
+        };
+        match self.api_client.set_account_balance(&account.id, balance).await {
+            Ok(_) => {
+                self.finances_mode = FinancesMode::Normal;
+                self.fetch_accounts().await;
+            }
+            Err(e) => self.last_error = Some(format!("Update balance failed: {}", e)),
         }
     }
 
@@ -1968,7 +2104,8 @@ impl App {
                                 KeyCode::Tab => {
                                     self.finances_focus = match self.finances_focus {
                                         FinancesFocus::Spending => FinancesFocus::Recurring,
-                                        FinancesFocus::Recurring => FinancesFocus::Spending,
+                                        FinancesFocus::Recurring => FinancesFocus::Accounts,
+                                        FinancesFocus::Accounts => FinancesFocus::Spending,
                                     };
                                 }
                                 KeyCode::Up | KeyCode::Char('k') => self.finances_move_selection(-1),
@@ -1983,8 +2120,20 @@ impl App {
                                             self.finances_reset_recurring_form();
                                             self.finances_mode = FinancesMode::AddingRecurring;
                                         }
+                                        FinancesFocus::Accounts => {
+                                            self.finances_reset_account_form();
+                                            self.finances_mode = FinancesMode::AddingAccount;
+                                        }
                                     }
                                     self.last_error = None;
+                                }
+                                KeyCode::Char('b') if self.finances_focus == FinancesFocus::Accounts => {
+                                    if let Some(account) = self.finances_accounts_state.selected()
+                                        .and_then(|i| self.finances_accounts.get(i)) {
+                                        self.fin_balance_buffer = format!("{:.2}", account.balance);
+                                        self.finances_mode = FinancesMode::UpdatingBalance;
+                                        self.last_error = None;
+                                    }
                                 }
                                 KeyCode::Char('x') => {
                                     self.finances_delete_selected().await;
@@ -2007,7 +2156,8 @@ impl App {
                                     self.finances_spending_focus = match self.finances_spending_focus {
                                         FinancesSpendingFocus::Category => FinancesSpendingFocus::Amount,
                                         FinancesSpendingFocus::Amount => FinancesSpendingFocus::Description,
-                                        FinancesSpendingFocus::Description => FinancesSpendingFocus::Date,
+                                        FinancesSpendingFocus::Description => FinancesSpendingFocus::Account,
+                                        FinancesSpendingFocus::Account => FinancesSpendingFocus::Date,
                                         FinancesSpendingFocus::Date => FinancesSpendingFocus::Submit,
                                         FinancesSpendingFocus::Submit => FinancesSpendingFocus::Category,
                                     };
@@ -2017,7 +2167,8 @@ impl App {
                                         FinancesSpendingFocus::Category => FinancesSpendingFocus::Submit,
                                         FinancesSpendingFocus::Amount => FinancesSpendingFocus::Category,
                                         FinancesSpendingFocus::Description => FinancesSpendingFocus::Amount,
-                                        FinancesSpendingFocus::Date => FinancesSpendingFocus::Description,
+                                        FinancesSpendingFocus::Account => FinancesSpendingFocus::Description,
+                                        FinancesSpendingFocus::Date => FinancesSpendingFocus::Account,
                                         FinancesSpendingFocus::Submit => FinancesSpendingFocus::Date,
                                     };
                                 }
@@ -2027,6 +2178,12 @@ impl App {
                                     } else {
                                         "stupid".to_string()
                                     };
+                                }
+                                KeyCode::Left if self.finances_spending_focus == FinancesSpendingFocus::Account => {
+                                    self.fin_account_buffer = self.finances_cycle_account(&self.fin_account_buffer.clone(), false);
+                                }
+                                KeyCode::Right if self.finances_spending_focus == FinancesSpendingFocus::Account => {
+                                    self.fin_account_buffer = self.finances_cycle_account(&self.fin_account_buffer.clone(), true);
                                 }
                                 KeyCode::Enter => {
                                     match self.finances_spending_focus {
@@ -2038,7 +2195,10 @@ impl App {
                                             };
                                         }
                                         FinancesSpendingFocus::Amount => self.finances_spending_focus = FinancesSpendingFocus::Description,
-                                        FinancesSpendingFocus::Description => self.finances_spending_focus = FinancesSpendingFocus::Date,
+                                        FinancesSpendingFocus::Description => self.finances_spending_focus = FinancesSpendingFocus::Account,
+                                        FinancesSpendingFocus::Account => {
+                                            self.fin_account_buffer = self.finances_cycle_account(&self.fin_account_buffer.clone(), true);
+                                        }
                                         FinancesSpendingFocus::Date => self.finances_spending_focus = FinancesSpendingFocus::Submit,
                                         FinancesSpendingFocus::Submit => {
                                             self.finances_submit_spending().await;
@@ -2078,7 +2238,8 @@ impl App {
                                         FinancesRecurringFocus::Kind => FinancesRecurringFocus::Amount,
                                         FinancesRecurringFocus::Amount => FinancesRecurringFocus::Label,
                                         FinancesRecurringFocus::Label => FinancesRecurringFocus::Frequency,
-                                        FinancesRecurringFocus::Frequency => FinancesRecurringFocus::ReferenceDate,
+                                        FinancesRecurringFocus::Frequency => FinancesRecurringFocus::Account,
+                                        FinancesRecurringFocus::Account => FinancesRecurringFocus::ReferenceDate,
                                         FinancesRecurringFocus::ReferenceDate => FinancesRecurringFocus::Submit,
                                         FinancesRecurringFocus::Submit => FinancesRecurringFocus::Name,
                                     };
@@ -2090,7 +2251,8 @@ impl App {
                                         FinancesRecurringFocus::Amount => FinancesRecurringFocus::Kind,
                                         FinancesRecurringFocus::Label => FinancesRecurringFocus::Amount,
                                         FinancesRecurringFocus::Frequency => FinancesRecurringFocus::Label,
-                                        FinancesRecurringFocus::ReferenceDate => FinancesRecurringFocus::Frequency,
+                                        FinancesRecurringFocus::Account => FinancesRecurringFocus::Frequency,
+                                        FinancesRecurringFocus::ReferenceDate => FinancesRecurringFocus::Account,
                                         FinancesRecurringFocus::Submit => FinancesRecurringFocus::ReferenceDate,
                                     };
                                 }
@@ -2108,6 +2270,12 @@ impl App {
                                         "monthly" => "yearly".to_string(),
                                         _ => "weekly".to_string(),
                                     };
+                                }
+                                KeyCode::Left if self.finances_recurring_focus == FinancesRecurringFocus::Account => {
+                                    self.fin_rec_account_buffer = self.finances_cycle_account(&self.fin_rec_account_buffer.clone(), false);
+                                }
+                                KeyCode::Right if self.finances_recurring_focus == FinancesRecurringFocus::Account => {
+                                    self.fin_rec_account_buffer = self.finances_cycle_account(&self.fin_rec_account_buffer.clone(), true);
                                 }
                                 KeyCode::Enter => {
                                     match self.finances_recurring_focus {
@@ -2128,6 +2296,9 @@ impl App {
                                                 "monthly" => "yearly".to_string(),
                                                 _ => "weekly".to_string(),
                                             };
+                                        }
+                                        FinancesRecurringFocus::Account => {
+                                            self.fin_rec_account_buffer = self.finances_cycle_account(&self.fin_rec_account_buffer.clone(), true);
                                         }
                                         FinancesRecurringFocus::ReferenceDate => self.finances_recurring_focus = FinancesRecurringFocus::Submit,
                                         FinancesRecurringFocus::Submit => {
@@ -2156,6 +2327,75 @@ impl App {
                                     };
                                     if let Some(buf) = buf { buf.push(c); }
                                 }
+                                _ => {}
+                            }
+                        }
+                        FinancesMode::AddingAccount => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.finances_mode = FinancesMode::Normal;
+                                }
+                                KeyCode::Tab => {
+                                    self.finances_account_focus = match self.finances_account_focus {
+                                        FinancesAccountFocus::Name => FinancesAccountFocus::Kind,
+                                        FinancesAccountFocus::Kind => FinancesAccountFocus::Submit,
+                                        FinancesAccountFocus::Submit => FinancesAccountFocus::Name,
+                                    };
+                                }
+                                KeyCode::BackTab => {
+                                    self.finances_account_focus = match self.finances_account_focus {
+                                        FinancesAccountFocus::Name => FinancesAccountFocus::Submit,
+                                        FinancesAccountFocus::Kind => FinancesAccountFocus::Name,
+                                        FinancesAccountFocus::Submit => FinancesAccountFocus::Kind,
+                                    };
+                                }
+                                KeyCode::Left | KeyCode::Right if self.finances_account_focus == FinancesAccountFocus::Kind => {
+                                    self.fin_acct_kind_buffer = if self.fin_acct_kind_buffer == "asset" {
+                                        "liability".to_string()
+                                    } else {
+                                        "asset".to_string()
+                                    };
+                                }
+                                KeyCode::Enter => {
+                                    match self.finances_account_focus {
+                                        FinancesAccountFocus::Name => self.finances_account_focus = FinancesAccountFocus::Kind,
+                                        FinancesAccountFocus::Kind => {
+                                            self.fin_acct_kind_buffer = if self.fin_acct_kind_buffer == "asset" {
+                                                "liability".to_string()
+                                            } else {
+                                                "asset".to_string()
+                                            };
+                                        }
+                                        FinancesAccountFocus::Submit => {
+                                            self.finances_submit_account().await;
+                                            action_taken = true;
+                                        }
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    if self.finances_account_focus == FinancesAccountFocus::Name {
+                                        self.fin_acct_name_buffer.pop();
+                                    }
+                                }
+                                KeyCode::Char(c) => {
+                                    if self.finances_account_focus == FinancesAccountFocus::Name {
+                                        self.fin_acct_name_buffer.push(c);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        FinancesMode::UpdatingBalance => {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.finances_mode = FinancesMode::Normal;
+                                }
+                                KeyCode::Enter => {
+                                    self.finances_submit_balance().await;
+                                    action_taken = true;
+                                }
+                                KeyCode::Backspace => { self.fin_balance_buffer.pop(); }
+                                KeyCode::Char(c) => { self.fin_balance_buffer.push(c); }
                                 _ => {}
                             }
                         }
@@ -2935,11 +3175,12 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                 "Finances",
                 vec![
                     ("q", "Back to Dashboard"),
-                    ("Tab", "Switch list: Spending ↔ Recurring"),
+                    ("Tab", "Switch list: Spending → Recurring → Accounts"),
                     ("j/k", "Move selection"),
-                    ("a", "Add (spending entry or recurring item, per focus)"),
+                    ("a", "Add (spending entry, recurring item, or account, per focus)"),
+                    ("b", "Update selected account's balance (Accounts focus)"),
                     ("x", "Delete selected"),
-                    ("r", "Refetch entries/items/projection"),
+                    ("r", "Refetch entries/items/accounts/projection"),
                     SWITCH_SCREEN,
                     TOGGLE_HELP,
                 ],
@@ -2949,7 +3190,7 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                 vec![
                     ("Esc", "Cancel"),
                     ("Tab / Shift+Tab", "Move between fields"),
-                    ("←/→ or Enter", "Toggle Stupid/Survival (on Category)"),
+                    ("←/→ or Enter", "Toggle Stupid/Survival (on Category); cycle accounts (on Account)"),
                     ("Enter", "Next field (or save, on Submit)"),
                 ],
             ),
@@ -2958,8 +3199,24 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                 vec![
                     ("Esc", "Cancel"),
                     ("Tab / Shift+Tab", "Move between fields"),
-                    ("←/→ or Enter", "Cycle Kind / Frequency"),
+                    ("←/→ or Enter", "Cycle Kind / Frequency / Account"),
                     ("Enter", "Next field (or save, on Submit)"),
+                ],
+            ),
+            FinancesMode::AddingAccount => (
+                "Finances — New Account",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Tab / Shift+Tab", "Move between fields"),
+                    ("←/→ or Enter", "Toggle Asset/Liability (on Kind)"),
+                    ("Enter", "Next field (or save, on Submit)"),
+                ],
+            ),
+            FinancesMode::UpdatingBalance => (
+                "Finances — Update Account Balance",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Enter", "Post an adjustment transaction for the difference and save"),
                 ],
             ),
         },
@@ -4592,7 +4849,10 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
-    let summary = format!("{} spending, {} recurring", app.finances_spending.len(), app.finances_recurring.len());
+    let summary = format!(
+        "{} spending, {} recurring, {} accounts",
+        app.finances_spending.len(), app.finances_recurring.len(), app.finances_accounts.len(),
+    );
 
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -4617,7 +4877,7 @@ fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 };
                 ListItem::new(format!("{}  ${:.2}  {} ({})", e.date, e.amount, e.description, cat))
             }).collect();
-            let title = format!(" Spending ({}) — Tab: Recurring ", app.finances_spending.len());
+            let title = format!(" Spending ({}) — Tab: next list ", app.finances_spending.len());
             let widget = List::new(items)
                 .block(Block::default().borders(Borders::ALL).title(title)
                     .border_style(Style::default().fg(Color::Green)))
@@ -4640,13 +4900,29 @@ fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
                 let ref_suffix = i.reference_date.map(|d| format!(" from {}", d)).unwrap_or_default();
                 ListItem::new(format!("{}  ${:.2}  {} / {} ({}){}", i.name, i.amount, kind, freq, i.label, ref_suffix))
             }).collect();
-            let title = format!(" Recurring ({}) — Tab: Spending ", app.finances_recurring.len());
+            let title = format!(" Recurring ({}) — Tab: next list ", app.finances_recurring.len());
             let widget = List::new(items)
                 .block(Block::default().borders(Borders::ALL).title(title)
                     .border_style(Style::default().fg(Color::Green)))
                 .highlight_style(Style::default().fg(Color::Black).bg(Color::Green))
                 .highlight_symbol("> ");
             frame.render_stateful_widget(widget, list_area, &mut app.finances_recurring_state);
+        }
+        FinancesFocus::Accounts => {
+            let items: Vec<ListItem> = app.finances_accounts.iter().map(|a| {
+                let kind = match a.kind {
+                    crate::api::AccountKind::Asset => "Asset",
+                    crate::api::AccountKind::Liability => "Liability",
+                };
+                ListItem::new(format!("{}  ${:.2}  ({})", a.name, a.balance, kind))
+            }).collect();
+            let title = format!(" Accounts ({}) — Tab: next list ", app.finances_accounts.len());
+            let widget = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title(title)
+                    .border_style(Style::default().fg(Color::Green)))
+                .highlight_style(Style::default().fg(Color::Black).bg(Color::Green))
+                .highlight_symbol("> ");
+            frame.render_stateful_widget(widget, list_area, &mut app.finances_accounts_state);
         }
     }
 
@@ -4679,6 +4955,7 @@ fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             body.push_str(&line("Category", &app.fin_category_buffer, FinancesSpendingFocus::Category));
             body.push_str(&line("Amount", &app.fin_amount_buffer, FinancesSpendingFocus::Amount));
             body.push_str(&line("Description", &app.fin_description_buffer, FinancesSpendingFocus::Description));
+            body.push_str(&line("Account", &app.fin_account_buffer, FinancesSpendingFocus::Account));
             body.push_str(&line("Date (YYYY-MM-DD)", &app.fin_date_buffer, FinancesSpendingFocus::Date));
             body.push_str(if f == FinancesSpendingFocus::Submit { "\n> [ SUBMIT ]\n" } else { "\n  [ SUBMIT ]\n" });
             if let Some(err) = &app.last_error {
@@ -4702,6 +4979,7 @@ fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
             body.push_str(&line("Amount", &app.fin_rec_amount_buffer, FinancesRecurringFocus::Amount));
             body.push_str(&line("Label", &app.fin_rec_label_buffer, FinancesRecurringFocus::Label));
             body.push_str(&line("Frequency", &app.fin_rec_frequency_buffer, FinancesRecurringFocus::Frequency));
+            body.push_str(&line("Account", &app.fin_rec_account_buffer, FinancesRecurringFocus::Account));
             body.push_str(&line("Reference Date (optional)", &app.fin_rec_refdate_buffer, FinancesRecurringFocus::ReferenceDate));
             body.push_str(if f == FinancesRecurringFocus::Submit { "\n> [ SUBMIT ]\n" } else { "\n  [ SUBMIT ]\n" });
             if let Some(err) = &app.last_error {
@@ -4712,12 +4990,47 @@ fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
                     .border_style(Style::default().fg(Color::Yellow)))
                 .wrap(Wrap { trim: false })
         }
+        FinancesMode::AddingAccount => {
+            let f = app.finances_account_focus;
+            let line = |label: &str, value: &str, focus: FinancesAccountFocus| {
+                let marker = if f == focus { "> " } else { "  " };
+                let cursor = if f == focus { "_" } else { "" };
+                format!("{marker}{label}: {value}{cursor}\n")
+            };
+            let mut body = String::new();
+            body.push_str(&line("Name", &app.fin_acct_name_buffer, FinancesAccountFocus::Name));
+            body.push_str(&line("Kind", &app.fin_acct_kind_buffer, FinancesAccountFocus::Kind));
+            body.push_str(if f == FinancesAccountFocus::Submit { "\n> [ SUBMIT ]\n" } else { "\n  [ SUBMIT ]\n" });
+            if let Some(err) = &app.last_error {
+                body.push_str(&format!("\nError: {err}\n"));
+            }
+            Paragraph::new(body)
+                .block(Block::default().borders(Borders::ALL).title(" New Account ")
+                    .border_style(Style::default().fg(Color::Yellow)))
+                .wrap(Wrap { trim: false })
+        }
+        FinancesMode::UpdatingBalance => {
+            let selected_name = app.finances_accounts_state.selected()
+                .and_then(|i| app.finances_accounts.get(i))
+                .map(|a| a.name.as_str())
+                .unwrap_or("(none selected)");
+            let mut body = format!("Account: {selected_name}\n> New balance: {}_\n", app.fin_balance_buffer);
+            body.push_str("\nPosts an adjustment transaction for the difference from the current balance.\n");
+            if let Some(err) = &app.last_error {
+                body.push_str(&format!("\nError: {err}\n"));
+            }
+            Paragraph::new(body)
+                .block(Block::default().borders(Borders::ALL).title(" Update Account Balance ")
+                    .border_style(Style::default().fg(Color::Yellow)))
+                .wrap(Wrap { trim: false })
+        }
     };
     frame.render_widget(detail_widget, detail_area);
 
     let footer_text = match app.finances_mode {
-        FinancesMode::Normal => "Tab: switch list  j/k: move  a: add  x: delete  q: back  ?: help".to_string(),
-        FinancesMode::AddingSpending | FinancesMode::AddingRecurring => "Tab: next field  Enter: next/toggle/save  Esc: cancel".to_string(),
+        FinancesMode::Normal => "Tab: switch list  j/k: move  a: add  b: update balance  x: delete  q: back  ?: help".to_string(),
+        FinancesMode::AddingSpending | FinancesMode::AddingRecurring | FinancesMode::AddingAccount => "Tab: next field  Enter: next/toggle/save  Esc: cancel".to_string(),
+        FinancesMode::UpdatingBalance => "Enter: save  Esc: cancel".to_string(),
     };
     frame.render_widget(
         Paragraph::new(footer_text).style(Style::default().fg(Color::Green)),
