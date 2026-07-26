@@ -1100,9 +1100,9 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
 .check{{width:20px;height:20px;border-radius:4px;border:2px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;}}
 .check.done{{background:var(--accent);border-color:var(--accent);}}
 .check.done::after{{content:'✓';color:var(--accent-on);font-size:12px;}}
-.item-name{{flex:1;}}
+.item-name{{flex:1;min-width:0;overflow-wrap:break-word;}}
 .item-name.done{{text-decoration:line-through;color:var(--text-dim);}}
-.item-qty{{color:var(--text-dim);font-size:13px;font-family:var(--font-mono);}}
+.item-qty{{color:var(--text-dim);font-size:13px;font-family:var(--font-mono);flex-shrink:0;max-width:35%;overflow-wrap:break-word;text-align:right;}}
 .btn-secondary{{width:100%;padding:14px;background:transparent;color:var(--accent);border:1px dashed var(--border);border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;margin-top:8px;letter-spacing:.01em;}}
 .btn-secondary:hover{{background:var(--surface2);}}
 .btn-primary{{width:100%;padding:14px;background:var(--accent);color:var(--accent-on);border:none;border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;letter-spacing:.01em;}}
@@ -1112,7 +1112,7 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
 #app{{display:none;}}
 .empty{{color:var(--text-dim);padding:8px 0;}}
 .add-row{{display:flex;gap:8px;}}
-.add-row input{{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:15px;padding:10px 12px;font-family:var(--font-sans);}}
+.add-row input{{background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:15px;padding:10px 12px;font-family:var(--font-sans);min-width:0;}}
 .add-row input#new-item-name{{flex:2;}}
 .add-row input#new-item-qty{{flex:1;}}
 .msg{{text-align:center;padding:10px;border-radius:var(--radius-sm);margin-top:8px;font-weight:600;display:none;font-size:13px;}}
