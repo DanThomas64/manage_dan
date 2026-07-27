@@ -41,6 +41,40 @@ pub async fn get_status(
     Ok(warp::reply::json(&response))
 }
 
+/// GET /api/v1/version — the app's own version plus every library crate it
+/// depends on, each read via that crate's own `VERSION` const (in turn
+/// `env!("CARGO_PKG_VERSION")` expanded in *that* crate's source, so it
+/// reflects that crate's own independently-versioned Cargo.toml — see
+/// CLAUDE.md's "each crate versions independently"). `tui` isn't included:
+/// it's a sibling binary the server has no dependency edge to, not a
+/// library `app` links against.
+pub async fn get_version() -> Result<impl Reply, Rejection> {
+    #[derive(Serialize)]
+    struct VersionResponse {
+        app: &'static str,
+        db: &'static str,
+        log: &'static str,
+        notes: &'static str,
+        project: &'static str,
+        printer: &'static str,
+        todo: &'static str,
+        lists: &'static str,
+        finances: &'static str,
+    }
+
+    Ok(warp::reply::json(&VersionResponse {
+        app: env!("CARGO_PKG_VERSION"),
+        db: db::VERSION,
+        log: log::VERSION,
+        notes: notes::VERSION,
+        project: project::VERSION,
+        printer: printer::VERSION,
+        todo: todo::VERSION,
+        lists: lists::VERSION,
+        finances: finances::VERSION,
+    }))
+}
+
 // --- Todo CRUD Endpoints ---
 
 /// GET /api/v1/todo/summary - Read todo summary statistics
@@ -757,6 +791,15 @@ pub struct NoteQuery {
 #[derive(Deserialize)]
 pub struct NoteIdQuery {
     pub notebook: Option<String>,
+    /// Subfolder the note lives in within `notebook`, empty/absent for root
+    /// — required to address a note once folders are in use, since `nb`
+    /// numbers ids per-folder, not per-notebook (see `notes::nb_client::nb_ref`).
+    pub folder: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct NotebookQuery {
+    pub notebook: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -867,56 +910,106 @@ pub async fn list_note_tags_handler() -> Result<impl Reply, Rejection> {
     }
 }
 
-/// GET /api/v1/notes/:id?notebook=
+/// GET /api/v1/notes/:id?notebook=&folder=
 pub async fn get_note_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, Rejection> {
     let notebook = q.notebook.as_deref().unwrap_or("home");
-    match notes::get(id, notebook).await {
+    let folder = q.folder.as_deref().unwrap_or("");
+    match notes::get(id, notebook, folder).await {
         Ok(note) => Ok(warp::reply::json(&note)),
         Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
-            error!("Failed to get note {}:{}: {}", notebook, id, e);
+            error!("Failed to get note {}:{}/{}: {}", notebook, folder, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
 }
 
-/// PUT /api/v1/notes/:id?notebook=
+/// PUT /api/v1/notes/:id?notebook=&folder=
 pub async fn update_note_handler(id: u64, q: NoteIdQuery, req: notes::UpdateNoteRequest) -> Result<impl Reply, Rejection> {
     let notebook = q.notebook.as_deref().unwrap_or("home");
-    match notes::update(id, notebook, req).await {
+    let folder = q.folder.as_deref().unwrap_or("");
+    match notes::update(id, notebook, folder, req).await {
         Ok(note) => Ok(warp::reply::json(&note)),
         Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
         Err(notes::notes_error::NotesLibError::InvalidInput(msg)) => {
             Err(warp::reject::custom(ApiError::NotesInvalidInput(msg)))
         }
         Err(e) => {
-            error!("Failed to update note {}:{}: {}", notebook, id, e);
+            error!("Failed to update note {}:{}/{}: {}", notebook, folder, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
 }
 
-/// DELETE /api/v1/notes/:id?notebook=
+/// DELETE /api/v1/notes/:id?notebook=&folder=
 pub async fn delete_note_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, Rejection> {
     let notebook = q.notebook.as_deref().unwrap_or("home");
-    match notes::delete(id, notebook).await {
+    let folder = q.folder.as_deref().unwrap_or("");
+    match notes::delete(id, notebook, folder).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
-            error!("Failed to delete note {}:{}: {}", notebook, id, e);
+            error!("Failed to delete note {}:{}/{}: {}", notebook, folder, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
 }
 
-/// POST /api/v1/notes/:id/print?notebook=
+/// POST /api/v1/notes/:id/print?notebook=&folder=
 pub async fn print_note_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, Rejection> {
     let notebook = q.notebook.as_deref().unwrap_or("home");
-    match notes::print(id, notebook).await {
+    let folder = q.folder.as_deref().unwrap_or("");
+    match notes::print(id, notebook, folder).await {
         Ok(()) => Ok(warp::reply::json(&true)),
         Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
-            error!("Failed to print note {}:{}: {}", notebook, id, e);
+            error!("Failed to print note {}:{}/{}: {}", notebook, folder, id, e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/notes/folder-tree?notebook= — every subfolder path within
+/// `notebook`, recursively (including empty ones), for the notes-tree UI.
+/// Distinct from `GET /api/v1/notes/folders`, which (despite the name) lists
+/// notebooks, not subfolders within one.
+pub async fn list_note_folder_tree_handler(q: NotebookQuery) -> Result<impl Reply, Rejection> {
+    let notebook = q.notebook.as_deref().unwrap_or("home");
+    match notes::list_folders(notebook).await {
+        Ok(folders) => Ok(warp::reply::json(&folders)),
+        Err(e) => {
+            error!("Failed to list note folder tree for '{}': {}", notebook, e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/notes/folders — creates a (possibly nested) subfolder.
+pub async fn create_note_folder_handler(req: notes::CreateFolderRequest) -> Result<impl Reply, Rejection> {
+    match notes::create_folder(&req.notebook, &req.path).await {
+        Ok(()) => Ok(StatusCode::CREATED),
+        Err(notes::notes_error::NotesLibError::InvalidInput(msg)) => {
+            Err(warp::reject::custom(ApiError::NotesInvalidInput(msg)))
+        }
+        Err(e) => {
+            error!("Failed to create note folder '{}' in '{}': {}", req.path, req.notebook, e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
+/// PATCH /api/v1/notes/:id/move?notebook=&folder= — moves a note into
+/// `dest_folder` (empty for the notebook's root) within the same notebook.
+/// Returns the moved note, which may carry a *different* id than the one in
+/// the URL — `nb` re-numbers items per-folder (see `notes::move_note`).
+pub async fn move_note_handler(id: u64, q: NoteIdQuery, req: notes::MoveNoteRequest) -> Result<impl Reply, Rejection> {
+    let notebook = q.notebook.as_deref().unwrap_or("home");
+    let folder = q.folder.as_deref().unwrap_or("");
+    match notes::move_note(id, notebook, folder, &req.dest_folder).await {
+        Ok(note) => Ok(warp::reply::json(&note)),
+        Err(notes::notes_error::NotesLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to move note {}:{}/{}: {}", notebook, folder, id, e);
             Err(warp::reject::custom(ApiError::NotesOperationFailed))
         }
     }
@@ -925,6 +1018,7 @@ pub async fn print_note_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, R
 /// GET /notes/:id?notebook= - rendered markdown viewer page
 pub async fn get_note_page_handler(id: u64, q: NoteIdQuery) -> Result<impl Reply, Rejection> {
     let notebook = q.notebook.clone().unwrap_or_else(|| "home".to_string());
+    let folder = q.folder.clone().unwrap_or_default();
     let html = format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1018,18 +1112,19 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
 <script>
 const NB_ID={id};
 const NOTEBOOK="{notebook}";
+const FOLDER="{folder}";
 let CURRENT=null;
 function fmtDate(d){{return new Date(d).toLocaleDateString('en-GB',{{day:'numeric',month:'short',year:'numeric'}});}}
 async function load(){{
   try{{
-    const r=await fetch('/api/v1/notes/'+NB_ID+'?notebook='+NOTEBOOK);
+    const r=await fetch('/api/v1/notes/'+NB_ID+'?notebook='+NOTEBOOK+'&folder='+encodeURIComponent(FOLDER));
     if(!r.ok)throw 0;
     const n=await r.json();
     CURRENT=n;
     document.title='Note: '+(n.title||'Untitled');
     document.getElementById('title').textContent=n.title||'Untitled';
     const b=document.getElementById('badges');
-    b.innerHTML=`<span class="badge notebook">&#128193; ${{n.notebook}}</span>`;
+    b.innerHTML=`<span class="badge notebook">&#128193; ${{n.notebook}}${{n.folder?'/'+n.folder:''}}</span>`;
     (n.tags||[]).forEach(t=>b.innerHTML+=`<span class="badge tag">#${{t}}</span>`);
     document.getElementById('dates').innerHTML=`Updated ${{fmtDate(n.updated_at)}}<br>Created ${{fmtDate(n.created_at)}}`;
     document.getElementById('content').innerHTML=marked.parse(n.content||'');
@@ -1057,7 +1152,7 @@ async function saveEdit(){{
   const btn=document.getElementById('save-btn');
   btn.disabled=true;btn.textContent='Saving…';
   try{{
-    const r=await fetch('/api/v1/notes/'+NB_ID+'?notebook='+NOTEBOOK,{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{title,content,tags}})}});
+    const r=await fetch('/api/v1/notes/'+NB_ID+'?notebook='+NOTEBOOK+'&folder='+encodeURIComponent(FOLDER),{{method:'PUT',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{title,content,tags}})}});
     if(!r.ok)throw 0;
     await load();
     toggleEdit(false);
@@ -1070,7 +1165,7 @@ async function saveEdit(){{
 load();
 </script>
 </body>
-</html>"#, id = id, notebook = notebook);
+</html>"#, id = id, notebook = notebook, folder = folder);
     Ok(warp::reply::html(html))
 }
 
@@ -1337,6 +1432,42 @@ pub async fn delete_project_handler(id: i64) -> Result<impl Reply, Rejection> {
     }
 }
 
+#[derive(Deserialize)]
+pub struct SetFavouriteBody {
+    pub favourite: bool,
+}
+
+/// PATCH /api/v1/project/:id/favourite - toggles the project's Home-page tile
+pub async fn set_project_favourite_handler(id: i64, body: SetFavouriteBody) -> Result<impl Reply, Rejection> {
+    match project::set_favourite(id, body.favourite).await {
+        Ok(p) => Ok(warp::reply::json(&p)),
+        Err(ProjectLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to set favourite for project {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SetIconBody {
+    /// A single emoji, or absent/empty to clear back to the default icon.
+    pub icon: Option<String>,
+}
+
+/// PATCH /api/v1/project/:id/icon - sets/clears the project's Home-tile emoji
+pub async fn set_project_icon_handler(id: i64, body: SetIconBody) -> Result<impl Reply, Rejection> {
+    match project::set_icon(id, body.icon.as_deref()).await {
+        Ok(p) => Ok(warp::reply::json(&p)),
+        Err(ProjectLibError::NotFound(_)) => Err(warp::reject::not_found()),
+        Err(ProjectLibError::InvalidInput(msg)) => Err(warp::reject::custom(ApiError::ProjectInvalidInput(msg))),
+        Err(e) => {
+            error!("Failed to set icon for project {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::ProjectOperationFailed))
+        }
+    }
+}
+
 /// GET /api/v1/project/:id/todos - todos scoped to the project
 pub async fn project_todos_handler(id: i64) -> Result<impl Reply, Rejection> {
     let p = match project::get_project(id).await {
@@ -1521,6 +1652,60 @@ pub async fn spending_stats_handler(query: SpendingQuery) -> Result<impl Reply, 
 }
 
 #[derive(Deserialize)]
+pub struct AddTransferBody {
+    pub description: String,
+    pub amount: f64,
+    pub date: NaiveDate,
+    pub from_account: String,
+    pub to_account: String,
+}
+
+/// GET /api/v1/finances/transfers?from=&to=
+pub async fn list_transfers_handler(query: SpendingQuery) -> Result<impl Reply, Rejection> {
+    let from = parse_date_or(&query.from, NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
+    let to = parse_date_or(&query.to, Local::now().date_naive());
+    match finances::list_transfer_entries(&finances_journal_path(), from, to).await {
+        Ok(entries) => Ok(warp::reply::json(&entries)),
+        Err(e) => {
+            error!("Failed to list transfer entries: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/finances/transfers
+pub async fn add_transfer_handler(body: AddTransferBody) -> Result<impl Reply, Rejection> {
+    match finances::add_transfer_entry(
+        &finances_journal_path(),
+        &body.description,
+        body.amount,
+        body.date,
+        &body.from_account,
+        &body.to_account,
+    )
+    .await
+    {
+        Ok(entry) => Ok(warp::reply::with_status(warp::reply::json(&entry), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add transfer entry: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/finances/transfers/:id
+pub async fn delete_transfer_handler(id: String) -> Result<impl Reply, Rejection> {
+    match finances::delete_transfer_entry(&finances_journal_path(), &id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(FinancesLibError::TransferNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to delete transfer entry {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
 pub struct AddRecurringBody {
     pub name: String,
     pub amount: f64,
@@ -1571,6 +1756,60 @@ pub async fn delete_recurring_handler(id: String) -> Result<impl Reply, Rejectio
         Err(FinancesLibError::RecurringItemNotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
             error!("Failed to delete recurring item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AddRecurringTransferBody {
+    pub name: String,
+    pub amount: f64,
+    pub frequency: Frequency,
+    pub reference_date: Option<NaiveDate>,
+    pub from_account: String,
+    pub to_account: String,
+}
+
+/// GET /api/v1/finances/recurring-transfers
+pub async fn list_recurring_transfers_handler() -> Result<impl Reply, Rejection> {
+    match finances::list_recurring_transfers(&finances_journal_path()).await {
+        Ok(items) => Ok(warp::reply::json(&items)),
+        Err(e) => {
+            error!("Failed to list recurring transfers: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/finances/recurring-transfers
+pub async fn add_recurring_transfer_handler(body: AddRecurringTransferBody) -> Result<impl Reply, Rejection> {
+    match finances::add_recurring_transfer(
+        &finances_journal_path(),
+        &body.name,
+        body.amount,
+        body.frequency,
+        body.reference_date,
+        &body.from_account,
+        &body.to_account,
+    )
+    .await
+    {
+        Ok(item) => Ok(warp::reply::with_status(warp::reply::json(&item), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add recurring transfer: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/finances/recurring-transfers/:id
+pub async fn delete_recurring_transfer_handler(id: String) -> Result<impl Reply, Rejection> {
+    match finances::delete_recurring_transfer(&finances_journal_path(), &id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(FinancesLibError::RecurringTransferNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to delete recurring transfer {}: {}", id, e);
             Err(warp::reject::custom(ApiError::FinancesOperationFailed))
         }
     }
@@ -1813,6 +2052,14 @@ fn status_routes(
         .and_then(get_status)
 }
 
+/// GET /api/v1/version
+fn version_route() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::path("version")
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(get_version)
+}
+
 /// Defines routes for the generic lists module.
 ///
 /// URL structure:
@@ -2046,14 +2293,18 @@ fn list_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
 /// URL structure:
 ///   /api/v1/finances/spending            — spending entries CRUD
 ///   /api/v1/finances/spending/stats      — category totals for a date range
+///   /api/v1/finances/transfers           — one-off transfers between accounts CRUD
 ///   /api/v1/finances/recurring           — recurring items (periodic rules) CRUD
+///   /api/v1/finances/recurring-transfers — recurring transfers between accounts CRUD
 ///   /api/v1/finances/accounts            — accounts CRUD + quick balance update
 ///   /api/v1/finances/projection          — projected assets/liabilities trend
 ///   /api/v1/finances/projection/preview  — same, plus one hypothetical recurring item (never persisted)
 fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let finances = warp::path("finances");
     let spending = warp::path("spending");
+    let transfers = warp::path("transfers");
     let recurring = warp::path("recurring");
+    let recurring_transfers = warp::path("recurring-transfers");
     let accounts = warp::path("accounts");
 
     // GET /api/v1/finances/spending?from=&to=
@@ -2089,6 +2340,30 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(query::<SpendingQuery>())
         .and_then(spending_stats_handler);
 
+    // GET /api/v1/finances/transfers?from=&to=
+    let list_transfers = finances
+        .and(transfers)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<SpendingQuery>())
+        .and_then(list_transfers_handler);
+
+    // POST /api/v1/finances/transfers
+    let add_transfer = finances
+        .and(transfers)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(add_transfer_handler);
+
+    // DELETE /api/v1/finances/transfers/:id
+    let delete_transfer = finances
+        .and(transfers)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_transfer_handler);
+
     // GET /api/v1/finances/recurring
     let list_recurring = finances
         .and(recurring)
@@ -2111,6 +2386,29 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(warp::path::end())
         .and(warp::delete())
         .and_then(delete_recurring_handler);
+
+    // GET /api/v1/finances/recurring-transfers
+    let list_recurring_transfers = finances
+        .and(recurring_transfers)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_recurring_transfers_handler);
+
+    // POST /api/v1/finances/recurring-transfers
+    let add_recurring_transfer = finances
+        .and(recurring_transfers)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(add_recurring_transfer_handler);
+
+    // DELETE /api/v1/finances/recurring-transfers/:id
+    let delete_recurring_transfer = finances
+        .and(recurring_transfers)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_recurring_transfer_handler);
 
     // GET /api/v1/finances/projection?months=
     let projection = finances
@@ -2166,9 +2464,15 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .or(add_spending)
         .or(spending_stats)
         .or(delete_spending)
+        .or(list_transfers)
+        .or(add_transfer)
+        .or(delete_transfer)
         .or(list_recurring)
         .or(add_recurring)
         .or(delete_recurring)
+        .or(list_recurring_transfers)
+        .or(add_recurring_transfer)
+        .or(delete_recurring_transfer)
         .or(projection)
         .or(preview_projection)
         .or(list_accounts)
@@ -2226,6 +2530,24 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(warp::get())
         .and_then(list_note_folders_handler);
 
+    // POST /api/v1/notes/folders — create a subfolder (distinct from `folders`
+    // above by HTTP method, same path segment).
+    let create_folder = notes_seg
+        .and(warp::path("folders"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(create_note_folder_handler);
+
+    // GET /api/v1/notes/folder-tree?notebook= — subfolders within one
+    // notebook, recursively, for the notes-tree UI.
+    let folder_tree = notes_seg
+        .and(warp::path("folder-tree"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<NotebookQuery>())
+        .and_then(list_note_folder_tree_handler);
+
     // GET /api/v1/notes/tags
     let tags = notes_seg
         .and(warp::path("tags"))
@@ -2265,7 +2587,7 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(query::<NoteIdQuery>())
         .and_then(delete_note_handler);
 
-    // POST /api/v1/notes/:id/print?notebook=
+    // POST /api/v1/notes/:id/print?notebook=&folder=
     let print = notes_seg
         .and(warp::path::param::<u64>())
         .and(warp::path("print"))
@@ -2274,7 +2596,31 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(query::<NoteIdQuery>())
         .and_then(print_note_handler);
 
-    search.or(folders).or(tags).or(resync).or(list).or(create).or(create_log).or(list_log).or(print).or(get_one).or(update).or(delete)
+    // PATCH /api/v1/notes/:id/move?notebook=&folder=
+    let move_note = notes_seg
+        .and(warp::path::param::<u64>())
+        .and(warp::path("move"))
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and(query::<NoteIdQuery>())
+        .and(warp::body::json())
+        .and_then(move_note_handler);
+
+    search
+        .or(folders)
+        .or(create_folder)
+        .or(folder_tree)
+        .or(tags)
+        .or(resync)
+        .or(list)
+        .or(create)
+        .or(create_log)
+        .or(list_log)
+        .or(print)
+        .or(move_note)
+        .or(get_one)
+        .or(update)
+        .or(delete)
 }
 
 /// Defines routes for the project subsystem.
@@ -2337,6 +2683,24 @@ fn project_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Cl
         .and(warp::delete())
         .and_then(delete_project_handler);
 
+    // PATCH /api/v1/project/:id/favourite
+    let set_favourite = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("favourite"))
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(set_project_favourite_handler);
+
+    // PATCH /api/v1/project/:id/icon
+    let set_icon = project_seg
+        .and(warp::path::param::<i64>())
+        .and(warp::path("icon"))
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(set_project_icon_handler);
+
     // GET /api/v1/project/:id/todos
     let todos = project_seg
         .and(warp::path::param::<i64>())
@@ -2391,6 +2755,8 @@ fn project_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Cl
         .or(archive)
         .or(restore)
         .or(delete_one)
+        .or(set_favourite)
+        .or(set_icon)
         .or(todos)
         .or(create_todo)
         .or(notes)
@@ -2440,6 +2806,7 @@ pub fn routes(
     task_page.or(note_page).or(list_page).or(
         api_v1.and(
             status_routes(systems_status, go_nogo_status)
+            .or(version_route())
             .or(todo_routes())
             .or(log_routes())
             .or(list_routes())

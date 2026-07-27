@@ -28,9 +28,20 @@ async fn run(args: &[&str]) -> NotesLibResult<String> {
 // persists whichever notebook a colon-prefixed command last targeted as its
 // "current" notebook, so bare/unprefixed commands silently drift onto
 // whatever notebook was last touched instead of "home".
-fn nb_ref(notebook: &str, nb_id: u64) -> String {
+//
+// `folder` is required, not just cosmetic: `nb` numbers items per listing
+// scope, not per notebook — a note directly in a notebook's root and a note
+// inside one of its subfolders can both be "id 1" at the same time (confirmed
+// against a real `nb` install). A bare `notebook:id` only ever addresses a
+// root-level item; an item inside a folder must be addressed as
+// `notebook:folder/id`.
+fn nb_ref(notebook: &str, folder: &str, nb_id: u64) -> String {
     let notebook = if notebook.is_empty() { "home" } else { notebook };
-    format!("{}:{}", notebook, nb_id)
+    if folder.is_empty() {
+        format!("{}:{}", notebook, nb_id)
+    } else {
+        format!("{}:{}/{}", notebook, folder, nb_id)
+    }
 }
 
 fn nb_cmd(notebook: &str, subcmd: &str) -> String {
@@ -92,7 +103,7 @@ fn parse_body<'a>(lines: impl Iterator<Item = &'a str>) -> (String, Vec<String>,
     (title, tags, content)
 }
 
-pub(crate) fn parse_note_file(path: &Path, nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
+pub(crate) fn parse_note_file(path: &Path, nb_id: u64, notebook: &str, folder: &str) -> NotesLibResult<Note> {
     let raw = std::fs::read_to_string(path)?;
     let meta = std::fs::metadata(path)?;
 
@@ -104,6 +115,7 @@ pub(crate) fn parse_note_file(path: &Path, nb_id: u64, notebook: &str) -> NotesL
     Ok(Note {
         nb_id,
         notebook: notebook.to_string(),
+        folder: folder.to_string(),
         title,
         content,
         tags,
@@ -166,9 +178,9 @@ fn write_note_file(path: &Path, title: &str, tags: &[String], content: &str) -> 
     Ok(())
 }
 
-// Parse `[n] Title` or `[notebook:n] Title` list lines.
-// Returns (nb_id, notebook, title).
-fn parse_list_line(line: &str, ctx_notebook: &str) -> Option<(u64, String, String)> {
+// Parse `[n] Title`, `[notebook:n] Title`, or `[notebook:folder/n] Title`
+// list lines (e.g. `nb search` results). Returns (nb_id, notebook, folder, title).
+fn parse_list_line(line: &str, ctx_notebook: &str) -> Option<(u64, String, String, String)> {
     let line = line.trim();
     let rest = line.strip_prefix('[')?;
     let (ref_part, title) = rest.split_once("] ")?;
@@ -177,8 +189,11 @@ fn parse_list_line(line: &str, ctx_notebook: &str) -> Option<(u64, String, Strin
     } else {
         (ctx_notebook.to_string(), ref_part.to_string())
     };
-    let nb_id: u64 = id_str.trim().parse().ok()?;
-    Some((nb_id, notebook, title.to_string()))
+    let (folder, nb_id) = match id_str.rsplit_once('/') {
+        Some((folder, id)) => (folder.to_string(), id.trim().parse().ok()?),
+        None => (String::new(), id_str.trim().parse().ok()?),
+    };
+    Some((nb_id, notebook, folder, title.to_string()))
 }
 
 // Parses a `--paths` listing line: `[n] path` or `[notebook:n] path`,
@@ -197,7 +212,13 @@ fn parse_list_path_line(line: &str, ctx_notebook: &str) -> Option<(u64, String, 
     } else {
         (ctx_notebook.to_string(), ref_part.to_string())
     };
-    let nb_id: u64 = id_str.trim().parse().ok()?;
+    // Inside a folder listing, `id_str` is itself folder-scoped, e.g.
+    // `ProjA/3` (confirmed against a real `nb` install — ids are numbered
+    // per listing scope, not per notebook). The caller already knows which
+    // folder it asked to list, so only the trailing numeric segment is taken
+    // as the id here; the folder path itself is threaded separately by
+    // `nb_list_paths`'s recursion rather than re-derived from this string.
+    let nb_id: u64 = id_str.rsplit('/').next().unwrap_or(&id_str).trim().parse().ok()?;
     // In `--paths` mode a line is exactly `[id] <path>` with nothing else
     // after it, so the whole trimmed remainder *is* the path — it must not
     // be split on whitespace, since a file moved with a literal-space
@@ -212,8 +233,8 @@ fn parse_list_path_line(line: &str, ctx_notebook: &str) -> Option<(u64, String, 
     Some((nb_id, notebook, PathBuf::from(path)))
 }
 
-async fn nb_path(notebook: &str, nb_id: u64) -> NotesLibResult<PathBuf> {
-    let ref_str = nb_ref(notebook, nb_id);
+async fn nb_path(notebook: &str, folder: &str, nb_id: u64) -> NotesLibResult<PathBuf> {
+    let ref_str = nb_ref(notebook, folder, nb_id);
     let out = run(&["show", &ref_str, "--path"]).await?;
     let path = out.trim().to_string();
     if path.is_empty() {
@@ -263,29 +284,61 @@ pub async fn nb_daily(notebook: &str, title: &str, tags: &[String], content: &st
     Ok(())
 }
 
-pub async fn nb_show(notebook: &str, nb_id: u64) -> NotesLibResult<Note> {
-    let path = nb_path(notebook, nb_id).await?;
-    parse_note_file(&path, nb_id, notebook)
-        .map_err(|_| NotesLibError::NotFound(nb_ref(notebook, nb_id)))
+pub async fn nb_show(notebook: &str, folder: &str, nb_id: u64) -> NotesLibResult<Note> {
+    let path = nb_path(notebook, folder, nb_id).await?;
+    parse_note_file(&path, nb_id, notebook, folder)
+        .map_err(|_| NotesLibError::NotFound(nb_ref(notebook, folder, nb_id)))
 }
 
-/// Lists `(nb_id, path)` for every note directly inside `notebook` (one
-/// `<notebook>:list --paths` call) — the shared enumeration step behind
-/// `nb_list`/`nb_tags` and the background sync pass, which additionally
-/// needs each item's path to stat its mtime before deciding whether to
-/// re-parse it.
-pub(crate) async fn nb_list_paths(notebook: &str) -> NotesLibResult<Vec<(u64, PathBuf)>> {
-    let cmd = nb_cmd(notebook, "list");
-    let out = match run(&[&cmd, "--paths"]).await {
-        Ok(o) => o,
-        Err(NotesLibError::Nb(_)) => return Ok(Vec::new()), // empty notebook returns error
-        Err(e) => return Err(e),
-    };
-    Ok(out
-        .lines()
-        .filter(|l| !l.contains('\u{1F4C2}')) // 📂 nested subfolder entry, not a note
-        .filter_map(|l| parse_list_path_line(l, notebook).map(|(id, _nb, path)| (id, path)))
-        .collect())
+/// Lists `(nb_id, folder, path)` for every note inside `notebook`, recursing
+/// into subfolders, plus every folder path visited (including empty ones,
+/// captured before recursing into them) — the shared enumeration step behind
+/// `nb_list`/`nb_tags`, the background sync pass, and `notes::list_folders`
+/// (tree browsing), which additionally needs each item's path to stat its
+/// mtime before deciding whether to re-parse it.
+///
+/// `nb list <folder>/ --paths` only ever returns *that* folder's direct
+/// children — folders show up as their own `📂`-marked entries rather than
+/// having their contents inlined — so building a full tree costs one `nb`
+/// call per folder (root included), not one call for the whole notebook.
+pub(crate) async fn nb_list_paths(notebook: &str) -> NotesLibResult<(Vec<(u64, String, PathBuf)>, Vec<String>)> {
+    let mut notes = Vec::new();
+    let mut folders = Vec::new();
+    let mut queue = vec![String::new()];
+
+    while let Some(folder) = queue.pop() {
+        let cmd = nb_cmd(notebook, "list");
+        let out = if folder.is_empty() {
+            run(&[&cmd, "--paths"]).await
+        } else {
+            let target = format!("{}/", folder);
+            run(&[&cmd, &target, "--paths"]).await
+        };
+        let out = match out {
+            Ok(o) => o,
+            Err(NotesLibError::Nb(_)) => continue, // empty/missing folder
+            Err(e) => return Err(e),
+        };
+
+        for line in out.lines() {
+            let Some((id, _nb, path)) = parse_list_path_line(line, notebook) else { continue };
+            if line.contains('\u{1F4C2}') {
+                // 📂 folder entry — `path` is its resolved absolute path;
+                // its own name (last component) appended to the current
+                // folder prefix gives its path relative to the notebook
+                // root, with no need to know the notebook's base directory.
+                let Some(name) = path.file_name().and_then(|s| s.to_str()) else { continue };
+                let sub = if folder.is_empty() { name.to_string() } else { format!("{}/{}", folder, name) };
+                folders.push(sub.clone());
+                queue.push(sub);
+                continue;
+            }
+            notes.push((id, folder.clone(), path));
+        }
+    }
+
+    folders.sort();
+    Ok((notes, folders))
 }
 
 /// Lists notes, optionally scoped to one notebook. When `notebook` is
@@ -309,8 +362,9 @@ pub async fn nb_list(notebook: Option<&str>, exclude: &[&str]) -> NotesLibResult
 
     let mut notes = Vec::new();
     for nb in &notebooks {
-        for (id, path) in nb_list_paths(nb).await? {
-            if let Ok(note) = parse_note_file(&path, id, nb) {
+        let (paths, _folders) = nb_list_paths(nb).await?;
+        for (id, folder, path) in paths {
+            if let Ok(note) = parse_note_file(&path, id, nb, &folder) {
                 notes.push(note);
             }
         }
@@ -398,26 +452,27 @@ pub async fn nb_daily_entries(notebook: &str, days: i64, tag: Option<&str>) -> N
 
 pub async fn nb_update(
     notebook: &str,
+    folder: &str,
     nb_id: u64,
     title: Option<&str>,
     content: Option<&str>,
     tags: Option<&[String]>,
 ) -> NotesLibResult<Note> {
-    let path = nb_path(notebook, nb_id).await?;
-    let current = parse_note_file(&path, nb_id, notebook)
-        .map_err(|_| NotesLibError::NotFound(nb_ref(notebook, nb_id)))?;
+    let path = nb_path(notebook, folder, nb_id).await?;
+    let current = parse_note_file(&path, nb_id, notebook, folder)
+        .map_err(|_| NotesLibError::NotFound(nb_ref(notebook, folder, nb_id)))?;
 
     let new_title = title.unwrap_or(&current.title);
     let new_content = content.unwrap_or(&current.content);
     let new_tags: &[String] = tags.unwrap_or(&current.tags);
 
     write_note_file(&path, new_title, new_tags, new_content)?;
-    parse_note_file(&path, nb_id, notebook)
-        .map_err(|_| NotesLibError::NotFound(nb_ref(notebook, nb_id)))
+    parse_note_file(&path, nb_id, notebook, folder)
+        .map_err(|_| NotesLibError::NotFound(nb_ref(notebook, folder, nb_id)))
 }
 
-pub async fn nb_delete(notebook: &str, nb_id: u64) -> NotesLibResult<()> {
-    let ref_str = nb_ref(notebook, nb_id);
+pub async fn nb_delete(notebook: &str, folder: &str, nb_id: u64) -> NotesLibResult<()> {
+    let ref_str = nb_ref(notebook, folder, nb_id);
     run(&["delete", &ref_str, "--force"]).await?;
     Ok(())
 }
@@ -432,14 +487,49 @@ pub async fn nb_ensure_notebook(name: &str) -> NotesLibResult<()> {
     Ok(())
 }
 
+// Splits bracket content from an `nb` "Added:"/"Moved to:" line — e.g.
+// `notebook:ProjA/3` or `notebook:3` — into (folder, id), the same
+// folder-scoped-id shape `parse_list_path_line` handles for listings.
+fn parse_bracket_folder_id(bracket_content: &str) -> Option<(String, u64)> {
+    let after_notebook = bracket_content.split(':').next_back().unwrap_or(bracket_content);
+    match after_notebook.rsplit_once('/') {
+        Some((folder, id)) => Some((folder.to_string(), id.trim().parse().ok()?)),
+        None => Some((String::new(), after_notebook.trim().parse().ok()?)),
+    }
+}
+
 /// Moves a note into `dest` (a `notebook:path` destination, e.g.
-/// `archive:test-project/note-title`) — used by project archiving.
-/// `<notebook>:move` as the subcommand itself, not bare `move` plus a
-/// separate `notebook:id` source selector — see `nb_restore_folder`'s doc
-/// comment on the same convention for why.
-pub async fn nb_move(src_notebook: &str, nb_id: u64, dest: &str) -> NotesLibResult<()> {
+/// `archive:test-project/note-title` or `notebook:folder/` to relocate
+/// within the same notebook, keeping the source file's own name) — used by
+/// project archiving and by `notes::move_note`. `<notebook>:move` as the
+/// subcommand itself, not bare `move` plus a separate `notebook:id` source
+/// selector — see `nb_restore_folder`'s doc comment on the same convention
+/// for why. Returns the moved note's new `(folder, nb_id)`, parsed from
+/// `nb`'s own "Moved to: [notebook:folder/id]" output — moving a note
+/// re-numbers it in the destination scope (ids are per-folder, not global,
+/// see `nb_ref`), so the caller can't assume the id is unchanged.
+pub async fn nb_move(src_notebook: &str, src_folder: &str, nb_id: u64, dest: &str) -> NotesLibResult<(String, u64)> {
     let cmd = nb_cmd(src_notebook, "move");
-    run(&[&cmd, &nb_id.to_string(), dest, "--force"]).await?;
+    let src_ref = if src_folder.is_empty() { nb_id.to_string() } else { format!("{}/{}", src_folder, nb_id) };
+    let out = run(&[&cmd, &src_ref, dest, "--force"]).await?;
+
+    let bracket_content = out
+        .lines()
+        .find(|l| l.contains("Moved to:"))
+        .and_then(|l| l.find('[').map(|s| &l[s + 1..]))
+        .and_then(|s| s.find(']').map(|e| &s[..e]))
+        .ok_or_else(|| NotesLibError::Nb(format!("unexpected nb move output: {}", out.trim())))?;
+
+    parse_bracket_folder_id(bracket_content)
+        .ok_or_else(|| NotesLibError::Nb(format!("cannot parse id from nb move output: {}", out.trim())))
+}
+
+/// Creates an empty folder inside `notebook` at `path` (which may itself be
+/// nested, e.g. `"Projects/Sub"` — `nb` creates intermediate folders as
+/// needed). Best-effort: ignores the error if the folder already exists.
+pub async fn nb_add_folder(notebook: &str, path: &str) -> NotesLibResult<()> {
+    let cmd = nb_cmd(notebook, "add");
+    let _ = run(&[&cmd, "folder", path]).await;
     Ok(())
 }
 
@@ -474,10 +564,10 @@ pub async fn nb_search(query: &str) -> NotesLibResult<Vec<Note>> {
     let mut seen = std::collections::HashSet::new();
 
     for line in out.lines() {
-        if let Some((id, nb_name, _)) = parse_list_line(line, "home") {
-            let key = (nb_name.clone(), id);
+        if let Some((id, nb_name, folder, _)) = parse_list_line(line, "home") {
+            let key = (nb_name.clone(), folder.clone(), id);
             if seen.insert(key) {
-                match nb_show(&nb_name, id).await {
+                match nb_show(&nb_name, &folder, id).await {
                     Ok(note) => notes.push(note),
                     Err(NotesLibError::NotFound(_)) => {}
                     Err(e) => return Err(e),
@@ -502,8 +592,9 @@ pub async fn nb_tags(exclude: &[&str]) -> NotesLibResult<Vec<String>> {
     let mut all_tags = std::collections::HashSet::new();
 
     for nb in &notebooks {
-        for (id, path) in nb_list_paths(nb).await? {
-            if let Ok(note) = parse_note_file(&path, id, nb) {
+        let (paths, _folders) = nb_list_paths(nb).await?;
+        for (id, folder, path) in paths {
+            if let Ok(note) = parse_note_file(&path, id, nb, &folder) {
                 all_tags.extend(note.tags);
             }
         }

@@ -14,10 +14,12 @@ pub mod journal_parser;
 pub mod journal_writer;
 pub mod models;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use crate::finances_prelude::*;
 use crate::models::{
     Account, AccountKind, CategoryTotals, Frequency, PreviewItem, ProjectionPoint, RecurringItem,
-    SpendingCategory, SpendingEntry, TxnKind,
+    RecurringTransfer, SpendingCategory, SpendingEntry, TransferEntry, TxnKind,
 };
 use chrono::{Local, Months, NaiveDate};
 use serde::Deserialize;
@@ -242,6 +244,76 @@ pub async fn delete_spending_entry(journal_path: &str, id: &str) -> FinancesLibR
 }
 
 // ---------------------------------------------------------------------------
+// Transfers (one-off, between two of the user's own accounts)
+// ---------------------------------------------------------------------------
+
+pub async fn add_transfer_entry(
+    journal_path: &str,
+    description: &str,
+    amount: f64,
+    date: NaiveDate,
+    from_account: &str,
+    to_account: &str,
+) -> FinancesLibResult<TransferEntry> {
+    journal_writer::append_transfer_entry(journal_path, description, amount, date, from_account, to_account)
+        .await
+}
+
+/// Unlike spending entries (a fixed pair of category accounts), a
+/// transfer's two legs can be any pair of accounts — so instead of
+/// filtering by account name, real transfer transactions are found via
+/// hledger's own `tag:transfer` query, matching the `transfer:1` comma-tag
+/// `journal_writer::format_transfer_entry` writes.
+pub async fn list_transfer_entries(
+    journal_path: &str,
+    from: NaiveDate,
+    to: NaiveDate,
+) -> FinancesLibResult<Vec<TransferEntry>> {
+    let from_s = from.format("%Y-%m-%d").to_string();
+    let to_s = to.format("%Y-%m-%d").to_string();
+    let out = hledger_client::run(
+        journal_path,
+        &["print", "tag:transfer", "-b", &from_s, "-e", &to_s, "-O", "json"],
+    )
+    .await?;
+    let txns: Vec<HlTransaction> = serde_json::from_str(&out)?;
+
+    let entries = txns
+        .into_iter()
+        .filter_map(|t| {
+            let to_posting = t.tpostings.iter().find(|p| amount_total(&p.pamount) > 0.0)?;
+            let from_posting = t.tpostings.iter().find(|p| amount_total(&p.pamount) < 0.0)?;
+            let amount = amount_total(&to_posting.pamount);
+            let id = t
+                .ttags
+                .iter()
+                .find(|(k, _)| k == "id")
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            let date = NaiveDate::parse_from_str(&t.tdate, "%Y-%m-%d").ok()?;
+            Some(TransferEntry {
+                id,
+                date,
+                description: t.tdescription,
+                amount,
+                from_account: from_posting.paccount.clone(),
+                to_account: to_posting.paccount.clone(),
+            })
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+pub async fn delete_transfer_entry(journal_path: &str, id: &str) -> FinancesLibResult<()> {
+    let removed = journal_writer::remove_block_with_id(journal_path, id).await?;
+    if !removed {
+        return Err(FinancesLibError::TransferNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Recurring items
 // ---------------------------------------------------------------------------
 
@@ -279,6 +351,47 @@ pub async fn delete_recurring_item(journal_path: &str, id: &str) -> FinancesLibR
     let removed = journal_writer::remove_block_with_id(journal_path, id).await?;
     if !removed {
         return Err(FinancesLibError::RecurringItemNotFound(id.to_string()));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Recurring transfers
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+pub async fn add_recurring_transfer(
+    journal_path: &str,
+    name: &str,
+    amount: f64,
+    frequency: Frequency,
+    reference_date: Option<NaiveDate>,
+    from_account: &str,
+    to_account: &str,
+) -> FinancesLibResult<RecurringTransfer> {
+    journal_writer::append_recurring_transfer(
+        journal_path,
+        name,
+        amount,
+        frequency,
+        reference_date,
+        from_account,
+        to_account,
+    )
+    .await
+}
+
+pub async fn list_recurring_transfers(journal_path: &str) -> FinancesLibResult<Vec<RecurringTransfer>> {
+    let content = tokio::fs::read_to_string(journal_path)
+        .await
+        .map_err(FinancesLibError::Io)?;
+    Ok(journal_parser::parse_recurring_transfers(&content))
+}
+
+pub async fn delete_recurring_transfer(journal_path: &str, id: &str) -> FinancesLibResult<()> {
+    let removed = journal_writer::remove_block_with_id(journal_path, id).await?;
+    if !removed {
+        return Err(FinancesLibError::RecurringTransferNotFound(id.to_string()));
     }
     Ok(())
 }

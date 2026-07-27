@@ -179,6 +179,12 @@ pub struct App {
     pub current_screen: Screen,
     pub api_client: ApiClient,
     pub status: Option<StatusResponse>,
+    /// Whether the most recent status poll actually reached the server —
+    /// distinct from `status` itself, which (once populated) keeps showing
+    /// the last-known subsystem health even if the connection has since
+    /// dropped. Updated every ~250ms alongside `status` in
+    /// `update_system_status_and_logs`.
+    pub connected: bool,
     pub last_error: Option<String>,
     /// Toggled by `?` on any screen's normal/list mode — draws a full
     /// keybind reference for the current screen over everything else.
@@ -341,6 +347,7 @@ impl App {
             current_screen: Screen::Dashboard,
             api_client,
             status: None,
+            connected: false,
             last_error: None,
             show_help: false,
             latest_logs: Vec::new(), // Initialize logs
@@ -447,9 +454,11 @@ impl App {
         match self.api_client.fetch_status().await {
             Ok(status) => {
                 self.status = Some(status);
+                self.connected = true;
                 self.last_error = None;
             }
             Err(e) => {
+                self.connected = false;
                 self.last_error = Some(format!("API Error: {}", e));
             }
         }
@@ -3271,7 +3280,13 @@ fn draw_section_header(
     title: &str,
     summary: &str,
     color: Color,
+    connected: bool,
 ) {
+    let (conn_label, conn_color) = if connected {
+        ("● Online ", Color::Green)
+    } else {
+        ("● Offline ", Color::Red)
+    };
     let content = Line::from(vec![
         ratatui::text::Span::styled(
             format!(" {} ", title),
@@ -3281,6 +3296,7 @@ fn draw_section_header(
             format!(" v{}  ", VERSION),
             Style::default().fg(Color::Rgb(160, 160, 160)),
         ),
+        ratatui::text::Span::styled(conn_label, Style::default().fg(conn_color)),
         ratatui::text::Span::styled(
             summary.to_string(),
             Style::default().fg(Color::Rgb(220, 220, 220)),
@@ -3310,7 +3326,7 @@ fn draw_dashboard(frame: &mut ratatui::Frame, app: &App, area: ratatui::layout::
         _ => "○ UNKNOWN",
     };
     let now_str = Local::now().format("%a %d %b %Y  %H:%M").to_string();
-    draw_section_header(frame, header_area, "DASHBOARD", &format!("{now_str}  {status_label}"), Color::White);
+    draw_section_header(frame, header_area, "DASHBOARD", &format!("{now_str}  {status_label}"), Color::White, app.connected);
 
     // Content Area: Split vertically for lists and status/logs
     let main_content_chunks = Layout::default()
@@ -3464,7 +3480,7 @@ fn draw_todo_screen(frame: &mut ratatui::Frame, app: &mut App, area: ratatui::la
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
     let (header_area, body) = (outer[0], outer[1]);
-    draw_section_header(frame, header_area, "TASKS", &summary, Color::Blue);
+    draw_section_header(frame, header_area, "TASKS", &summary, Color::Blue, app.connected);
 
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -4171,7 +4187,7 @@ fn draw_lists_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(3), Constraint::Length(3)])
         .split(area);
     let (header_area, main_area, footer_area) = (outer[0], outer[1], outer[2]);
-    draw_section_header(frame, header_area, "LISTS", &summary, Color::Green);
+    draw_section_header(frame, header_area, "LISTS", &summary, Color::Green, app.connected);
 
     // Three-column layout: Groups | Categories | Items
     let panels = Layout::default()
@@ -4393,7 +4409,7 @@ fn draw_notes_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
     let (header_area, body) = (outer[0], outer[1]);
-    draw_section_header(frame, header_area, "NOTES", &summary, Color::Yellow);
+    draw_section_header(frame, header_area, "NOTES", &summary, Color::Yellow, app.connected);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -4633,7 +4649,7 @@ fn draw_log_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
     let (header_area, body) = (outer[0], outer[1]);
-    draw_section_header(frame, header_area, "LOG", &summary, Color::Cyan);
+    draw_section_header(frame, header_area, "LOG", &summary, Color::Cyan, app.connected);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -4729,7 +4745,7 @@ fn draw_project_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
         .split(area);
     let (header_area, body, footer_area) = (outer[0], outer[1], outer[2]);
-    draw_section_header(frame, header_area, "PROJECT", &summary, Color::Magenta);
+    draw_section_header(frame, header_area, "PROJECT", &summary, Color::Magenta, app.connected);
 
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -4859,7 +4875,7 @@ fn draw_finances_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
         .split(area);
     let (header_area, body, footer_area) = (outer[0], outer[1], outer[2]);
-    draw_section_header(frame, header_area, "FINANCES", &summary, Color::Green);
+    draw_section_header(frame, header_area, "FINANCES", &summary, Color::Green, app.connected);
 
     let content_chunks = Layout::default()
         .direction(Direction::Horizontal)

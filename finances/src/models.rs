@@ -174,6 +174,36 @@ pub struct PreviewItem {
     pub account: String,
 }
 
+/// A one-off movement of money between two of the user's own accounts —
+/// e.g. Checking -> Savings. Distinct from `SpendingEntry`: neither leg is
+/// an expense/income category, both are real accounts, so it's queried
+/// back out of real hledger transactions via a `tag:transfer` search
+/// rather than a fixed pair of category account names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransferEntry {
+    pub id: String,
+    pub date: NaiveDate,
+    pub description: String,
+    pub amount: f64,
+    pub from_account: String,
+    pub to_account: String,
+}
+
+/// The periodic-rule equivalent of `TransferEntry` — a recurring movement
+/// between two accounts (e.g. an automatic monthly transfer into savings),
+/// parsed the same locally-read-file way `RecurringItem` is (periodic rules
+/// aren't real hledger transactions, so there's nothing to query).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTransfer {
+    pub id: String,
+    pub name: String,
+    pub amount: f64,
+    pub frequency: Frequency,
+    pub reference_date: Option<NaiveDate>,
+    pub from_account: String,
+    pub to_account: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionPoint {
     pub period_start: NaiveDate,

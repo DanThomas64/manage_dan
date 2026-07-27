@@ -5,7 +5,9 @@
 //! of shelling out. Only ever parses blocks in the exact shape
 //! `journal_writer::format_recurring_item` itself writes.
 
-use crate::models::{parse_period_phrase, Account, AccountKind, RecurringItem, TxnKind};
+use crate::models::{
+    parse_period_phrase, Account, AccountKind, RecurringItem, RecurringTransfer, TxnKind,
+};
 
 fn parse_amount(posting_line: &str) -> Option<f64> {
     let dollar_idx = posting_line.find('$')?;
@@ -64,6 +66,58 @@ pub fn parse_recurring_items(content: &str) -> Vec<RecurringItem> {
         .split("\n\n")
         .filter(|block| block.trim_start().starts_with("~ "))
         .filter_map(parse_block)
+        .collect()
+}
+
+/// Parses a `~`-prefixed periodic-rule block tagged `transfer:1` into a
+/// `RecurringTransfer`. Kept as a separate pass from `parse_block` — that
+/// one requires an `expenses:`/`income:` leg and always returns `None` for
+/// a transfer block (both legs are real accounts), so there's no risk of
+/// the two colliding on the same input.
+fn parse_recurring_transfer_block(block: &str) -> Option<RecurringTransfer> {
+    let mut lines = block.lines().filter(|l| !l.trim().is_empty());
+    let header = lines.next()?.trim().strip_prefix("~ ")?;
+    let (period, comment) = header.split_once("; ")?;
+    let (frequency, reference_date) = parse_period_phrase(period.trim())?;
+
+    let comment = comment.trim().strip_prefix("id:")?;
+    let (id, rest) = comment.split_once(" name:")?;
+    let name = rest.strip_suffix(" transfer:1")?.trim().to_string();
+    let id = id.trim().to_string();
+
+    let posting1 = lines.next()?.trim();
+    let posting2 = lines.next()?.trim();
+    let account1 = parse_account(posting1)?;
+    let account2 = parse_account(posting2)?;
+    let amount = parse_amount(posting1).or_else(|| parse_amount(posting2))?;
+
+    // Whichever posting carries the explicit amount is "to" (it's the one
+    // written first, per format_recurring_transfer); the other is "from",
+    // left for hledger to auto-balance to the negative.
+    let (to_account, from_account) = if parse_amount(posting1).is_some() {
+        (account1.to_string(), account2.to_string())
+    } else {
+        (account2.to_string(), account1.to_string())
+    };
+
+    Some(RecurringTransfer {
+        id,
+        name,
+        amount,
+        frequency,
+        reference_date,
+        from_account,
+        to_account,
+    })
+}
+
+/// Parses every `~`-prefixed, `transfer:1`-tagged block — recurring
+/// transfers written by `journal_writer::format_recurring_transfer`.
+pub fn parse_recurring_transfers(content: &str) -> Vec<RecurringTransfer> {
+    content
+        .split("\n\n")
+        .filter(|block| block.trim_start().starts_with("~ ") && block.contains("transfer:1"))
+        .filter_map(parse_recurring_transfer_block)
         .collect()
 }
 
@@ -201,6 +255,46 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, "rec-1");
         assert_eq!(items[1].id, "rec-2");
+    }
+
+    #[test]
+    fn round_trips_recurring_transfer() {
+        let text = crate::journal_writer::format_recurring_transfer(
+            "rtr-1",
+            "Auto-save",
+            100.0,
+            Frequency::Monthly,
+            None,
+            "assets:checking",
+            "assets:savings",
+        );
+        let transfers = parse_recurring_transfers(&text);
+        assert_eq!(transfers.len(), 1);
+        let t = &transfers[0];
+        assert_eq!(t.id, "rtr-1");
+        assert_eq!(t.name, "Auto-save");
+        assert_eq!(t.amount, 100.0);
+        assert_eq!(t.frequency, Frequency::Monthly);
+        assert_eq!(t.from_account, "assets:checking");
+        assert_eq!(t.to_account, "assets:savings");
+    }
+
+    #[test]
+    fn recurring_transfer_not_parsed_as_regular_recurring_item() {
+        let text = crate::journal_writer::format_recurring_transfer(
+            "rtr-2", "Auto-save", 100.0, Frequency::Monthly, None,
+            "assets:checking", "assets:savings",
+        );
+        assert_eq!(parse_recurring_items(&text).len(), 0);
+    }
+
+    #[test]
+    fn regular_recurring_item_not_parsed_as_transfer() {
+        let text = format_recurring_item(
+            "rec-x", "Netflix", 15.0, TxnKind::Expense, "netflix",
+            Frequency::Monthly, None, "assets:checking",
+        );
+        assert_eq!(parse_recurring_transfers(&text).len(), 0);
     }
 
     #[test]

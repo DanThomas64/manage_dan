@@ -16,6 +16,8 @@ pub mod completed_summary;
 pub mod recurring;
 pub mod reminders;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use std::sync::OnceLock;
 
 use chrono::Local;

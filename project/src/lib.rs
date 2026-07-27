@@ -18,6 +18,8 @@ pub mod project_error;
 pub mod project_prelude;
 pub mod models;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use std::sync::OnceLock;
 
 use rusqlite::{params, OptionalExtension};
@@ -63,6 +65,7 @@ fn slugify(name: &str) -> String {
 fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
     let archived_str: Option<String> = row.get(6)?;
     let created_str: String = row.get(7)?;
+    let favourite: i64 = row.get(8)?;
     Ok(Project {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -78,8 +81,13 @@ fn row_to_project(row: &rusqlite::Row) -> rusqlite::Result<Project> {
         created_at: chrono::DateTime::parse_from_rfc3339(&created_str)
             .map(|dt| dt.with_timezone(&chrono::Local))
             .unwrap_or_else(|_| chrono::Local::now()),
+        favourite: favourite != 0,
+        icon: row.get(9)?,
     })
 }
+
+const PROJECT_COLUMNS: &str =
+    "id, name, slug, tag, list_group_id, fs_path, archived_at, created_at, favourite, icon";
 
 /// Initializes the project subsystem: creates the `projects` table and
 /// records the (un-expanded) base directory for project folders.
@@ -97,11 +105,17 @@ pub fn init(base_dir: &str) -> ProjectLibResult {
             list_group_id INTEGER NOT NULL REFERENCES shopping_list_groups(id),
             fs_path       TEXT NOT NULL,
             archived_at   TEXT,
-            created_at    TEXT NOT NULL
+            created_at    TEXT NOT NULL,
+            favourite     INTEGER NOT NULL DEFAULT 0,
+            icon          TEXT
         );
         ",
     )
     .map_err(db::db_error::DbLibError::Sqlite)?;
+    // Migration: add favourite/icon to existing databases (both predate the
+    // Home-page quick-access feature). Best-effort: no-op once already applied.
+    let _ = conn.execute("ALTER TABLE projects ADD COLUMN favourite INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE projects ADD COLUMN icon TEXT", []);
 
     BASE_DIR
         .set(base_dir.to_string())
@@ -115,10 +129,8 @@ pub fn init(base_dir: &str) -> ProjectLibResult {
 /// Returns all projects (including archived ones), ordered by creation.
 pub async fn list_projects() -> ProjectLibResult<Vec<Project>> {
     db::execute_async(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, name, slug, tag, list_group_id, fs_path, archived_at, created_at
-             FROM projects ORDER BY id",
-        )?;
+        let sql = format!("SELECT {} FROM projects ORDER BY id", PROJECT_COLUMNS);
+        let mut stmt = conn.prepare(&sql)?;
         let rows: rusqlite::Result<Vec<Project>> = stmt.query_map([], row_to_project)?.collect();
         rows
     })
@@ -129,13 +141,8 @@ pub async fn list_projects() -> ProjectLibResult<Vec<Project>> {
 /// Fetches a single project by id.
 pub async fn get_project(id: i64) -> ProjectLibResult<Project> {
     db::execute_async(move |conn| {
-        conn.query_row(
-            "SELECT id, name, slug, tag, list_group_id, fs_path, archived_at, created_at
-             FROM projects WHERE id = ?1",
-            params![id],
-            row_to_project,
-        )
-        .optional()
+        let sql = format!("SELECT {} FROM projects WHERE id = ?1", PROJECT_COLUMNS);
+        conn.query_row(&sql, params![id], row_to_project).optional()
     })
     .await
     .map_err(ProjectLibError::Db)?
@@ -199,7 +206,43 @@ pub async fn create_project(name: &str) -> ProjectLibResult<Project> {
         fs_path,
         archived_at: None,
         created_at: now,
+        favourite: false,
+        icon: None,
     })
+}
+
+/// Toggles whether `id` shows a quick-access tile on the Home page.
+pub async fn set_favourite(id: i64, favourite: bool) -> ProjectLibResult<Project> {
+    db::execute_async(move |conn| {
+        conn.execute(
+            "UPDATE projects SET favourite = ?1 WHERE id = ?2",
+            params![favourite as i64, id],
+        )
+    })
+    .await
+    .map_err(ProjectLibError::Db)?;
+    get_project(id).await
+}
+
+/// Sets (or clears, via `None`) the single-emoji icon shown on `id`'s Home
+/// tile and next to its name in the Projects list.
+pub async fn set_icon(id: i64, icon: Option<&str>) -> ProjectLibResult<Project> {
+    let icon: Option<String> = icon.map(|s| s.trim()).filter(|s| !s.is_empty()).map(String::from);
+    // Not a strict emoji validator (that needs full grapheme-cluster-aware
+    // Unicode handling) — just a generous cap so an icon can't become an
+    // arbitrarily long string; a handful of chars covers even multi-codepoint
+    // compound emoji (ZWJ sequences, skin-tone modifiers).
+    if let Some(icon) = &icon {
+        if icon.chars().count() > 8 {
+            return Err(ProjectLibError::InvalidInput("icon must be a single emoji".to_string()));
+        }
+    }
+    db::execute_async(move |conn| {
+        conn.execute("UPDATE projects SET icon = ?1 WHERE id = ?2", params![icon, id])
+    })
+    .await
+    .map_err(ProjectLibError::Db)?;
+    get_project(id).await
 }
 
 // ---------------------------------------------------------------------------

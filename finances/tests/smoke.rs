@@ -115,13 +115,95 @@ async fn full_roundtrip_against_real_hledger() {
         .expect("checking present after adjust");
     assert_eq!(checking_reconciled.balance, 500.0);
 
+    let savings = finances::create_account(journal_path, "Savings", AccountKind::Asset)
+        .await
+        .expect("create savings account");
+
+    let transfer = finances::add_transfer_entry(
+        journal_path,
+        "Move to savings",
+        100.0,
+        NaiveDate::from_ymd_opt(2026, 7, 10).unwrap(),
+        &checking.hledger_account(),
+        &savings.hledger_account(),
+    )
+    .await
+    .expect("add transfer entry");
+
+    let transfers = finances::list_transfer_entries(
+        journal_path,
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+        NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+    )
+    .await
+    .expect("list transfers");
+    assert_eq!(transfers.len(), 1, "expected 1 transfer, got {:?}", transfers);
+    assert_eq!(transfers[0].amount, 100.0);
+    assert_eq!(transfers[0].from_account, checking.hledger_account());
+    assert_eq!(transfers[0].to_account, savings.hledger_account());
+
+    let accounts_after_transfer = finances::list_accounts(journal_path)
+        .await
+        .expect("list accounts after transfer");
+    let checking_after_transfer = accounts_after_transfer.iter().find(|a| a.id == checking.id).unwrap();
+    let savings_after_transfer = accounts_after_transfer.iter().find(|a| a.id == savings.id).unwrap();
+    assert_eq!(checking_after_transfer.balance, 400.0, "500 reconciled - 100 transferred out");
+    assert_eq!(savings_after_transfer.balance, 100.0);
+
+    finances::delete_transfer_entry(journal_path, &transfer.id)
+        .await
+        .expect("delete transfer");
+    let transfers_after_delete = finances::list_transfer_entries(
+        journal_path,
+        NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
+        NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+    )
+    .await
+    .expect("list transfers after delete");
+    assert_eq!(transfers_after_delete.len(), 0);
+
+    let rec_transfer = finances::add_recurring_transfer(
+        journal_path,
+        "Auto-save",
+        50.0,
+        Frequency::Monthly,
+        None,
+        &checking.hledger_account(),
+        &savings.hledger_account(),
+    )
+    .await
+    .expect("add recurring transfer");
+
+    let recurring_transfers = finances::list_recurring_transfers(journal_path)
+        .await
+        .expect("list recurring transfers");
+    assert_eq!(recurring_transfers.len(), 1, "expected 1 recurring transfer, got {:?}", recurring_transfers);
+    assert_eq!(recurring_transfers[0].from_account, checking.hledger_account());
+    assert_eq!(recurring_transfers[0].to_account, savings.hledger_account());
+
+    // A recurring transfer must not leak into the regular income/expense
+    // recurring-items list (they're parsed by two separate, non-overlapping
+    // passes over the same file).
+    let recurring_after_transfer = finances::list_recurring_items(journal_path)
+        .await
+        .expect("list recurring after transfer added");
+    assert_eq!(recurring_after_transfer.len(), 2, "recurring transfer leaked into regular recurring items");
+
+    finances::delete_recurring_transfer(journal_path, &rec_transfer.id)
+        .await
+        .expect("delete recurring transfer");
+    let recurring_transfers_after = finances::list_recurring_transfers(journal_path)
+        .await
+        .expect("list recurring transfers after delete");
+    assert_eq!(recurring_transfers_after.len(), 0);
+
     finances::delete_account(journal_path, &visa.id)
         .await
         .expect("delete visa account");
     let accounts_after_delete = finances::list_accounts(journal_path)
         .await
         .expect("list accounts after delete");
-    assert_eq!(accounts_after_delete.len(), 1);
+    assert_eq!(accounts_after_delete.len(), 2, "checking + savings remain after deleting visa");
 
     let proj = finances::projection(journal_path, 6)
         .await

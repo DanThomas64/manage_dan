@@ -8,6 +8,8 @@ pub mod models;
 pub mod lists_error;
 pub mod lists_prelude;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use chrono::Local;
 use db::db_error::DbLibError;
 use rusqlite::{params, OptionalExtension};
