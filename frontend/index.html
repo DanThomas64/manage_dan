@@ -1289,6 +1289,15 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
+      max-width: 100%;
+      text-align: center;
+      /* The global `button { white-space: nowrap }` reset inherits down to
+         this span (`.home-tile` is itself a <button>) and would otherwise
+         win over `overflow-wrap`, which only governs breaking *within* a
+         word — wrapping between words needs white-space explicitly back to
+         normal first. */
+      white-space: normal;
+      overflow-wrap: break-word;
     }
     .home-tile-version {
       font-family: var(--font-mono);
@@ -1408,10 +1417,13 @@
 
     /* Wide-screen notebook tree sidebar (Notes → Browse/viewer/edit only —
        see .notes-body.tree-view below) — replaces the narrow-screen
-       breadcrumb, which the same media query force-hides. */
+       breadcrumb, which the same media query force-hides. 680px (not
+       900px) so it's still visible unfolded on a Pixel Fold-class device —
+       701 CSS px in portrait, 841 landscape (2208×1840 physical px at a
+       2.625 device pixel ratio). */
     .notes-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
     .notes-tree-sidebar { display: none; }
-    @media (min-width: 900px) {
+    @media (min-width: 680px) {
       .notes-body.tree-view { flex-direction: row; overflow: hidden; }
       .notes-body.tree-view .notes-tree-sidebar {
         display: flex;
@@ -3865,6 +3877,33 @@
         <span class="home-tile-icon">${p.icon ? esc(p.icon) : '&#128193;'}</span>
         <span class="home-tile-label">${esc(p.name)}</span>
       </button>`).join('');
+    fitHomeTileLabels();
+  }
+
+  // Home tile size/font is otherwise fixed (by design) — the only unbounded
+  // text is a favourited project's own name, which can be arbitrarily long.
+  // The label already wraps (`.home-tile-label`'s `overflow-wrap`), which
+  // alone handles most cases; this only kicks in when a tile's content still
+  // doesn't fit after wrapping (a long unbroken word, or so many wrapped
+  // lines it overflows the tile's fixed height), shrinking that tile's own
+  // label font-size a step at a time until it fits or hits a floor.
+  function fitHomeTileLabels() {
+    document.querySelectorAll('.home-tile-label').forEach(label => {
+      label.style.fontSize = '';
+      const tile = label.closest('.home-tile');
+      if (!tile) return;
+      const minSize = 9;
+      let size = parseFloat(getComputedStyle(label).fontSize);
+      let guard = 0;
+      while (
+        (label.scrollWidth > label.clientWidth + 1 || tile.scrollHeight > tile.clientHeight + 1) &&
+        size - 1 >= minSize && guard < 20
+      ) {
+        size -= 1;
+        label.style.fontSize = size + 'px';
+        guard++;
+      }
+    });
   }
 
   // Subtle per-crate version text under each Home tile, plus the overall
