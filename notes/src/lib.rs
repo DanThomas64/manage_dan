@@ -439,5 +439,22 @@ pub async fn sync_cache() -> NotesLibResult<()> {
         }
     }
 
+    // The loop above only ever reconciles notebooks that still exist — a
+    // notebook deleted outright (project permanent-delete's own notebook
+    // cleanup, or a raw `nb notebooks delete` bypassing this app) is simply
+    // absent from `notebooks` and so never gets visited, leaving its rows in
+    // `note_cache` orphaned forever instead of reconciled away. One extra
+    // pass over every cached notebook name catches that case: anything not
+    // in the current live listing gets dropped, regardless of which
+    // notebook it's in.
+    let live: std::collections::HashSet<&str> = notebooks.iter().map(|s| s.as_str()).collect();
+    if let Ok(all_cached_keys) = db::note_cache_get_keys(None).await {
+        for (nb, folder, id) in all_cached_keys {
+            if !live.contains(nb.as_str()) {
+                let _ = db::note_cache_delete(nb, folder, id).await;
+            }
+        }
+    }
+
     Ok(())
 }
