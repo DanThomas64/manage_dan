@@ -19,6 +19,12 @@ pub struct Project {
     pub fs_path: String,
     pub archived_at: Option<DateTime<Local>>,
     pub created_at: DateTime<Local>,
+    /// Whether this project gets a quick-access tile on the Home page.
+    pub favourite: bool,
+    /// Single emoji shown on the project's Home tile in place of the default
+    /// folder icon, and next to its name in the Projects list. `None` falls
+    /// back to the default folder icon.
+    pub icon: Option<String>,
 }
 
 /// Aggregated view of everything scoped to one project. `todos`/`notes`/

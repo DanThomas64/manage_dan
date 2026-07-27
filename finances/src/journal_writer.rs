@@ -7,8 +7,8 @@
 
 use crate::finances_prelude::*;
 use crate::models::{
-    build_period_phrase, Account, AccountKind, Frequency, RecurringItem, SpendingCategory,
-    SpendingEntry, TxnKind,
+    build_period_phrase, Account, AccountKind, Frequency, RecurringItem, RecurringTransfer,
+    SpendingCategory, SpendingEntry, TransferEntry, TxnKind,
 };
 use chrono::NaiveDate;
 use tokio::fs::OpenOptions;
@@ -83,6 +83,62 @@ pub fn format_account_directive(id: &str, name: &str, kind: AccountKind, slug: &
         slug = slug,
         id = id,
         name = sanitize_line(name),
+    )
+}
+
+/// A one-off transfer between two of the user's own accounts. Tagged
+/// `transfer:1` in a *comma*-separated comment (not space-separated, like
+/// `id:`/`name:` elsewhere in this module) — hledger's own tag parser only
+/// splits comment tags on commas, so `id:{id} transfer:1` would parse as one
+/// `id` tag whose value is the literal string `"{id} transfer:1"` rather
+/// than two separate tags (confirmed empirically against a real `hledger`
+/// install) — and it's this tag, via `tag:transfer`, that lets
+/// `list_transfer_entries` find these back out of real hledger transactions
+/// (unlike periodic rules, which this crate parses from local file text
+/// instead of querying hledger for). `to_account` gets the explicit
+/// `$amount`; `from_account`'s is left for hledger to auto-balance to
+/// `-amount` — the same one-posting-explicit convention every other
+/// two-line entry in this module already uses.
+pub fn format_transfer_entry(
+    id: &str,
+    date: NaiveDate,
+    description: &str,
+    amount: f64,
+    from_account: &str,
+    to_account: &str,
+) -> String {
+    format!(
+        "{date} {description}  ; id:{id}, transfer:1\n    {to_account}    ${amount:.2}\n    {from_account}\n\n",
+        date = date.format("%Y-%m-%d"),
+        description = sanitize_line(description),
+        id = id,
+        to_account = to_account,
+        amount = amount,
+        from_account = from_account,
+    )
+}
+
+/// The periodic-rule equivalent of `format_transfer_entry` — parsed back
+/// locally (like `format_recurring_item`), so the `id:`/`name:` tags stay
+/// space-separated for consistency with that convention rather than needing
+/// hledger's own comma-separated tag syntax.
+pub fn format_recurring_transfer(
+    id: &str,
+    name: &str,
+    amount: f64,
+    frequency: Frequency,
+    reference_date: Option<NaiveDate>,
+    from_account: &str,
+    to_account: &str,
+) -> String {
+    format!(
+        "~ {period}  ; id:{id} name:{name} transfer:1\n    {to_account}    ${amount:.2}\n    {from_account}\n\n",
+        period = build_period_phrase(frequency, reference_date),
+        id = id,
+        name = sanitize_line(name),
+        to_account = to_account,
+        amount = amount,
+        from_account = from_account,
     )
 }
 
@@ -162,6 +218,58 @@ pub async fn append_recurring_item(
         frequency,
         reference_date,
         account: account.to_string(),
+    })
+}
+
+pub async fn append_transfer_entry(
+    journal_path: &str,
+    description: &str,
+    amount: f64,
+    date: NaiveDate,
+    from_account: &str,
+    to_account: &str,
+) -> FinancesLibResult<TransferEntry> {
+    let id = Uuid::new_v4().to_string();
+    let text = format_transfer_entry(&id, date, description, amount, from_account, to_account);
+    append(journal_path, &text).await?;
+    Ok(TransferEntry {
+        id,
+        date,
+        description: sanitize_line(description),
+        amount,
+        from_account: from_account.to_string(),
+        to_account: to_account.to_string(),
+    })
+}
+
+pub async fn append_recurring_transfer(
+    journal_path: &str,
+    name: &str,
+    amount: f64,
+    frequency: Frequency,
+    reference_date: Option<NaiveDate>,
+    from_account: &str,
+    to_account: &str,
+) -> FinancesLibResult<RecurringTransfer> {
+    let id = Uuid::new_v4().to_string();
+    let text = format_recurring_transfer(
+        &id,
+        name,
+        amount,
+        frequency,
+        reference_date,
+        from_account,
+        to_account,
+    );
+    append(journal_path, &text).await?;
+    Ok(RecurringTransfer {
+        id,
+        name: sanitize_line(name),
+        amount,
+        frequency,
+        reference_date,
+        from_account: from_account.to_string(),
+        to_account: to_account.to_string(),
     })
 }
 
@@ -346,6 +454,40 @@ mod tests {
     fn liability_account_directive_format_is_exact() {
         let text = format_account_directive("acc-2", "Visa", AccountKind::Liability, "visa");
         assert_eq!(text, "account liabilities:visa  ; id:acc-2 name:Visa\n\n");
+    }
+
+    #[test]
+    fn transfer_entry_format_is_exact() {
+        let date = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+        let text = format_transfer_entry(
+            "tr-1",
+            date,
+            "Move to savings",
+            300.0,
+            "assets:checking",
+            "assets:savings",
+        );
+        assert_eq!(
+            text,
+            "2026-07-26 Move to savings  ; id:tr-1, transfer:1\n    assets:savings    $300.00\n    assets:checking\n\n"
+        );
+    }
+
+    #[test]
+    fn recurring_transfer_format_is_exact() {
+        let text = format_recurring_transfer(
+            "rtr-1",
+            "Auto-save",
+            100.0,
+            Frequency::Monthly,
+            None,
+            "assets:checking",
+            "assets:savings",
+        );
+        assert_eq!(
+            text,
+            "~ monthly  ; id:rtr-1 name:Auto-save transfer:1\n    assets:savings    $100.00\n    assets:checking\n\n"
+        );
     }
 
     #[test]

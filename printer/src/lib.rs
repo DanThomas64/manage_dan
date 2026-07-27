@@ -8,6 +8,8 @@
 pub mod printer_error;
 pub mod printer_prelude;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use crate::printer_prelude::*;
 use once_cell::sync::OnceCell;
 use std::sync::Mutex;

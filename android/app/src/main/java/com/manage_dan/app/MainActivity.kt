@@ -358,18 +358,22 @@ class MainActivity : AppCompatActivity() {
                 "$serverUrl/todo/$taskId"
             }
             "notes" -> {
-                // manage-dan://notes/:id?notebook=:notebook — note ids are
-                // scoped per-notebook (nb's own per-notebook numbering), so
-                // the notebook has to travel with the id, as a query param
-                // matching the real GET /notes/:id?notebook= route's own
-                // shape (previously this took the whole "notebook:id" path
-                // segment as an opaque uuid, a leftover from before notes
-                // switched to nb-backed numeric ids — that never matched the
-                // actual route, so scanning a note's QR code silently 404'd).
+                // manage-dan://notes/:id?notebook=:notebook&folder=:folder —
+                // note ids are scoped per-folder within a notebook (nb's own
+                // per-listing-scope numbering: a root note and a note inside
+                // one of that notebook's subfolders can both be "id 1" at
+                // the same time), so both the notebook and folder have to
+                // travel with the id, as query params matching the real
+                // GET /notes/:id?notebook=&folder= route's own shape
+                // (previously this took the whole "notebook:id" path segment
+                // as an opaque uuid, a leftover from before notes switched to
+                // nb-backed numeric ids — that never matched the actual
+                // route, so scanning a note's QR code silently 404'd).
                 val noteId = uri.pathSegments.firstOrNull() ?: return null
                 noteId.toLongOrNull() ?: return null
                 val notebook = uri.getQueryParameter("notebook") ?: return null
-                "$serverUrl/notes/$noteId?notebook=$notebook"
+                val folder = uri.getQueryParameter("folder") ?: ""
+                "$serverUrl/notes/$noteId?notebook=$notebook&folder=$folder"
             }
             "list" -> {
                 val listId = uri.pathSegments.firstOrNull() ?: return null

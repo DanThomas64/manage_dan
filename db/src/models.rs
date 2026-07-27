@@ -60,6 +60,12 @@ pub struct TodoCacheRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteCacheRow {
     pub notebook: String,
+    /// Path of the subfolder the note lives in within `notebook`, e.g.
+    /// `"Projects/Sub"` — empty string for the notebook's root. `nb_id` is
+    /// only unique *within* a given (notebook, folder) pair (`nb` numbers
+    /// items per-listing-scope, not per-notebook), so this is part of the
+    /// row's real identity, not just display metadata.
+    pub folder: String,
     pub nb_id: u64,
     pub title: String,
     pub preview: String,

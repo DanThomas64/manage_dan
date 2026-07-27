@@ -407,6 +407,10 @@
     }
     .cat-menu-dropdown.open { display: block; }
     .cat-menu-dropdown.align-right { left: auto; right: 0; }
+    /* Opens upward instead of down — for triggers pinned near the bottom of
+       the screen (e.g. the note viewer's bottom action bar), where the
+       default downward-opening dropdown would run off the viewport. */
+    .cat-menu-dropdown.drop-up { top: auto; bottom: calc(100% + 4px); }
     .cat-menu-item {
       display: flex; align-items: center; gap: 10px;
       width: 100%; min-height: 48px; padding: 13px 16px;
@@ -1192,18 +1196,50 @@
     .notes-panel.active, .log-panel.active, .todo-panel.active, .finances-panel.active { display: flex; }
     /* Recurring's add-form + item list + preview builder + chart can add up
        to more than one screen's worth of content — let the whole panel
-       scroll rather than clipping via the shared overflow:hidden above. */
+       scroll as one unit rather than clipping via the shared overflow:hidden
+       above (and the chart doesn't need to stay pinned in view either). */
     .finances-panel { overflow-y: auto; overflow-x: hidden; }
+    /* The finances panels' item lists otherwise inherit .notes-list's
+       flex:1 + overflow-y:auto (right for Notes/Log/Todo, where that pane
+       owns the one scroll region) — here that would instead carve out a
+       nested scrollbar per list, leaving whatever comes after it (a second
+       list, a chart) pinned in view regardless of scroll position.
+       Overriding to flex:none/visible folds every list back into the
+       panel's single normal document flow so the whole tab scrolls as one. */
+    .finances-panel .notes-list { flex: none; overflow: visible; }
+    /* .quick-note-form's own flex:1 + overflow-y:auto is right when a form
+       is a tab's *only* content (Notes/Log/Todo's separate Add tab) — but
+       the finances Spending/Recurring panels stack form + list (+ preview +
+       chart) together in one panel, not separate tabs. Unscoped, the form
+       claimed all leftover panel space and scrolled *itself* in a squeezed
+       box while everything after it (list, chart) stayed fully visible
+       below — the opposite of what's wanted. Folding it into normal flow
+       here lets the form show in full and the panel's own scroll (above)
+       take over for anything that doesn't fit. */
+    .finances-panel .quick-note-form { flex: none; overflow: visible; }
 
     /* ── Home landing page ── */
+    /* No `justify-content: center` here on purpose: combined with
+       `overflow-y: auto` it's a well-known flexbox trap — once content
+       overflows, the browser still centers first and only then clips, so
+       scrolling can never reach the part pushed above/below the visible
+       box. `.home-hero-inner`'s `margin: auto 0` centers the same way while
+       content fits, but collapses to 0 (flush, fully scrollable) once it
+       doesn't, instead of clipping. */
     .home-hero {
       flex: 1;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
-      gap: 28px;
       padding: 24px;
+      overflow-y: auto;
+    }
+    .home-hero-inner {
+      margin: auto 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 28px;
     }
     .home-title { font-family: var(--font-mono); font-size: 1.3rem; font-weight: 700; letter-spacing: 0.02em; }
     .home-tiles { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
@@ -1253,6 +1289,22 @@
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.06em;
+    }
+    .home-tile-version {
+      font-family: var(--font-mono);
+      font-size: 0.65rem;
+      font-weight: 400;
+      color: var(--text-dim);
+      letter-spacing: 0.02em;
+    }
+    .home-meta {
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
     }
 
     /* Quick Add panel */
@@ -1320,6 +1372,79 @@
     .filter-pill.active { background: var(--secondary-cont); color: var(--secondary-on); }
     .filter-pill:hover:not(.active) { background: var(--border); color: var(--text); }
 
+    /* Notes-tree breadcrumb + folder rows (browse panel, single notebook) */
+    .notes-breadcrumb {
+      padding: 8px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      border-bottom: 1px dashed var(--border);
+      flex-shrink: 0;
+    }
+    .notes-breadcrumb button {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-muted); font-family: inherit; font-size: inherit; padding: 2px 4px;
+    }
+    .notes-breadcrumb button:hover { color: var(--accent); }
+    .notes-breadcrumb .crumb-current { color: var(--text); }
+    .folder-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      margin-bottom: 8px;
+      background: var(--surface2);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+    .folder-row:hover { border-color: var(--accent); }
+
+    /* Wide-screen notebook tree sidebar (Notes → Browse/viewer/edit only —
+       see .notes-body.tree-view below) — replaces the narrow-screen
+       breadcrumb, which the same media query force-hides. */
+    .notes-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+    .notes-tree-sidebar { display: none; }
+    @media (min-width: 900px) {
+      .notes-body.tree-view { flex-direction: row; overflow: hidden; }
+      .notes-body.tree-view .notes-tree-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+        width: 260px;
+        flex-shrink: 0;
+        overflow-y: auto;
+        padding: 10px 8px;
+        border-right: 1px dashed var(--border);
+        background: var(--surface);
+      }
+      .notes-body.tree-view .notes-breadcrumb { display: none !important; }
+      .notes-body.tree-view #npanel-edit .quick-note-form { max-width: none; margin: 0; }
+    }
+    .tree-node-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 8px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tree-node-row:hover { background: var(--surface2); color: var(--text); }
+    .tree-node-row.tree-current { background: var(--secondary-cont); color: var(--secondary-on); font-weight: 600; }
+    .tree-node-row.tree-folder { color: var(--text); font-weight: 600; }
+    .tree-node-icon { flex-shrink: 0; }
+
     .notes-list { flex: 1; overflow-y: auto; padding: 8px; }
     .note-card {
       position: relative;
@@ -1335,6 +1460,21 @@
       transition: border-color 0.15s;
     }
     .note-card:hover { background: var(--surface2); border-color: var(--accent); }
+    .project-star {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1.15rem;
+      line-height: 1;
+      padding: 4px;
+      color: var(--text-muted);
+    }
+    .project-star:hover { color: var(--accent); }
+    .project-star.active { color: var(--accent); }
+    .project-card-icon { cursor: pointer; }
     .note-card-delete {
       position: absolute;
       top: 8px;
@@ -1581,16 +1721,23 @@
 <!-- Home overlay: landing page with a big button per section -->
 <div id="home-overlay" class="app-overlay active">
   <div class="home-hero">
+  <div class="home-hero-inner">
     <div class="home-title"><span style="color:var(--accent)">&#9676;</span> Manage Dan</div>
+    <div class="home-meta">
+      <span id="home-connectivity" style="color:var(--green);">&#9679; Online</span>
+      <span id="home-app-version"></span>
+    </div>
     <div class="home-tiles">
       <button class="home-tile" onclick="showView('lists')">
         <span class="home-tile-icon">&#128722;</span>
         <span class="home-tile-label">Lists</span>
+        <span class="home-tile-version" id="ver-lists"></span>
       </button>
       <div class="home-tile-wrap">
         <button class="home-tile" onclick="showView('notes')">
           <span class="home-tile-icon">&#128221;</span>
           <span class="home-tile-label">Notes</span>
+          <span class="home-tile-version" id="ver-notes"></span>
         </button>
         <button class="home-tile-add" onclick="quickAddNote();" aria-label="Add note" title="Add note">+ Add</button>
       </div>
@@ -1598,6 +1745,7 @@
         <button class="home-tile" onclick="showView('log')">
           <span class="home-tile-icon">&#128220;</span>
           <span class="home-tile-label">Log</span>
+          <span class="home-tile-version" id="ver-log"></span>
         </button>
         <button class="home-tile-add" onclick="quickAddLog();" aria-label="Add log entry" title="Add log entry">+ Add</button>
       </div>
@@ -1605,19 +1753,25 @@
         <button class="home-tile" onclick="showView('todo')">
           <span class="home-tile-icon">&#9989;</span>
           <span class="home-tile-label">Todo</span>
+          <span class="home-tile-version" id="ver-todo"></span>
         </button>
         <button class="home-tile-add" onclick="quickAddTodo();" aria-label="Add todo" title="Add todo">+ Add</button>
       </div>
-      <button class="home-tile" onclick="showView('projects')">
-        <span class="home-tile-icon">&#128193;</span>
-        <span class="home-tile-label">Projects</span>
-      </button>
       <button class="home-tile" onclick="showView('finances')">
         <span class="home-tile-icon">&#128176;</span>
         <span class="home-tile-label">Finances</span>
+        <span class="home-tile-version" id="ver-finances"></span>
+      </button>
+      <!-- Favourited projects and the Projects button always come last. -->
+      <div id="home-favourite-tiles" style="display:contents;"></div>
+      <button class="home-tile" onclick="showView('projects')">
+        <span class="home-tile-icon">&#128193;</span>
+        <span class="home-tile-label">Projects</span>
+        <span class="home-tile-version" id="ver-projects"></span>
       </button>
     </div>
   </div>
+  </div><!-- /.home-hero-inner -->
 </div>
 
 <!-- Notes overlay -->
@@ -1627,8 +1781,8 @@
   <div class="notes-nav">
     <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
     <div class="hbar-scroll">
-      <button class="notes-tab active" id="ntab-add" onclick="notesShowTab('add')">&#43; New</button>
-      <button class="notes-tab" id="ntab-browse" onclick="notesShowTab('browse')">Browse</button>
+      <button class="notes-tab" id="ntab-add" onclick="notesShowTab('add')">&#43; New</button>
+      <button class="notes-tab active" id="ntab-browse" onclick="notesShowTab('browse')">Browse</button>
       <button class="notes-tab" id="ntab-search" onclick="notesShowTab('search')">Search</button>
     </div>
     <div class="cat-menu-wrap">
@@ -1637,14 +1791,24 @@
         <button class="cat-menu-item" onclick="notesToggleShowProject()">
           Show Project Items <span class="menu-check" id="notes-show-project-check"></span>
         </button>
+        <button class="cat-menu-item" onclick="notesNewFolder()">&#128193; New Folder</button>
         <button class="cat-menu-item" onclick="notesOpenArchive()">&#128193; Archive</button>
         <button class="cat-menu-item" onclick="notesForceRefresh(this)">&#8635; Refresh</button>
       </div>
     </div>
   </div>
 
+  <!-- Wide screens: notebook tree sidebar alongside the active panel,
+       replacing the narrow-screen breadcrumb (see .notes-tree-sidebar /
+       .notes-breadcrumb media query rules). Always rendered; CSS alone
+       decides which one is visible at the current width. -->
+  <div class="notes-body">
+  <div class="notes-tree-sidebar" id="notes-tree-sidebar">
+    <div class="empty-state"><span>Select a notebook to see its tree</span></div>
+  </div>
+
   <!-- Quick Add panel -->
-  <div class="notes-panel active" id="npanel-add">
+  <div class="notes-panel" id="npanel-add">
     <div class="quick-note-form">
       <div>
         <div class="field-label">Title</div>
@@ -1675,10 +1839,11 @@
   </div>
 
   <!-- Browse panel -->
-  <div class="notes-panel" id="npanel-browse">
+  <div class="notes-panel active" id="npanel-browse">
     <div class="notes-filters" id="notebook-filters">
       <button class="filter-pill active" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>
     </div>
+    <div class="notes-breadcrumb" id="notes-breadcrumb" style="display:none;"></div>
     <div class="notes-list" id="notes-list">
       <div class="empty-state"><span class="icon">&#128221;</span><span>No notes yet</span></div>
     </div>
@@ -1699,6 +1864,7 @@
 
   <!-- Note viewer panel (shown when a note is opened) -->
   <div class="notes-panel" id="npanel-viewer" style="overflow:hidden;">
+    <div class="notes-breadcrumb" id="note-viewer-breadcrumb" style="display:none;"></div>
     <div class="note-viewer" id="note-viewer-content">
       <!-- filled dynamically -->
     </div>
@@ -1706,6 +1872,10 @@
       <button class="btn-ghost btn-sm" onclick="notesPrint()">&#128424; Print</button>
       <button class="btn-ghost btn-sm" onclick="notesCloseViewer()">&#8592; Back</button>
       <button class="btn-ghost btn-sm" onclick="notesOpenEditMode()">Edit</button>
+      <div class="cat-menu-wrap">
+        <button class="btn-ghost btn-sm" onclick="notesToggleMoveMenu(event)">&#128193; Move</button>
+        <div class="cat-menu-dropdown drop-up align-right" id="notes-move-dropdown" style="max-height:280px;overflow-y:auto;"></div>
+      </div>
       <button class="btn-danger btn-sm" onclick="notesDeleteNote()">Delete</button>
     </div>
   </div>
@@ -1715,6 +1885,7 @@
     <div class="quick-note-form">
       <input type="hidden" id="edit-nb-id" />
       <input type="hidden" id="edit-notebook" />
+      <input type="hidden" id="edit-folder" />
       <div>
         <div class="field-label">Title</div>
         <input type="text" id="edit-title" class="lc-first" placeholder="Note title" autocomplete="off" required />
@@ -1733,6 +1904,7 @@
       </div>
     </div>
   </div>
+  </div><!-- /.notes-body -->
 
 </div>
 
@@ -1743,13 +1915,13 @@
   <div class="notes-nav">
     <button class="btn-ghost btn-sm" onclick="showHome()" style="margin-right:8px;">&#8962; Home</button>
     <div class="hbar-scroll">
-      <button class="log-tab active" id="ltab-add" onclick="logShowTab('add')">&#43; New</button>
-      <button class="log-tab" id="ltab-recent" onclick="logShowTab('recent')">Recent</button>
+      <button class="log-tab" id="ltab-add" onclick="logShowTab('add')">&#43; New</button>
+      <button class="log-tab active" id="ltab-recent" onclick="logShowTab('recent')">Recent</button>
     </div>
   </div>
 
   <!-- Add Entry panel: quick entries into today's daily log (nb daily plugin) -->
-  <div class="log-panel active" id="lpanel-add">
+  <div class="log-panel" id="lpanel-add">
     <div class="quick-note-form">
       <div>
         <div class="field-label">Title</div>
@@ -1773,8 +1945,19 @@
     </div>
   </div>
 
-  <!-- Recent panel: read-only view of the last 7 days of daily log entries -->
-  <div class="log-panel" id="lpanel-recent">
+  <!-- Recent panel: read-only view of the last N days of daily log entries -->
+  <div class="log-panel active" id="lpanel-recent">
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 16px;">
+      <label for="log-days-select" style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;">Show</label>
+      <select id="log-days-select" onchange="logSetDays(this.value)">
+        <option value="1">1 day</option>
+        <option value="3">3 days</option>
+        <option value="7">1 week</option>
+        <option value="14">2 weeks</option>
+        <option value="30">1 month</option>
+        <option value="90">3 months</option>
+      </select>
+    </div>
     <div class="notes-list" id="logs-list">
       <div class="empty-state"><span class="icon">&#128220;</span><span>No log entries yet</span></div>
     </div>
@@ -1862,6 +2045,7 @@
       <button class="filter-pill active" data-filter="active" onclick="todoSetFilter(this,'active')">Active</button>
       <button class="filter-pill" data-filter="completed" onclick="todoSetFilter(this,'completed')">Completed</button>
       <button class="filter-pill" data-filter="all" onclick="todoSetFilter(this,'all')">All</button>
+      <div id="todo-project-filters" style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;"></div>
     </div>
     <div class="notes-list" id="todo-list">
       <div class="empty-state"><span class="icon">&#9989;</span><span>No todos yet</span></div>
@@ -1886,33 +2070,68 @@
   <!-- Spending panel -->
   <div class="finances-panel active" id="fpanel-spending">
     <div class="quick-note-form">
-      <div style="display:flex;gap:12px;">
-        <div style="flex:1;">
-          <div class="field-label">Category</div>
-          <select id="fin-category" style="width:100%;">
-            <option value="stupid">Stupid Spending</option>
-            <option value="survival">Survival Spending</option>
-          </select>
+      <div style="display:flex;gap:8px;">
+        <button class="filter-pill active" id="fin-spend-mode-expense" onclick="setSpendingMode('expense')">Expense</button>
+        <button class="filter-pill" id="fin-spend-mode-transfer" onclick="setSpendingMode('transfer')">Transfer</button>
+      </div>
+
+      <div id="fin-expense-fields">
+        <div style="display:flex;gap:12px;">
+          <div style="flex:1;">
+            <div class="field-label">Category</div>
+            <select id="fin-category" style="width:100%;">
+              <option value="stupid">Stupid Spending</option>
+              <option value="survival">Survival Spending</option>
+            </select>
+          </div>
+          <div style="width:110px;">
+            <div class="field-label">Amount</div>
+            <input type="number" id="fin-amount" step="0.01" min="0" placeholder="0.00" style="width:100%;" />
+          </div>
         </div>
-        <div style="width:110px;">
-          <div class="field-label">Amount</div>
-          <input type="number" id="fin-amount" step="0.01" min="0" placeholder="0.00" style="width:100%;" />
+        <div>
+          <div class="field-label">Description</div>
+          <input type="text" id="fin-description" placeholder="e.g. Junk food" autocomplete="off" />
+        </div>
+        <div style="display:flex;gap:12px;">
+          <div style="flex:1;">
+            <div class="field-label">Account</div>
+            <select id="fin-account" style="width:100%;"></select>
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">Date</div>
+            <input type="date" id="fin-date" style="width:100%;" />
+          </div>
         </div>
       </div>
-      <div>
-        <div class="field-label">Description</div>
-        <input type="text" id="fin-description" placeholder="e.g. Junk food" autocomplete="off" />
-      </div>
-      <div style="display:flex;gap:12px;">
-        <div style="flex:1;">
-          <div class="field-label">Account</div>
-          <select id="fin-account" style="width:100%;"></select>
+
+      <div id="fin-transfer-fields" style="display:none;">
+        <div style="display:flex;gap:12px;">
+          <div style="flex:1;">
+            <div class="field-label">From Account</div>
+            <select id="fin-transfer-from" style="width:100%;"></select>
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">To Account</div>
+            <select id="fin-transfer-to" style="width:100%;"></select>
+          </div>
         </div>
-        <div style="flex:1;">
-          <div class="field-label">Date</div>
-          <input type="date" id="fin-date" style="width:100%;" />
+        <div>
+          <div class="field-label">Description</div>
+          <input type="text" id="fin-transfer-description" placeholder="e.g. Move to savings" autocomplete="off" />
+        </div>
+        <div style="display:flex;gap:12px;">
+          <div style="flex:1;">
+            <div class="field-label">Amount</div>
+            <input type="number" id="fin-transfer-amount" step="0.01" min="0" placeholder="0.00" style="width:100%;" />
+          </div>
+          <div style="flex:1;">
+            <div class="field-label">Date</div>
+            <input type="date" id="fin-transfer-date" style="width:100%;" />
+          </div>
         </div>
       </div>
+
       <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitSpendingEntry()">Add Entry</button>
     </div>
 
@@ -1942,9 +2161,10 @@
       <div style="display:flex;gap:12px;">
         <div style="flex:1;">
           <div class="field-label">Kind</div>
-          <select id="fin-rec-kind" style="width:100%;">
+          <select id="fin-rec-kind" style="width:100%;" onchange="updateRecurringKindFields()">
             <option value="income">Income</option>
             <option value="expense">Expense</option>
+            <option value="transfer">Transfer</option>
           </select>
         </div>
         <div style="width:110px;">
@@ -1953,9 +2173,13 @@
         </div>
       </div>
       <div style="display:flex;gap:12px;">
-        <div style="flex:1;">
+        <div style="flex:1;" id="fin-rec-label-wrap">
           <div class="field-label">Label <span style="color:var(--text-dim)">(category)</span></div>
           <input type="text" id="fin-rec-label" placeholder="e.g. salary, netflix, taxes" autocomplete="off" />
+        </div>
+        <div style="flex:1;display:none;" id="fin-rec-from-wrap">
+          <div class="field-label">From Account</div>
+          <select id="fin-rec-from-account" style="width:100%;"></select>
         </div>
         <div style="flex:1;">
           <div class="field-label">Frequency</div>
@@ -1968,9 +2192,13 @@
         </div>
       </div>
       <div style="display:flex;gap:12px;">
-        <div style="flex:1;">
+        <div style="flex:1;" id="fin-rec-account-wrap">
           <div class="field-label">Account</div>
           <select id="fin-rec-account" style="width:100%;"></select>
+        </div>
+        <div style="flex:1;display:none;" id="fin-rec-to-wrap">
+          <div class="field-label">To Account</div>
+          <select id="fin-rec-to-account" style="width:100%;"></select>
         </div>
         <div style="flex:1;">
           <div class="field-label">Reference Date <span style="color:var(--text-dim)">(optional)</span></div>
@@ -2063,6 +2291,10 @@
     <div class="cat-menu-wrap" style="margin-left:auto;">
       <button class="cat-menu-btn" onclick="toggleMenu('project-detail-menu-dropdown', event)" title="View options">&#9776;</button>
       <div class="cat-menu-dropdown align-right" id="project-detail-menu-dropdown">
+        <button class="cat-menu-item" onclick="pdToggleFavourite()">
+          &#9733; Show on Home <span class="menu-check" id="pd-favourite-check"></span>
+        </button>
+        <button class="cat-menu-item" onclick="pdEditIcon()">&#128293; Set Icon&hellip;</button>
         <button class="cat-menu-item" onclick="closeAllMenus(); archiveProject(currentProjectDetailId)">&#128193; Archive</button>
       </div>
     </div>
@@ -2396,6 +2628,7 @@
   }
 
   function showOfflineBanner() {
+    setHomeConnectivity(false);
     if (offlineMode) return;
     offlineMode = true;
     document.getElementById('offline-banner').classList.add('show');
@@ -2403,6 +2636,7 @@
   }
 
   function hideOfflineBanner() {
+    setHomeConnectivity(true);
     if (!offlineMode) return;
     offlineMode = false;
     document.getElementById('offline-banner').classList.remove('show');
@@ -3564,6 +3798,16 @@
   init();
   restoreFormState();
   restoreLastView();
+  loadAppVersions();
+  setInterval(loadAppVersions, 60000);
+  // Deferred, not called directly here: renderHomeFavourites() calls
+  // refreshProjectsList(), which references PROJECT_API/projectsList —
+  // declared later in this same script, further down in source order. This
+  // "Start" section runs synchronously as the script is first parsed, before
+  // those later const/let bindings exist yet (the TDZ), so calling straight
+  // through would throw; setTimeout(...,0) defers to after the whole script
+  // has finished its first pass, once everything is actually initialized.
+  setTimeout(renderHomeFavourites, 0);
 
   // ═══════════════════════════════════════════════════════════════════════════
   // APP NAVIGATION (Home / Lists / Notes / Log — full-screen overlays)
@@ -3589,6 +3833,7 @@
     if (view === 'finances') financesOnOpen();
     if (view === 'projects') projectsOnOpen();
     if (view === 'project-detail') projectDetailOnOpen(extra && extra.projectId);
+    if (view === 'home') renderHomeFavourites();
 
     // Push a history entry per view change so the mouse back/forward buttons
     // (and mobile swipe-back/forward gestures, which the browser maps to the
@@ -3600,6 +3845,57 @@
   }
 
   function showHome() { showView('home'); }
+
+  // Favourited projects get their own quick-access tile on Home, right
+  // before the Projects tile — always re-fetched (not gated by
+  // ensureProjectsLoaded's projectsLoaded flag) so a favourite/icon change
+  // made elsewhere shows up the next time Home is visited, not just after a
+  // full page reload.
+  async function renderHomeFavourites() {
+    const el = document.getElementById('home-favourite-tiles');
+    if (!el) return;
+    try {
+      await refreshProjectsList();
+    } catch (_) {
+      return;
+    }
+    const favourites = projectsList.filter(p => p.favourite && !p.archived_at);
+    el.innerHTML = favourites.map(p => `
+      <button class="home-tile" onclick="showView('project-detail', false, {projectId: ${p.id}})">
+        <span class="home-tile-icon">${p.icon ? esc(p.icon) : '&#128193;'}</span>
+        <span class="home-tile-label">${esc(p.name)}</span>
+      </button>`).join('');
+  }
+
+  // Subtle per-crate version text under each Home tile, plus the overall
+  // app version and an online/offline reference near the title. A single
+  // GET only ever succeeds if the backend is actually reachable, so it
+  // doubles as a lightweight connectivity check independent of the
+  // cachedFetch/offline-queue machinery above (which only ever flips state
+  // reactively, off an actual todo/lists request failing).
+  async function loadAppVersions() {
+    try {
+      const r = await fetch('/api/v1/version');
+      if (!r.ok) throw 0;
+      const v = await r.json();
+      setHomeConnectivity(true);
+      document.getElementById('home-app-version').textContent = `app v${v.app}`;
+      const map = { lists: v.lists, notes: v.notes, log: v.notes, todo: v.todo, projects: v.project, finances: v.finances };
+      for (const [key, ver] of Object.entries(map)) {
+        const el = document.getElementById('ver-' + key);
+        if (el) el.textContent = 'v' + ver;
+      }
+    } catch (_) {
+      setHomeConnectivity(false);
+    }
+  }
+
+  function setHomeConnectivity(online) {
+    const el = document.getElementById('home-connectivity');
+    if (!el) return;
+    el.textContent = online ? '● Online' : '● Offline';
+    el.style.color = online ? 'var(--green)' : 'var(--red)';
+  }
 
   // Companion to the `sessionStorage` write in showView() — run once at
   // boot so a fold/unfold-triggered reload resumes on the same screen (and,
@@ -3645,10 +3941,31 @@
   let notesViewerFromTab = 'browse';
   let notesSearchTimer = null;
   let markedLoaded = false;
+  // Notes-tree state: which subfolder is being browsed within
+  // notesFilterNotebook (empty = that notebook's root), and its full folder
+  // list (subfolder paths, recursively) fetched live per notebook — see
+  // notes::list_folders. Only meaningful while a single notebook is
+  // selected; the "All" pill stays a flat cross-notebook list.
+  let notesCurrentFolder = '';
+  let notesFolderList = [];
+
+  // Wide-screen notebook tree sidebar (Notes → Browse/viewer/edit — see
+  // .notes-body.tree-view). Reflects whichever notebook is contextually
+  // relevant: notesFilterNotebook while browsing a specific notebook, or an
+  // opened note's own notebook when reached another way (search, a project's
+  // "Notes →" link, etc). null (and the placeholder empty-state) while no
+  // single notebook applies, e.g. the "All" pill.
+  let notesTreeNotebook = null;
+  let notesTreeNotes = [];
+  let notesTreeFolders = [];
+  // What to highlight in the tree: the folder currently open in Browse, or
+  // the specific note open in the viewer/edit panel.
+  let notesTreeHighlight = { type: null };
 
   function notesOnOpen() {
     updateNotesProjectCheck();
     notesLoadNotebooks();
+    notesUpdateTreeVisibility();
     if (pendingProjectContext !== null) {
       const pid = pendingProjectContext; pendingProjectContext = null;
       notesShowTab('add');
@@ -3678,6 +3995,7 @@
     document.getElementById('ntab-' + tab).classList.add('active');
     document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('npanel-' + tab).classList.add('active');
+    notesUpdateTreeVisibility();
     if (tab === 'browse') notesLoadBrowse();
     if (tab === 'add') {
       setTimeout(() => document.getElementById('note-content').focus(), 80);
@@ -3685,11 +4003,31 @@
     }
   }
 
+  // The wide-screen tree sidebar only makes sense for Browse and the single-
+  // note viewer/edit panels (Add/Search have no one notebook to root a tree
+  // at) — toggles the .notes-body class the CSS media query gates on.
+  function notesUpdateTreeVisibility() {
+    const body = document.querySelector('#notes-overlay .notes-body');
+    if (!body) return;
+    body.classList.toggle('tree-view', ['browse', 'viewer', 'edit'].includes(notesCurrentTab));
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // LOG
   // ═══════════════════════════════════════════════════════════════════════════
 
   let logCurrentTab = 'recent';
+  // How many days back the Recent tab shows, user-adjustable via the
+  // "Show" dropdown; persisted the same way logCurrentTab/logTab are, so
+  // it survives a fold/unfold-triggered reload but resets fresh next
+  // session — default stays a week from the current date.
+  let logDays = parseInt(sessionStorage.getItem('logDays'), 10) || 7;
+
+  function logSetDays(days) {
+    logDays = parseInt(days, 10) || 7;
+    try { sessionStorage.setItem('logDays', String(logDays)); } catch (_) {}
+    logLoadRecent();
+  }
 
   function logOnOpen() {
     if (pendingProjectContext !== null) {
@@ -3729,10 +4067,12 @@
   // filtering by project only happens implicitly via Project Detail's own
   // scoped fetch (see below).
   async function logLoadRecent() {
+    const sel = document.getElementById('log-days-select');
+    if (sel) sel.value = String(logDays);
     try {
-      const r = await fetch(NOTES_API + '/daily?days=7');
+      const r = await fetch(NOTES_API + '/daily?days=' + logDays);
       const entries = await r.json();
-      renderLogList(entries);
+      renderLogList(entries, null, logDays + (logDays === 1 ? ' day' : ' days'));
     } catch (_) {
       document.getElementById('logs-list').innerHTML = '<div class="empty-state"><span>Failed to load log entries</span></div>';
     }
@@ -3741,10 +4081,10 @@
   // `containerId` defaults to the main Log screen's list; the Project detail
   // panel passes its own container id, already scoped server-side to one
   // project's entries.
-  function renderLogList(entries, containerId) {
+  function renderLogList(entries, containerId, windowLabel) {
     const el = document.getElementById(containerId || 'logs-list');
     if (!entries || entries.length === 0) {
-      el.innerHTML = '<div class="empty-state"><span class="icon">&#128220;</span><span>No log entries in the last 7 days</span></div>';
+      el.innerHTML = `<div class="empty-state"><span class="icon">&#128220;</span><span>No log entries in the last ${esc(windowLabel || '7 days')}</span></div>`;
       return;
     }
     let html = '';
@@ -3800,6 +4140,7 @@
   function notesOpenArchive() {
     closeAllMenus();
     notesFilterNotebook = 'archive';
+    notesCurrentFolder = '';
     notesShowTab('browse');
   }
 
@@ -3887,14 +4228,212 @@
       if (notesHideProjectItems) {
         notes = notes.filter(n => !(n.tags || []).some(t => t.startsWith('project-')));
       }
-      renderNoteList(notes, 'notes-list', 'browse');
+
+      const crumbEl = document.getElementById('notes-breadcrumb');
+      if (!notesFilterNotebook) {
+        // "All": flat cross-notebook list, no single notebook for a tree to
+        // root at — narrow-screen breadcrumb and wide-screen sidebar both go away.
+        crumbEl.style.display = 'none';
+        notesTreeNotebook = null;
+        notesTreeHighlight = { type: null };
+        renderNotesTreeSidebar();
+        renderNoteList(notes, 'notes-list', 'browse');
+        return;
+      }
+
+      notesFolderList = await fetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notesFilterNotebook))
+        .then(r => r.ok ? r.json() : []).catch(() => []);
+      notesRenderBreadcrumb();
+      notesTreeNotebook = notesFilterNotebook;
+      notesTreeNotes = notes;
+      notesTreeFolders = notesFolderList;
+      notesTreeHighlight = { type: 'folder', path: notesCurrentFolder };
+      renderNotesTreeSidebar();
+      const childFolders = notesFolderList.filter(f => notesFolderParent(f) === notesCurrentFolder);
+      const notesHere = notes.filter(n => (n.folder || '') === notesCurrentFolder);
+      notesRenderBrowseTree(childFolders, notesHere);
     } catch (_) {
       document.getElementById('notes-list').innerHTML = '<div class="empty-state"><span>Failed to load notes</span></div>';
     }
   }
 
+  // Parent path of a folder path, e.g. "Projects/Sub" -> "Projects",
+  // "Projects" -> "" (notebook root).
+  function notesFolderParent(path) {
+    const i = path.lastIndexOf('/');
+    return i === -1 ? '' : path.slice(0, i);
+  }
+
+  // Fetches everything the tree sidebar needs for `notebook` — used when a
+  // note is opened from somewhere other than Browse (search, a project's
+  // "Notes →" link), where notesLoadBrowse's own fetch never ran for it.
+  async function notesLoadTreeData(notebook) {
+    notesTreeNotebook = notebook;
+    try {
+      const [notesJson, foldersJson] = await Promise.all([
+        fetch(NOTES_API + '?notebook=' + encodeURIComponent(notebook)).then(r => r.ok ? r.json() : []),
+        fetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notebook)).then(r => r.ok ? r.json() : []),
+      ]);
+      notesTreeNotes = notesJson;
+      notesTreeFolders = foldersJson;
+    } catch (_) {
+      notesTreeNotes = [];
+      notesTreeFolders = [];
+    }
+  }
+
+  // Navigates Browse to `folder` within `notebook` — the single nav target
+  // shared by the wide-screen tree sidebar's folder rows and the narrow-
+  // screen viewer breadcrumb's segments.
+  function notesGoToFolder(notebook, folder) {
+    notesFilterNotebook = notebook;
+    notesCurrentFolder = folder;
+    renderNotebookFilters();
+    notesShowTab('browse');
+  }
+
+  // Renders the wide-screen notebook tree sidebar from notesTreeNotebook/
+  // notesTreeNotes/notesTreeFolders — a placeholder while no single notebook
+  // is in context (e.g. the "All" pill). Always fully expanded ("the whole
+  // tree"), not lazily/collapsibly, since a notebook's folder count is
+  // small in practice.
+  function renderNotesTreeSidebar() {
+    const el = document.getElementById('notes-tree-sidebar');
+    if (!notesTreeNotebook) {
+      el.innerHTML = '<div class="empty-state"><span>Select a notebook to see its tree</span></div>';
+      return;
+    }
+    const notesByFolder = {};
+    notesTreeNotes.forEach(n => {
+      const f = n.folder || '';
+      (notesByFolder[f] = notesByFolder[f] || []).push(n);
+    });
+    const childFoldersOf = parent => notesTreeFolders.filter(f => notesFolderParent(f) === parent).sort();
+
+    const renderChildren = (path, depth) => {
+      let html = '';
+      const notesHere = (notesByFolder[path] || []).slice().sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      notesHere.forEach(n => {
+        const current = notesTreeHighlight.type === 'note' && notesTreeHighlight.nbId === n.nb_id && notesTreeHighlight.path === (n.folder || '');
+        html += `<div class="tree-node-row ${current ? 'tree-current' : ''}" style="padding-left:${8 + depth * 14}px;"
+              onclick="notesOpenNote(${n.nb_id},'${esc(n.notebook)}','${esc(n.folder || '')}','browse')">
+          <span class="tree-node-icon">&#128196;</span><span>${esc(n.title || 'Untitled')}</span>
+        </div>`;
+      });
+      childFoldersOf(path).forEach(sub => {
+        const name = sub.slice(sub.lastIndexOf('/') + 1);
+        const current = notesTreeHighlight.type === 'folder' && notesTreeHighlight.path === sub;
+        html += `<div class="tree-node-row tree-folder ${current ? 'tree-current' : ''}" style="padding-left:${8 + depth * 14}px;"
+              onclick="notesGoToFolder('${esc(notesTreeNotebook)}','${esc(sub)}')">
+          <span class="tree-node-icon">&#128193;</span><span>${esc(name)}</span>
+        </div>`;
+        html += renderChildren(sub, depth + 1);
+      });
+      return html;
+    };
+
+    const rootCurrent = notesTreeHighlight.type === 'folder' && notesTreeHighlight.path === '';
+    let html = `<div class="tree-node-row tree-folder ${rootCurrent ? 'tree-current' : ''}" style="padding-left:8px;"
+          onclick="notesGoToFolder('${esc(notesTreeNotebook)}','')">
+      <span class="tree-node-icon">&#128193;</span><span>${esc(notesTreeNotebook)}</span>
+    </div>`;
+    html += renderChildren('', 1);
+    el.innerHTML = html;
+  }
+
+  function notesRenderBreadcrumb() {
+    const crumbEl = document.getElementById('notes-breadcrumb');
+    crumbEl.style.display = 'flex';
+    const parts = notesCurrentFolder ? notesCurrentFolder.split('/') : [];
+    let html = `<button onclick="notesEnterFolder('')">&#128193; ${esc(notesFilterNotebook)}</button>`;
+    let acc = '';
+    parts.forEach((part, i) => {
+      acc = acc ? acc + '/' + part : part;
+      const isLast = i === parts.length - 1;
+      html += ' / ';
+      html += isLast
+        ? `<span class="crumb-current">${esc(part)}</span>`
+        : `<button onclick="notesEnterFolder('${esc(acc)}')">${esc(part)}</button>`;
+    });
+    crumbEl.innerHTML = html;
+  }
+
+  function notesEnterFolder(path) {
+    notesCurrentFolder = path;
+    notesLoadBrowse();
+  }
+
+  // Narrow-screen counterpart to the wide-screen tree sidebar in the note
+  // viewer — "the tree only where applicable to a note": just that note's
+  // own ancestor folder chain, not the whole notebook. Hidden entirely for a
+  // root note (nothing to show). Segments jump to Browse at that folder via
+  // the same notesGoToFolder the sidebar's folder rows use.
+  function renderNoteViewerBreadcrumb(note) {
+    const el = document.getElementById('note-viewer-breadcrumb');
+    const folder = note.folder || '';
+    if (!folder) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    el.style.display = 'flex';
+    const parts = folder.split('/');
+    let html = `<button onclick="notesGoToFolder('${esc(note.notebook)}','')">&#128193; ${esc(note.notebook)}</button>`;
+    let acc = '';
+    parts.forEach((part, i) => {
+      acc = acc ? acc + '/' + part : part;
+      const isLast = i === parts.length - 1;
+      html += ' / ';
+      html += isLast
+        ? `<span class="crumb-current">${esc(part)}</span>`
+        : `<button onclick="notesGoToFolder('${esc(note.notebook)}','${esc(acc)}')">${esc(part)}</button>`;
+    });
+    el.innerHTML = html;
+  }
+
+  function notesRenderBrowseTree(folders, notes) {
+    const el = document.getElementById('notes-list');
+    const folderHtml = folders.map(f => {
+      const name = f.slice(f.lastIndexOf('/') + 1);
+      return `<div class="folder-row" onclick="notesEnterFolder('${esc(f)}')">&#128193; ${esc(name)}</div>`;
+    }).join('');
+    if (!folders.length && !notes.length) {
+      el.innerHTML = folderHtml + '<div class="empty-state"><span class="icon">&#128221;</span><span>No notes here</span></div>';
+      return;
+    }
+    el.innerHTML = folderHtml + notes.map(n => noteCardHtml(n, 'browse')).join('');
+    initSwipeRevealAll(el.querySelectorAll('.note-card'));
+  }
+
+  // Creates a subfolder inside the currently browsed notebook, nested under
+  // notesCurrentFolder if one is open. Folders only make sense scoped to one
+  // notebook, so this is a no-op (with a nudge) while "All" is selected.
+  async function notesNewFolder() {
+    closeAllMenus();
+    if (!notesFilterNotebook) {
+      toast('Select a notebook first', true);
+      return;
+    }
+    const name = prompt('New folder name:');
+    if (!name || !name.trim()) return;
+    const path = notesCurrentFolder ? notesCurrentFolder + '/' + name.trim() : name.trim();
+    try {
+      const r = await fetch(NOTES_API + '/folders', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({notebook: notesFilterNotebook, path}),
+      });
+      if (!r.ok) throw 0;
+      toast('Folder created');
+      notesLoadBrowse();
+    } catch (_) {
+      toast('Failed to create folder', true);
+    }
+  }
+
   function notesSetNotebook(btn, notebook) {
     notesFilterNotebook = notebook;
+    notesCurrentFolder = '';
     document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
     notesLoadBrowse();
@@ -3917,35 +4456,39 @@
     }, 300);
   }
 
+  function noteCardHtml(n, fromTab) {
+    const preview = (n.content || '').replace(/[#*`_>\[\]]/g, '').trim().slice(0, 100);
+    const tagsHtml = (n.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
+    const nbLabel = n.notebook + (n.folder ? '/' + n.folder : '');
+    const nbHtml = `<span class="note-badge folder">&#128193; ${esc(nbLabel)}</span>`;
+    const dateStr = new Date(n.updated_at).toLocaleDateString('en-GB', {day:'numeric',month:'short'});
+    const folder = n.folder || '';
+    return `<div class="note-card" onclick="notesOpenNote(${n.nb_id},'${esc(n.notebook)}','${esc(folder)}','${fromTab}')">
+      <button class="note-card-delete" title="Delete note"
+              onclick="event.stopPropagation(); notesDeleteFromList(${n.nb_id}, '${esc(n.notebook)}', '${esc(folder)}')">&#215;</button>
+      <div class="note-card-title">${esc(n.title || 'Untitled')}</div>
+      ${preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
+      <div class="note-card-meta">
+        ${nbHtml}${tagsHtml}
+        <span class="note-date">${dateStr}</span>
+      </div>
+    </div>`;
+  }
+
   function renderNoteList(notes, containerId, fromTab) {
     const el = document.getElementById(containerId);
     if (!notes || notes.length === 0) {
       el.innerHTML = '<div class="empty-state"><span class="icon">&#128221;</span><span>No notes found</span></div>';
       return;
     }
-    el.innerHTML = notes.map(n => {
-      const preview = (n.content || '').replace(/[#*`_>\[\]]/g, '').trim().slice(0, 100);
-      const tagsHtml = (n.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
-      const nbHtml = `<span class="note-badge folder">&#128193; ${esc(n.notebook)}</span>`;
-      const dateStr = new Date(n.updated_at).toLocaleDateString('en-GB', {day:'numeric',month:'short'});
-      return `<div class="note-card" onclick="notesOpenNote(${n.nb_id},'${esc(n.notebook)}','${fromTab}')">
-        <button class="note-card-delete" title="Delete note"
-                onclick="event.stopPropagation(); notesDeleteFromList(${n.nb_id}, '${esc(n.notebook)}')">&#215;</button>
-        <div class="note-card-title">${esc(n.title || 'Untitled')}</div>
-        ${preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
-        <div class="note-card-meta">
-          ${nbHtml}${tagsHtml}
-          <span class="note-date">${dateStr}</span>
-        </div>
-      </div>`;
-    }).join('');
+    el.innerHTML = notes.map(n => noteCardHtml(n, fromTab)).join('');
     initSwipeRevealAll(el.querySelectorAll('.note-card'));
   }
 
-  async function notesDeleteFromList(nbId, notebook) {
+  async function notesDeleteFromList(nbId, notebook, folder) {
     if (!confirm('Delete this note? This cannot be undone.')) return;
     try {
-      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook), { method: 'DELETE' });
+      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''), { method: 'DELETE' });
       if (!r.ok) throw 0;
       toast('Note deleted');
       if (notesCurrentTab === 'search') {
@@ -3958,21 +4501,27 @@
     }
   }
 
-  async function notesOpenNote(nbId, notebook, fromTab) {
+  async function notesOpenNote(nbId, notebook, folder, fromTab) {
     notesViewerFromTab = fromTab || 'browse';
     // Switches to the Notes overlay itself (idempotent if already active) —
     // needed when opening a note from outside Notes (e.g. project detail),
     // since this function otherwise only toggles internal tab/panel classes.
     showView('notes');
     try {
-      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook));
+      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''));
       if (!r.ok) throw 0;
       notesCurrentNote = await r.json();
+      if (notesTreeNotebook !== notesCurrentNote.notebook) {
+        await notesLoadTreeData(notesCurrentNote.notebook);
+      }
+      notesTreeHighlight = { type: 'note', nbId: notesCurrentNote.nb_id, path: notesCurrentNote.folder || '' };
+      renderNotesTreeSidebar();
       notesRenderViewer(notesCurrentNote);
       document.querySelectorAll('.notes-tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
       document.getElementById('npanel-viewer').classList.add('active');
       notesCurrentTab = 'viewer';
+      notesUpdateTreeVisibility();
     } catch (_) {
       toast('Failed to load note', true);
     }
@@ -3980,9 +4529,11 @@
 
   function notesRenderViewer(note) {
     const tagsHtml = (note.tags || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
-    const nbHtml = `<span class="note-badge folder">&#128193; ${esc(note.notebook)}</span>`;
+    const nbLabel = note.notebook + (note.folder ? '/' + note.folder : '');
+    const nbHtml = `<span class="note-badge folder">&#128193; ${esc(nbLabel)}</span>`;
     const updDate = new Date(note.updated_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 
+    renderNoteViewerBreadcrumb(note);
     const viewer = document.getElementById('note-viewer-content');
     viewer.innerHTML = `
       <div class="note-viewer-header">
@@ -4019,6 +4570,7 @@
     const n = notesCurrentNote;
     document.getElementById('edit-nb-id').value = n.nb_id;
     document.getElementById('edit-notebook').value = n.notebook;
+    document.getElementById('edit-folder').value = n.folder || '';
     document.getElementById('edit-title').value = n.title || '';
     document.getElementById('edit-content').value = n.content || '';
     document.getElementById('edit-tags').value = (n.tags || []).join(', ');
@@ -4026,6 +4578,7 @@
     document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('npanel-edit').classList.add('active');
     notesCurrentTab = 'edit';
+    notesUpdateTreeVisibility();
   }
 
   function notesCancelEdit() {
@@ -4033,11 +4586,13 @@
     document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('npanel-viewer').classList.add('active');
     notesCurrentTab = 'viewer';
+    notesUpdateTreeVisibility();
   }
 
   async function notesSaveEdit() {
     const nbId = document.getElementById('edit-nb-id').value;
     const notebook = document.getElementById('edit-notebook').value;
+    const folder = document.getElementById('edit-folder').value;
     const title = document.getElementById('edit-title').value.trim();
     if (!title) { toast('Note title is required', true); return; }
     const body = {
@@ -4046,13 +4601,17 @@
       tags: document.getElementById('edit-tags').value.split(',').map(s => s.trim()).filter(Boolean),
     };
     try {
-      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook), {
+      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''), {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body),
       });
       if (!r.ok) throw 0;
       notesCurrentNote = await r.json();
+      // Refresh the tree's own copy too — the title shown there is now stale.
+      await notesLoadTreeData(notesCurrentNote.notebook);
+      notesTreeHighlight = { type: 'note', nbId: notesCurrentNote.nb_id, path: notesCurrentNote.folder || '' };
+      renderNotesTreeSidebar();
       notesCancelEdit();
       toast('Note saved');
     } catch (_) {
@@ -4063,7 +4622,7 @@
   async function notesPrint() {
     if (!notesCurrentNote) return;
     try {
-      const r = await fetch(NOTES_API + '/' + notesCurrentNote.nb_id + '/print?notebook=' + encodeURIComponent(notesCurrentNote.notebook), {method: 'POST'});
+      const r = await fetch(NOTES_API + '/' + notesCurrentNote.nb_id + '/print?notebook=' + encodeURIComponent(notesCurrentNote.notebook) + '&folder=' + encodeURIComponent(notesCurrentNote.folder || ''), {method: 'POST'});
       if (!r.ok) throw 0;
       toast('Note sent to printer');
     } catch (_) {
@@ -4075,13 +4634,77 @@
     if (!notesCurrentNote) return;
     if (!confirm(`Delete "${notesCurrentNote.title || 'Untitled'}"? This cannot be undone.`)) return;
     try {
-      const r = await fetch(NOTES_API + '/' + notesCurrentNote.nb_id + '?notebook=' + encodeURIComponent(notesCurrentNote.notebook), {method: 'DELETE'});
+      const r = await fetch(NOTES_API + '/' + notesCurrentNote.nb_id + '?notebook=' + encodeURIComponent(notesCurrentNote.notebook) + '&folder=' + encodeURIComponent(notesCurrentNote.folder || ''), {method: 'DELETE'});
       if (!r.ok) throw 0;
       notesCurrentNote = null;
       toast('Note deleted');
       notesCloseViewer();
     } catch (_) {
       toast('Failed to delete note', true);
+    }
+  }
+
+  // Populates and opens the "Move" dropdown on the note viewer with every
+  // folder in the note's own notebook (root first, then each subfolder,
+  // indented by depth) plus a "+ New folder" row.
+  async function notesToggleMoveMenu(e) {
+    if (!notesCurrentNote) return;
+    const dropdown = document.getElementById('notes-move-dropdown');
+    if (dropdown.classList.contains('open')) { closeAllMenus(); return; }
+    const folders = await fetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notesCurrentNote.notebook))
+      .then(r => r.ok ? r.json() : []).catch(() => []);
+    const currentFolder = notesCurrentNote.folder || '';
+    const rootItem = `<button class="cat-menu-item" ${currentFolder === '' ? 'disabled' : ''} onclick="notesMoveTo('')">&#128193; (notebook root)</button>`;
+    const folderItems = folders.map(f => {
+      const depth = f.split('/').length - 1;
+      const name = f.slice(f.lastIndexOf('/') + 1);
+      const indent = '&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(depth);
+      return `<button class="cat-menu-item" ${f === currentFolder ? 'disabled' : ''} onclick="notesMoveTo('${esc(f)}')">${indent}&#128193; ${esc(name)}</button>`;
+    }).join('');
+    const newFolderItem = `<button class="cat-menu-item" onclick="notesMoveToNewFolder()">&#43; New folder&hellip;</button>`;
+    dropdown.innerHTML = rootItem + folderItems + newFolderItem;
+    toggleMenu('notes-move-dropdown', e);
+  }
+
+  // Moving re-numbers the note in its destination scope (`nb` ids are
+  // per-folder, not global — see notes::move_note), so the response's id may
+  // differ from the one just moved; re-render the viewer from that response
+  // rather than assuming the old id/folder still address it.
+  async function notesMoveTo(destFolder) {
+    closeAllMenus();
+    if (!notesCurrentNote) return;
+    try {
+      const r = await fetch(
+        NOTES_API + '/' + notesCurrentNote.nb_id + '/move?notebook=' + encodeURIComponent(notesCurrentNote.notebook) + '&folder=' + encodeURIComponent(notesCurrentNote.folder || ''),
+        { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({dest_folder: destFolder}) },
+      );
+      if (!r.ok) throw 0;
+      notesCurrentNote = await r.json();
+      await notesLoadTreeData(notesCurrentNote.notebook);
+      notesTreeHighlight = { type: 'note', nbId: notesCurrentNote.nb_id, path: notesCurrentNote.folder || '' };
+      renderNotesTreeSidebar();
+      notesRenderViewer(notesCurrentNote);
+      toast('Note moved to ' + (destFolder || (notesCurrentNote.notebook + ' root')));
+    } catch (_) {
+      toast('Failed to move note', true);
+    }
+  }
+
+  async function notesMoveToNewFolder() {
+    closeAllMenus();
+    if (!notesCurrentNote) return;
+    const name = prompt('New folder name:');
+    if (!name || !name.trim()) return;
+    try {
+      const r = await fetch(NOTES_API + '/folders', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({notebook: notesCurrentNote.notebook, path: name.trim()}),
+      });
+      if (!r.ok) throw 0;
+      await notesMoveTo(name.trim());
+    } catch (_) {
+      toast('Failed to create folder', true);
     }
   }
 
@@ -4109,6 +4732,7 @@
       document.getElementById('log-tags').value = '';
       clearFormState('lpanel-add');
       toast('Log entry saved');
+      logShowTab('recent');
     } catch (_) {
       toast('Failed to save log entry', true);
     }
@@ -4152,6 +4776,7 @@
       clearFormState('npanel-add');
       toast('Note saved');
       notesLoadNotebooks();
+      notesShowTab('browse');
     } catch (_) {
       toast('Failed to save note', true);
     }
@@ -4324,9 +4949,8 @@
       });
       if (!r.ok) throw 0;
       toast(editing ? 'Todo updated' : 'Todo saved');
-      const wasEditing = editing;
       todoResetForm();
-      if (wasEditing) todoShowTab('list');
+      todoShowTab('list');
     } catch (_) {
       toast(editing ? 'Failed to update todo' : 'Failed to save todo', true);
     }
@@ -4354,6 +4978,7 @@
   // the Project detail panel's scoped todo list.
   function renderTodoCard(i, opts) {
     const editable = !opts || opts.editable !== false;
+    const onEdit = (opts && opts.onEdit) || 'todoEditTodo';
     const filled = Math.min(i.priority || 0, 5);
     const bar = '#'.repeat(filled) + '.'.repeat(5 - filled);
     const now = Date.now();
@@ -4380,7 +5005,7 @@
       </div>
       ${subtasksHtml}
       <div class="todo-actions">
-        ${editable ? `<button class="btn-ghost btn-sm" onclick="todoEditTodo(${i.id})">Edit</button>` : ''}
+        ${editable ? `<button class="btn-ghost btn-sm" onclick="${onEdit}(${i.id})">Edit</button>` : ''}
         <button class="btn-ghost btn-sm" onclick="todoPrint(${i.id})">&#128424; Print</button>
       </div>
     </div>`;
@@ -4389,6 +5014,10 @@
   // Project todos are hidden by default — only shown once "Show Project
   // Items" is switched on from the view-options menu.
   let todoHideProjectItems = true;
+  // Which project's todos to show, once project items are visible — '' means
+  // every project. Reset whenever project items are hidden again, since the
+  // pill row itself disappears at that point (see renderTodoProjectFilters).
+  let todoFilterProject = '';
 
   function updateTodoProjectCheck() {
     const check = document.getElementById('todo-show-project-check');
@@ -4397,7 +5026,29 @@
 
   function todoToggleShowProject() {
     todoHideProjectItems = !todoHideProjectItems;
+    if (todoHideProjectItems) todoFilterProject = '';
     updateTodoProjectCheck();
+    renderTodoList();
+  }
+
+  // Pill row on the right side of the Active/Completed/All filter bar,
+  // shown only once "Show Project Items" is on — one pill per project
+  // actually present among the loaded todos, mirroring the notebook-filter
+  // pills' "All" + per-value convention (renderNotebookFilters).
+  function renderTodoProjectFilters() {
+    const el = document.getElementById('todo-project-filters');
+    if (!el) return;
+    if (todoHideProjectItems) { el.innerHTML = ''; return; }
+    const slugs = [...new Set(todoItems.filter(i => i.project_title).map(i => i.project_title))];
+    if (todoFilterProject && !slugs.includes(todoFilterProject)) todoFilterProject = '';
+    if (!slugs.length) { el.innerHTML = ''; return; }
+    const nameFor = slug => (projectsList.find(p => p.slug === slug) || {}).name || slug;
+    el.innerHTML = `<button class="filter-pill ${todoFilterProject === '' ? 'active' : ''}" onclick="todoSetFilterProject('')">All Projects</button>` +
+      slugs.map(s => `<button class="filter-pill ${s === todoFilterProject ? 'active' : ''}" onclick="todoSetFilterProject('${esc(s)}')">${esc(nameFor(s))}</button>`).join('');
+  }
+
+  function todoSetFilterProject(slug) {
+    todoFilterProject = slug;
     renderTodoList();
   }
 
@@ -4425,6 +5076,8 @@
     if (todoFilter === 'active') items = items.filter(i => !i.completed);
     else if (todoFilter === 'completed') items = items.filter(i => i.completed);
     if (todoHideProjectItems) items = items.filter(i => !i.project_title);
+    else if (todoFilterProject) items = items.filter(i => i.project_title === todoFilterProject);
+    ensureProjectsLoaded().then(renderTodoProjectFilters);
 
     if (!items || items.length === 0) {
       el.innerHTML = '<div class="empty-state"><span class="icon">&#9989;</span><span>No todos found</span></div>';
@@ -4530,6 +5183,19 @@
   function quickAddNote() { pendingQuickAdd = true; showView('notes'); }
   function quickAddLog()  { pendingQuickAdd = true; showView('log'); }
 
+  // Edit button on a Project Detail todo card. Those cards come from the
+  // project's own /detail fetch (currentProjectDetail), not the todoItems
+  // array todoEditTodo()/submitTodo() look up against — inject the item
+  // there first so the normal Todo Add-tab edit flow works unmodified.
+  function pdEditTodo(id) {
+    const item = currentProjectDetail && currentProjectDetail.todos.find(t => t.id === id);
+    if (!item) return;
+    const idx = todoItems.findIndex(t => t.id === id);
+    if (idx >= 0) todoItems[idx] = item; else todoItems.push(item);
+    showView('todo');
+    todoEditTodo(id);
+  }
+
   async function openProjectListCategory(groupId, categoryId) {
     showView('lists');
     await selectGroup(groupId);
@@ -4565,13 +5231,82 @@
     }
     el.innerHTML = projectsList.map(p => {
       const archivedHtml = p.archived_at ? '<span class="note-badge tag">Archived</span>' : '';
+      const icon = p.icon ? esc(p.icon) : '&#128193;';
       return `<div class="note-card" onclick="showView('project-detail', false, {projectId: ${p.id}})">
-        <div class="note-card-title">${esc(p.name)}</div>
+        <button class="project-star ${p.favourite ? 'active' : ''}" title="${p.favourite ? 'Remove from Home' : 'Show on Home'}"
+                onclick="event.stopPropagation(); toggleProjectFavourite(${p.id}, ${!p.favourite})">${p.favourite ? '&#9733;' : '&#9734;'}</button>
+        <div class="note-card-title">
+          <span class="project-card-icon" title="Set Home tile icon" onclick="event.stopPropagation(); editProjectIcon(${p.id}, '${esc(p.icon || '')}')">${icon}</span>
+          ${esc(p.name)}
+        </div>
         <div class="note-card-meta">
           <span class="note-badge folder">&#128193; ${esc(p.slug)}</span>${archivedHtml}
         </div>
       </div>`;
     }).join('');
+  }
+
+  async function toggleProjectFavourite(id, favourite) {
+    try {
+      const r = await fetch(`${PROJECT_API}/${id}/favourite`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({favourite}),
+      });
+      if (!r.ok) throw 0;
+      await refreshProjectsList();
+      renderProjectsList();
+      renderHomeFavourites();
+      syncCurrentProjectMeta();
+    } catch (_) {
+      toast('Failed to update favourite', true);
+    }
+  }
+
+  async function editProjectIcon(id, current) {
+    const icon = prompt('Emoji for this project\'s Home tile (leave blank to reset):', current || '');
+    if (icon === null) return;
+    try {
+      const r = await fetch(`${PROJECT_API}/${id}/icon`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({icon: icon.trim() || null}),
+      });
+      if (!r.ok) throw 0;
+      await refreshProjectsList();
+      renderProjectsList();
+      renderHomeFavourites();
+      syncCurrentProjectMeta();
+    } catch (_) {
+      toast('Failed to update icon', true);
+    }
+  }
+
+  // Keeps the Project Detail "☰" menu's favourite checkmark (and any other
+  // consumer of currentProjectMeta) in sync after a favourite/icon change
+  // made from *either* the Projects list or the Project Detail menu itself.
+  function syncCurrentProjectMeta() {
+    if (currentProjectDetailId === null) return;
+    const p = projectsList.find(p => p.id === currentProjectDetailId);
+    if (p) currentProjectMeta = p;
+    updatePdFavouriteCheck();
+  }
+
+  function updatePdFavouriteCheck() {
+    const check = document.getElementById('pd-favourite-check');
+    if (check) check.textContent = currentProjectMeta && currentProjectMeta.favourite ? '✓' : '';
+  }
+
+  function pdToggleFavourite() {
+    closeAllMenus();
+    if (!currentProjectMeta) return;
+    toggleProjectFavourite(currentProjectMeta.id, !currentProjectMeta.favourite);
+  }
+
+  function pdEditIcon() {
+    closeAllMenus();
+    if (!currentProjectMeta) return;
+    editProjectIcon(currentProjectMeta.id, currentProjectMeta.icon || '');
   }
 
   async function submitProject() {
@@ -4594,6 +5329,14 @@
   }
 
   let currentProjectDetailId = null;
+  // The last-loaded /detail payload — kept around so pdEditTodo() can look
+  // up a todo's full data without a second fetch (see below).
+  let currentProjectDetail = null;
+  // The currently-open project's own row (favourite/icon/name/etc.) — set
+  // for both the live and archived detail views (unlike currentProjectDetail,
+  // which only ever holds the live aggregated payload), so the "☰" menu's
+  // favourite/icon actions work regardless of archive state.
+  let currentProjectMeta = null;
 
   // Todos open by default; Log/Lists start collapsed. Reset on every fresh
   // visit to a project rather than persisted, so it doesn't get "stuck".
@@ -4629,6 +5372,8 @@
       const r = await fetch(PROJECT_API + '/' + id + '/detail');
       if (!r.ok) throw 0;
       const detail = await r.json();
+      currentProjectMeta = detail.project;
+      updatePdFavouriteCheck();
       if (detail.project.archived_at) {
         renderArchivedProjectDetail(detail.project);
         return;
@@ -4663,10 +5408,11 @@
 
   function renderProjectDetail(detail) {
     const p = detail.project;
+    currentProjectDetail = detail;
     const el = document.getElementById('project-detail-content');
     const activeTodos = detail.todos.filter(t => !t.completed);
     const todosHtml = activeTodos.length
-      ? activeTodos.map(t => renderTodoCard(t, {editable: false})).join('')
+      ? activeTodos.map(t => renderTodoCard(t, {editable: true, onEdit: 'pdEditTodo'})).join('')
       : '<div class="empty-state"><span>No todos</span></div>';
     const listsHtml = detail.lists.length
       ? detail.lists.map(c => `<div class="note-card" onclick="openProjectListCategory(${p.list_group_id}, ${c.id})"><div class="note-card-title">${esc(c.name)}</div></div>`).join('')
@@ -4703,6 +5449,7 @@
     updateNotesProjectCheck();
     await ensureProjectsLoaded();
     notesFilterNotebook = slug;
+    notesCurrentFolder = '';
     notesShowTab('browse');
     notesLoadNotebooks();
   }
@@ -4770,6 +5517,9 @@
     if (!document.getElementById('fin-date').value) {
       document.getElementById('fin-date').value = new Date().toISOString().slice(0, 10);
     }
+    if (!document.getElementById('fin-transfer-date').value) {
+      document.getElementById('fin-transfer-date').value = new Date().toISOString().slice(0, 10);
+    }
     loadSpendingEntries();
     loadSpendingStats();
     loadAccountsForDropdowns();
@@ -4789,12 +5539,27 @@
     return { from, to };
   }
 
+  let spendingMode = 'expense';
+
+  function setSpendingMode(mode) {
+    spendingMode = mode;
+    document.getElementById('fin-spend-mode-expense').classList.toggle('active', mode === 'expense');
+    document.getElementById('fin-spend-mode-transfer').classList.toggle('active', mode === 'transfer');
+    document.getElementById('fin-expense-fields').style.display = mode === 'expense' ? '' : 'none';
+    document.getElementById('fin-transfer-fields').style.display = mode === 'transfer' ? '' : 'none';
+  }
+
   async function loadSpendingEntries() {
     const list = document.getElementById('fin-spending-list');
     try {
-      const r = await fetch(`${FINANCES_API}/spending`);
-      if (!r.ok) throw 0;
-      const entries = await r.json();
+      const [spendingRes, transfersRes] = await Promise.all([
+        fetch(`${FINANCES_API}/spending`),
+        fetch(`${FINANCES_API}/transfers`),
+      ]);
+      if (!spendingRes.ok || !transfersRes.ok) throw 0;
+      const spending = (await spendingRes.json()).map(e => ({ ...e, _type: 'expense' }));
+      const transfers = (await transfersRes.json()).map(e => ({ ...e, _type: 'transfer' }));
+      const entries = spending.concat(transfers);
       entries.sort((a, b) => b.date.localeCompare(a.date));
       if (!entries.length) {
         list.innerHTML = '<div class="empty-state"><span class="icon">&#128176;</span><span>No spending entries yet</span></div>';
@@ -4807,6 +5572,17 @@
   }
 
   function renderSpendingEntry(e) {
+    if (e._type === 'transfer') {
+      return `
+        <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
+          <div style="flex:1;">
+            <div style="font-weight:600;">${esc(e.description || '(no description)')}</div>
+            <div class="field-label">${esc(e.date)} &middot; Transfer: ${esc(accountDisplayName(e.from_account))} &rarr; ${esc(accountDisplayName(e.to_account))}</div>
+          </div>
+          <div style="font-family:var(--font-mono);font-weight:700;">$${Number(e.amount).toFixed(2)}</div>
+          <button class="btn-ghost btn-sm" onclick="deleteSpendingEntry('${e.id}', 'transfer')">&times;</button>
+        </div>`;
+    }
     const catLabel = e.category === 'stupid' ? 'Stupid' : 'Survival';
     const acctLabel = e.account ? ` &middot; ${esc(accountDisplayName(e.account))}` : '';
     return `
@@ -4816,14 +5592,16 @@
           <div class="field-label">${esc(e.date)} &middot; ${catLabel}${acctLabel}</div>
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(e.amount).toFixed(2)}</div>
-        <button class="btn-ghost btn-sm" onclick="deleteSpendingEntry('${e.id}')">&times;</button>
+        <button class="btn-ghost btn-sm" onclick="deleteSpendingEntry('${e.id}', 'expense')">&times;</button>
       </div>`;
   }
 
-  async function deleteSpendingEntry(id) {
-    if (!confirm('Delete this spending entry?')) return;
+  async function deleteSpendingEntry(id, type) {
+    const label = type === 'transfer' ? 'this transfer' : 'this spending entry';
+    if (!confirm(`Delete ${label}?`)) return;
+    const path = type === 'transfer' ? 'transfers' : 'spending';
     try {
-      const r = await fetch(`${FINANCES_API}/spending/${id}`, { method: 'DELETE' });
+      const r = await fetch(`${FINANCES_API}/${path}/${id}`, { method: 'DELETE' });
       if (!r.ok) throw 0;
       loadSpendingEntries();
       loadSpendingStats();
@@ -4844,6 +5622,10 @@
   }
 
   async function submitSpendingEntry() {
+    if (spendingMode === 'transfer') {
+      await submitTransferEntry();
+      return;
+    }
     const category = document.getElementById('fin-category').value;
     const amount = parseFloat(document.getElementById('fin-amount').value);
     const description = document.getElementById('fin-description').value.trim();
@@ -4869,14 +5651,54 @@
     }
   }
 
+  async function submitTransferEntry() {
+    const amount = parseFloat(document.getElementById('fin-transfer-amount').value);
+    const description = document.getElementById('fin-transfer-description').value.trim();
+    const date = document.getElementById('fin-transfer-date').value;
+    const from_account = document.getElementById('fin-transfer-from').value;
+    const to_account = document.getElementById('fin-transfer-to').value;
+    if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
+    if (!date) { toast('Pick a date', true); return; }
+    if (!from_account || !to_account) { toast('Add at least two accounts first (Accounts tab)', true); return; }
+    if (from_account === to_account) { toast('From and To must be different accounts', true); return; }
+    try {
+      const r = await fetch(`${FINANCES_API}/transfers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, amount, date, from_account, to_account }),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('fin-transfer-amount').value = '';
+      document.getElementById('fin-transfer-description').value = '';
+      toast('Transfer added');
+      loadSpendingEntries();
+      loadSpendingStats();
+    } catch (_) {
+      toast('Failed to add transfer', true);
+    }
+  }
+
   let lastRecurringItems = [];
   let previewExcludedIds = new Set();
 
+  function updateRecurringKindFields() {
+    const isTransfer = document.getElementById('fin-rec-kind').value === 'transfer';
+    document.getElementById('fin-rec-label-wrap').style.display = isTransfer ? 'none' : '';
+    document.getElementById('fin-rec-account-wrap').style.display = isTransfer ? 'none' : '';
+    document.getElementById('fin-rec-from-wrap').style.display = isTransfer ? '' : 'none';
+    document.getElementById('fin-rec-to-wrap').style.display = isTransfer ? '' : 'none';
+  }
+
   async function loadRecurringItems() {
     try {
-      const r = await fetch(`${FINANCES_API}/recurring`);
-      if (!r.ok) throw 0;
-      lastRecurringItems = await r.json();
+      const [itemsRes, transfersRes] = await Promise.all([
+        fetch(`${FINANCES_API}/recurring`),
+        fetch(`${FINANCES_API}/recurring-transfers`),
+      ]);
+      if (!itemsRes.ok || !transfersRes.ok) throw 0;
+      const items = (await itemsRes.json()).map(i => ({ ...i, _type: 'regular' }));
+      const transfers = (await transfersRes.json()).map(t => ({ ...t, _type: 'transfer' }));
+      lastRecurringItems = items.concat(transfers);
       renderRecurringItemsList();
       // The baseline changed — any previously previewed scenario is stale now.
       previewExcludedIds = new Set();
@@ -4901,16 +5723,17 @@
   }
 
   function renderRecurringItem(item) {
-    const kindLabel = item.kind === 'income' ? 'Income' : 'Expense';
     const freqLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', yearly: 'Yearly' };
     const refDateLine = item.reference_date ? ` &middot; from ${esc(item.reference_date)}` : '';
-    const acctLine = item.account ? ` &middot; ${esc(accountDisplayName(item.account))}` : '';
     const excluded = previewExcludedIds.has(item.id);
+    const detailLine = item._type === 'transfer'
+      ? `Transfer &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(accountDisplayName(item.from_account))} &rarr; ${esc(accountDisplayName(item.to_account))}${refDateLine}`
+      : `${item.kind === 'income' ? 'Income' : 'Expense'} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)} &middot; ${esc(accountDisplayName(item.account))}${refDateLine}`;
     return `
       <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;${excluded ? 'opacity:0.55;' : ''}">
         <div style="flex:1;">
           <div style="font-weight:600;${excluded ? 'text-decoration:line-through;' : ''}">${esc(item.name)}</div>
-          <div class="field-label">${kindLabel} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)}${acctLine}${refDateLine}</div>
+          <div class="field-label">${detailLine}</div>
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(item.amount).toFixed(2)}</div>
         <button class="btn-ghost btn-sm" title="${excluded ? 'Stop previewing removal' : 'Preview removing this item'}" onclick="toggleExcludeRecurring('${item.id}')">${excluded ? '&#8617;' : '&#128065;'}</button>
@@ -4934,11 +5757,13 @@
 
   async function deleteRecurringItem(id) {
     const item = lastRecurringItems.find(i => i.id === id);
-    const kindWord = item && item.kind === 'income' ? 'income' : 'expense';
+    const isTransfer = item && item._type === 'transfer';
+    const kindWord = isTransfer ? 'transfer' : (item && item.kind === 'income' ? 'income' : 'expense');
     const detail = item ? `"${item.name}" ($${Number(item.amount).toFixed(2)} / ${item.frequency})` : 'this item';
     if (!confirm(`Permanently delete the recurring ${kindWord} ${detail}?\n\nThis cannot be undone. Use the eye icon instead if you just want to preview removing it.`)) return;
+    const path = isTransfer ? 'recurring-transfers' : 'recurring';
     try {
-      const r = await fetch(`${FINANCES_API}/recurring/${id}`, { method: 'DELETE' });
+      const r = await fetch(`${FINANCES_API}/${path}/${id}`, { method: 'DELETE' });
       if (!r.ok) throw 0;
       previewExcludedIds.delete(id);
       loadRecurringItems();
@@ -4948,8 +5773,12 @@
   }
 
   async function submitRecurringItem() {
-    const name = document.getElementById('fin-rec-name').value.trim();
     const kind = document.getElementById('fin-rec-kind').value;
+    if (kind === 'transfer') {
+      await submitRecurringTransfer();
+      return;
+    }
+    const name = document.getElementById('fin-rec-name').value.trim();
     const amount = parseFloat(document.getElementById('fin-rec-amount').value);
     const label = document.getElementById('fin-rec-label').value.trim();
     const frequency = document.getElementById('fin-rec-frequency').value;
@@ -4974,6 +5803,34 @@
       loadRecurringItems();
     } catch (_) {
       toast('Failed to add recurring item', true);
+    }
+  }
+
+  async function submitRecurringTransfer() {
+    const name = document.getElementById('fin-rec-name').value.trim();
+    const amount = parseFloat(document.getElementById('fin-rec-amount').value);
+    const frequency = document.getElementById('fin-rec-frequency').value;
+    const reference_date = document.getElementById('fin-rec-refdate').value || null;
+    const from_account = document.getElementById('fin-rec-from-account').value;
+    const to_account = document.getElementById('fin-rec-to-account').value;
+    if (!name) { toast('Enter a name', true); return; }
+    if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
+    if (!from_account || !to_account) { toast('Add at least two accounts first (Accounts tab)', true); return; }
+    if (from_account === to_account) { toast('From and To must be different accounts', true); return; }
+    try {
+      const r = await fetch(`${FINANCES_API}/recurring-transfers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, amount, frequency, reference_date, from_account, to_account }),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('fin-rec-name').value = '';
+      document.getElementById('fin-rec-amount').value = '';
+      document.getElementById('fin-rec-refdate').value = '';
+      toast('Recurring transfer added');
+      loadRecurringItems();
+    } catch (_) {
+      toast('Failed to add recurring transfer', true);
     }
   }
 
@@ -5161,7 +6018,7 @@
   }
 
   function populateAccountSelects(accounts) {
-    for (const selectId of ['fin-account', 'fin-rec-account']) {
+    for (const selectId of ['fin-account', 'fin-rec-account', 'fin-transfer-from', 'fin-transfer-to', 'fin-rec-from-account', 'fin-rec-to-account']) {
       const select = document.getElementById(selectId);
       const previous = select.value;
       select.innerHTML = accountOptionsHtml(accounts);

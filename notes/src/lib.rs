@@ -4,10 +4,14 @@ pub mod nb_client;
 pub mod notes_error;
 pub mod notes_prelude;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use crate::notes_prelude::*;
 use chrono::{DateTime, Local};
 
-pub use models::{CreateLogRequest, CreateNoteRequest, LogEntry, Note, UpdateNoteRequest};
+pub use models::{
+    CreateFolderRequest, CreateLogRequest, CreateNoteRequest, LogEntry, MoveNoteRequest, Note, UpdateNoteRequest,
+};
 
 /// Notebook all daily log entries are written to, via nb's `daily` plugin.
 const LOG_NOTEBOOK: &str = "log";
@@ -59,7 +63,10 @@ pub async fn create(req: CreateNoteRequest) -> NotesLibResult<Note> {
     let notebook = req.notebook.as_deref().unwrap_or("home");
     let tags = req.tags.unwrap_or_default();
     let nb_id = nb_client::nb_add(notebook, title, &req.content, &tags).await?;
-    let note = nb_client::nb_show(notebook, nb_id).await?;
+    // A freshly created note always lands at the notebook's root — there's
+    // no `folder` field on `CreateNoteRequest` (moving into a folder is a
+    // separate, deliberate action, see `move_note`).
+    let note = nb_client::nb_show(notebook, "", nb_id).await?;
     if let Err(e) = db::note_cache_upsert(to_cache_row(&note, None)).await {
         warn!("create: failed to sync cache for note {}:{}: {}", notebook, nb_id, e);
     }
@@ -79,8 +86,8 @@ pub async fn create_log(req: CreateLogRequest) -> NotesLibResult<()> {
     nb_client::nb_daily(LOG_NOTEBOOK, title, &tags, content).await
 }
 
-pub async fn get(nb_id: u64, notebook: &str) -> NotesLibResult<Note> {
-    nb_client::nb_show(notebook, nb_id).await
+pub async fn get(nb_id: u64, notebook: &str, folder: &str) -> NotesLibResult<Note> {
+    nb_client::nb_show(notebook, folder, nb_id).await
 }
 
 /// Lists notes, optionally scoped to one notebook — reads the local cache
@@ -129,7 +136,7 @@ pub async fn recent_logs_tagged(days: i64, tag: &str) -> NotesLibResult<Vec<LogE
     nb_client::nb_daily_entries(LOG_NOTEBOOK, days, Some(tag)).await
 }
 
-pub async fn update(nb_id: u64, notebook: &str, req: UpdateNoteRequest) -> NotesLibResult<Note> {
+pub async fn update(nb_id: u64, notebook: &str, folder: &str, req: UpdateNoteRequest) -> NotesLibResult<Note> {
     if let Some(title) = req.title.as_deref() {
         if title.trim().is_empty() {
             return Err(NotesLibError::InvalidInput("title is required".to_string()));
@@ -137,6 +144,7 @@ pub async fn update(nb_id: u64, notebook: &str, req: UpdateNoteRequest) -> Notes
     }
     let note = nb_client::nb_update(
         notebook,
+        folder,
         nb_id,
         req.title.as_deref(),
         req.content.as_deref(),
@@ -144,17 +152,57 @@ pub async fn update(nb_id: u64, notebook: &str, req: UpdateNoteRequest) -> Notes
     )
     .await?;
     if let Err(e) = db::note_cache_upsert(to_cache_row(&note, None)).await {
-        warn!("update: failed to sync cache for note {}:{}: {}", notebook, nb_id, e);
+        warn!("update: failed to sync cache for note {}:{}/{}: {}", notebook, folder, nb_id, e);
     }
     Ok(note)
 }
 
-pub async fn delete(nb_id: u64, notebook: &str) -> NotesLibResult {
-    nb_client::nb_delete(notebook, nb_id).await?;
-    if let Err(e) = db::note_cache_delete(notebook.to_string(), nb_id).await {
-        warn!("delete: failed to remove cache row for note {}:{}: {}", notebook, nb_id, e);
+pub async fn delete(nb_id: u64, notebook: &str, folder: &str) -> NotesLibResult {
+    nb_client::nb_delete(notebook, folder, nb_id).await?;
+    if let Err(e) = db::note_cache_delete(notebook.to_string(), folder.to_string(), nb_id).await {
+        warn!("delete: failed to remove cache row for note {}:{}/{}: {}", notebook, folder, nb_id, e);
     }
     Ok(())
+}
+
+/// Moves a note into a different subfolder within its own notebook (or back
+/// to the root, with an empty `dest_folder`) — the notes-tree "move" action.
+/// `nb` re-numbers a note in its destination scope (ids are per-folder, not
+/// global — see `nb_client::nb_ref`), so the returned `Note` carries
+/// whatever new id it was assigned; callers must not keep using the old one.
+pub async fn move_note(nb_id: u64, notebook: &str, folder: &str, dest_folder: &str) -> NotesLibResult<Note> {
+    let dest = if dest_folder.is_empty() { notebook.to_string() } else { format!("{}:{}/", notebook, dest_folder) };
+    let (new_folder, new_id) = nb_client::nb_move(notebook, folder, nb_id, &dest).await?;
+    if let Err(e) = db::note_cache_delete(notebook.to_string(), folder.to_string(), nb_id).await {
+        warn!("move_note: failed to remove stale cache row for note {}:{}/{}: {}", notebook, folder, nb_id, e);
+    }
+    let note = nb_client::nb_show(notebook, &new_folder, new_id).await?;
+    if let Err(e) = db::note_cache_upsert(to_cache_row(&note, None)).await {
+        warn!("move_note: failed to cache new location for note {}:{}/{}: {}", notebook, new_folder, new_id, e);
+    }
+    Ok(note)
+}
+
+/// Lists every subfolder path within `notebook`, recursively (e.g.
+/// `"Projects"`, `"Projects/Sub"`) — a live `nb` walk (see
+/// `nb_client::nb_list_paths`), not cache-backed, the same tradeoff
+/// `folders()`/notebook browsing already makes: folder structure changes
+/// rarely enough that a live round trip on browse is cheap relative to the
+/// complexity of caching it. Used to build the notes-tree UI, including
+/// showing folders that don't (yet) have any notes in them.
+pub async fn list_folders(notebook: &str) -> NotesLibResult<Vec<String>> {
+    let (_notes, folders) = nb_client::nb_list_paths(notebook).await?;
+    Ok(folders)
+}
+
+/// Creates a new (possibly nested, e.g. `"Projects/Sub"`) subfolder within
+/// `notebook` — `nb` creates any missing intermediate folders itself.
+pub async fn create_folder(notebook: &str, path: &str) -> NotesLibResult<()> {
+    let path = path.trim().trim_matches('/');
+    if path.is_empty() {
+        return Err(NotesLibError::InvalidInput("folder path is required".to_string()));
+    }
+    nb_client::nb_add_folder(notebook, path).await
 }
 
 /// Moves a note into the shared `archive` notebook at `dest_path` — used by
@@ -167,11 +215,11 @@ pub async fn delete(nb_id: u64, notebook: &str) -> NotesLibResult {
 /// gone regardless, but there's no per-note urgency for the *new* row to
 /// appear before the next sync interval.
 pub async fn archive_note(note: &Note, dest_path: &str) -> NotesLibResult {
-    nb_client::nb_move(&note.notebook, note.nb_id, &format!("{}:{}", ARCHIVE_NOTEBOOK, dest_path)).await?;
-    if let Err(e) = db::note_cache_delete(note.notebook.clone(), note.nb_id).await {
+    nb_client::nb_move(&note.notebook, &note.folder, note.nb_id, &format!("{}:{}", ARCHIVE_NOTEBOOK, dest_path)).await?;
+    if let Err(e) = db::note_cache_delete(note.notebook.clone(), note.folder.clone(), note.nb_id).await {
         warn!(
-            "archive_note: failed to remove stale cache row for note {}:{}: {}",
-            note.notebook, note.nb_id, e
+            "archive_note: failed to remove stale cache row for note {}:{}/{}: {}",
+            note.notebook, note.folder, note.nb_id, e
         );
     }
     Ok(())
@@ -252,8 +300,8 @@ pub async fn tags() -> NotesLibResult<Vec<String>> {
     Ok(result)
 }
 
-pub async fn print(nb_id: u64, notebook: &str) -> NotesLibResult {
-    let note = get(nb_id, notebook).await?;
+pub async fn print(nb_id: u64, notebook: &str, folder: &str) -> NotesLibResult {
+    let note = get(nb_id, notebook, folder).await?;
     let width = printer::line_width();
     let sep = "─".repeat(width);
 
@@ -293,7 +341,7 @@ pub async fn print(nb_id: u64, notebook: &str) -> NotesLibResult {
     ));
 
     printer::PrintJob::new(origin, title, lines)
-        .with_qr(format!("manage-dan://notes/{}?notebook={}", nb_id, note.notebook))
+        .with_qr(format!("manage-dan://notes/{}?notebook={}&folder={}", nb_id, note.notebook, note.folder))
         .execute(0, 0)
         .await?;
 
@@ -306,6 +354,7 @@ pub async fn print(nb_id: u64, notebook: &str) -> NotesLibResult {
 fn to_cache_row(note: &Note, source_mtime: Option<DateTime<Local>>) -> db::models::NoteCacheRow {
     db::models::NoteCacheRow {
         notebook: note.notebook.clone(),
+        folder: note.folder.clone(),
         nb_id: note.nb_id,
         title: note.title.clone(),
         preview: note.content.chars().take(300).collect(),
@@ -325,6 +374,7 @@ fn from_cache_row(row: db::models::NoteCacheRow) -> Note {
     Note {
         nb_id: row.nb_id,
         notebook: row.notebook,
+        folder: row.folder,
         title: row.title,
         content: row.preview,
         tags: row.tags,
@@ -347,16 +397,17 @@ pub async fn sync_cache() -> NotesLibResult<()> {
         .collect();
 
     for notebook in &notebooks {
-        let mut seen_ids = std::collections::HashSet::new();
+        let mut seen_keys = std::collections::HashSet::new();
 
-        for (id, path) in nb_client::nb_list_paths(notebook).await? {
-            seen_ids.insert(id);
+        let (paths, _folders) = nb_client::nb_list_paths(notebook).await?;
+        for (id, folder, path) in paths {
+            seen_keys.insert((folder.clone(), id));
 
             let current_mtime = std::fs::metadata(&path)
                 .ok()
                 .and_then(|m| m.modified().ok())
                 .map(DateTime::<Local>::from);
-            let cached_mtime = db::note_cache_get_source_mtime(notebook.clone(), id)
+            let cached_mtime = db::note_cache_get_source_mtime(notebook.clone(), folder.clone(), id)
                 .await
                 .unwrap_or(None);
 
@@ -366,13 +417,13 @@ pub async fn sync_cache() -> NotesLibResult<()> {
                 }
             }
 
-            match nb_client::parse_note_file(&path, id, notebook) {
+            match nb_client::parse_note_file(&path, id, notebook, &folder) {
                 Ok(note) => {
                     if let Err(e) = db::note_cache_upsert(to_cache_row(&note, current_mtime)).await {
-                        warn!("notes sync_cache: failed to cache '{}' id {}: {}", notebook, id, e);
+                        warn!("notes sync_cache: failed to cache '{}' id {}/{}: {}", notebook, folder, id, e);
                     }
                 }
-                Err(e) => warn!("notes sync_cache: failed to parse '{}' id {}: {}", notebook, id, e),
+                Err(e) => warn!("notes sync_cache: failed to parse '{}' id {}/{}: {}", notebook, folder, id, e),
             }
         }
 
@@ -380,9 +431,9 @@ pub async fn sync_cache() -> NotesLibResult<()> {
         // live listing — handles deletes made externally, e.g. via the raw
         // `nb` CLI, bypassing this app entirely.
         if let Ok(cached_keys) = db::note_cache_get_keys(Some(notebook.clone())).await {
-            for (nb, cached_id) in cached_keys {
-                if !seen_ids.contains(&cached_id) {
-                    let _ = db::note_cache_delete(nb, cached_id).await;
+            for (nb, cached_folder, cached_id) in cached_keys {
+                if !seen_keys.contains(&(cached_folder.clone(), cached_id)) {
+                    let _ = db::note_cache_delete(nb, cached_folder, cached_id).await;
                 }
             }
         }

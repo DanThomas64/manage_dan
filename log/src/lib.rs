@@ -24,6 +24,8 @@ pub mod db_subscriber;
 pub mod log_error;
 pub mod log_prelude;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use crate::db_subscriber::DbLayer;
 use crate::log_error::LogLibError;
 use crate::log_prelude::*;

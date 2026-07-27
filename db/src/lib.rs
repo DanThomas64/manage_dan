@@ -7,6 +7,8 @@ pub mod db_error;
 pub mod db_prelude;
 pub mod models;
 
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 use crate::db_error::{DbLibError, DbLibResult};
 use crate::db_prelude::*;
 use crate::models::{LogEntry, NoteCacheRow, TodoCacheRow};
@@ -166,6 +168,7 @@ pub fn init() -> DbLibResult {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS note_cache (
             notebook      TEXT NOT NULL,
+            folder        TEXT NOT NULL DEFAULT '',
             nb_id         INTEGER NOT NULL,
             title         TEXT NOT NULL,
             preview       TEXT NOT NULL,
@@ -173,7 +176,7 @@ pub fn init() -> DbLibResult {
             updated_at    TEXT NOT NULL,
             source_mtime  TEXT,
             synced_at     TEXT NOT NULL,
-            PRIMARY KEY (notebook, nb_id)
+            PRIMARY KEY (notebook, folder, nb_id)
         )",
         [],
     )?;
@@ -184,9 +187,10 @@ pub fn init() -> DbLibResult {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS note_cache_tags (
             notebook TEXT NOT NULL,
+            folder   TEXT NOT NULL DEFAULT '',
             nb_id    INTEGER NOT NULL,
             tag      TEXT NOT NULL,
-            PRIMARY KEY (notebook, nb_id, tag)
+            PRIMARY KEY (notebook, folder, nb_id, tag)
         )",
         [],
     )?;
@@ -194,6 +198,56 @@ pub fn init() -> DbLibResult {
         "CREATE INDEX IF NOT EXISTS idx_note_cache_tags_tag ON note_cache_tags(tag)",
         [],
     )?;
+
+    // Migration: notes-tree support added `folder` as part of both tables'
+    // primary key (nb numbers items per-folder, not per-notebook, so a
+    // folder-less PK could collide once folders are in use). `CREATE TABLE
+    // IF NOT EXISTS` above only takes effect on a brand-new database — an
+    // existing one still has the old folder-less PK, which SQLite can't
+    // change via `ALTER TABLE`, so rebuild both tables when the old shape is
+    // detected (a pre-existing `note_cache` whose PK doesn't already cover
+    // `folder`). Every existing row predates folders, so it's exactly a
+    // root-level (`folder = ''`) note.
+    let note_cache_pk_has_folder: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('note_cache') WHERE name = 'folder' AND pk > 0",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? > 0;
+    if !note_cache_pk_has_folder {
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE note_cache RENAME TO note_cache_old;
+             CREATE TABLE note_cache (
+                 notebook      TEXT NOT NULL,
+                 folder        TEXT NOT NULL DEFAULT '',
+                 nb_id         INTEGER NOT NULL,
+                 title         TEXT NOT NULL,
+                 preview       TEXT NOT NULL,
+                 created_at    TEXT NOT NULL,
+                 updated_at    TEXT NOT NULL,
+                 source_mtime  TEXT,
+                 synced_at     TEXT NOT NULL,
+                 PRIMARY KEY (notebook, folder, nb_id)
+             );
+             INSERT INTO note_cache (notebook, folder, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at)
+                 SELECT notebook, '', nb_id, title, preview, created_at, updated_at, source_mtime, synced_at FROM note_cache_old;
+             DROP TABLE note_cache_old;
+
+             ALTER TABLE note_cache_tags RENAME TO note_cache_tags_old;
+             CREATE TABLE note_cache_tags (
+                 notebook TEXT NOT NULL,
+                 folder   TEXT NOT NULL DEFAULT '',
+                 nb_id    INTEGER NOT NULL,
+                 tag      TEXT NOT NULL,
+                 PRIMARY KEY (notebook, folder, nb_id, tag)
+             );
+             INSERT INTO note_cache_tags (notebook, folder, nb_id, tag)
+                 SELECT notebook, '', nb_id, tag FROM note_cache_tags_old;
+             DROP TABLE note_cache_tags_old;
+             CREATE INDEX IF NOT EXISTS idx_note_cache_tags_tag ON note_cache_tags(tag);
+             COMMIT;",
+        )?;
+    }
 
     Ok(())
 }
@@ -695,18 +749,19 @@ pub async fn todo_cache_get_source_mtime(id: i64) -> DbLibResult<Option<DateTime
 fn row_to_note_cache_row(row: &Row) -> RusqliteResult<NoteCacheRow> {
     Ok(NoteCacheRow {
         notebook: row.get(0)?,
-        nb_id: row.get::<_, i64>(1)? as u64,
-        title: row.get(2)?,
-        preview: row.get(3)?,
+        folder: row.get(1)?,
+        nb_id: row.get::<_, i64>(2)? as u64,
+        title: row.get(3)?,
+        preview: row.get(4)?,
         tags: Vec::new(), // filled in by attach_tags()
-        created_at: parse_dt(row.get(4)?)?,
-        updated_at: parse_dt(row.get(5)?)?,
-        source_mtime: parse_opt_dt(row.get(6)?)?,
-        synced_at: parse_dt(row.get(7)?)?,
+        created_at: parse_dt(row.get(5)?)?,
+        updated_at: parse_dt(row.get(6)?)?,
+        source_mtime: parse_opt_dt(row.get(7)?)?,
+        synced_at: parse_dt(row.get(8)?)?,
     })
 }
 
-const NOTE_CACHE_COLUMNS: &str = "notebook, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at";
+const NOTE_CACHE_COLUMNS: &str = "notebook, folder, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at";
 
 /// Batches in every row's tags with two queries total (one for the notes
 /// already fetched, one for all tags), rather than one extra query per note.
@@ -714,17 +769,17 @@ fn attach_tags(conn: &rusqlite::Connection, rows: &mut [NoteCacheRow]) -> Rusqli
     if rows.is_empty() {
         return Ok(());
     }
-    let mut stmt = conn.prepare("SELECT notebook, nb_id, tag FROM note_cache_tags")?;
-    let tag_rows: Vec<(String, i64, String)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+    let mut stmt = conn.prepare("SELECT notebook, folder, nb_id, tag FROM note_cache_tags")?;
+    let tag_rows: Vec<(String, String, i64, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
         .collect::<RusqliteResult<_>>()?;
 
-    let mut by_key: HashMap<(String, i64), Vec<String>> = HashMap::new();
-    for (nb, id, tag) in tag_rows {
-        by_key.entry((nb, id)).or_default().push(tag);
+    let mut by_key: HashMap<(String, String, i64), Vec<String>> = HashMap::new();
+    for (nb, folder, id, tag) in tag_rows {
+        by_key.entry((nb, folder, id)).or_default().push(tag);
     }
     for row in rows.iter_mut() {
-        if let Some(tags) = by_key.remove(&(row.notebook.clone(), row.nb_id as i64)) {
+        if let Some(tags) = by_key.remove(&(row.notebook.clone(), row.folder.clone(), row.nb_id as i64)) {
             row.tags = tags;
         }
     }
@@ -738,9 +793,9 @@ pub async fn note_cache_upsert(row: NoteCacheRow) -> DbLibResult {
     execute_async(move |conn| {
         conn.execute(
             "INSERT INTO note_cache (
-                notebook, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
-            ON CONFLICT(notebook, nb_id) DO UPDATE SET
+                notebook, folder, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+            ON CONFLICT(notebook, folder, nb_id) DO UPDATE SET
                 title = excluded.title,
                 preview = excluded.preview,
                 created_at = excluded.created_at,
@@ -749,6 +804,7 @@ pub async fn note_cache_upsert(row: NoteCacheRow) -> DbLibResult {
                 synced_at = excluded.synced_at",
             params![
                 row.notebook,
+                row.folder,
                 row.nb_id as i64,
                 row.title,
                 row.preview,
@@ -760,13 +816,13 @@ pub async fn note_cache_upsert(row: NoteCacheRow) -> DbLibResult {
         )?;
 
         conn.execute(
-            "DELETE FROM note_cache_tags WHERE notebook = ?1 AND nb_id = ?2",
-            params![row.notebook, row.nb_id as i64],
+            "DELETE FROM note_cache_tags WHERE notebook = ?1 AND folder = ?2 AND nb_id = ?3",
+            params![row.notebook, row.folder, row.nb_id as i64],
         )?;
         for tag in &row.tags {
             conn.execute(
-                "INSERT OR IGNORE INTO note_cache_tags (notebook, nb_id, tag) VALUES (?1, ?2, ?3)",
-                params![row.notebook, row.nb_id as i64, tag],
+                "INSERT OR IGNORE INTO note_cache_tags (notebook, folder, nb_id, tag) VALUES (?1, ?2, ?3, ?4)",
+                params![row.notebook, row.folder, row.nb_id as i64, tag],
             )?;
         }
         Ok(())
@@ -808,7 +864,7 @@ pub async fn note_cache_get_by_tag(tag: String) -> DbLibResult<Vec<NoteCacheRow>
     execute_async(move |conn| {
         let sql = format!(
             "SELECT {} FROM note_cache nc
-             JOIN note_cache_tags nct ON nct.notebook = nc.notebook AND nct.nb_id = nc.nb_id
+             JOIN note_cache_tags nct ON nct.notebook = nc.notebook AND nct.folder = nc.folder AND nct.nb_id = nc.nb_id
              WHERE nct.tag = ?1",
             NOTE_CACHE_COLUMNS.split(',').map(|c| format!("nc.{}", c.trim())).collect::<Vec<_>>().join(", ")
         );
@@ -822,15 +878,15 @@ pub async fn note_cache_get_by_tag(tag: String) -> DbLibResult<Vec<NoteCacheRow>
     .map_err(|e| DbLibError::Internal(format!("DB error reading note_cache by tag: {}", e)))
 }
 
-pub async fn note_cache_delete(notebook: String, nb_id: u64) -> DbLibResult {
+pub async fn note_cache_delete(notebook: String, folder: String, nb_id: u64) -> DbLibResult {
     execute_async(move |conn| {
         conn.execute(
-            "DELETE FROM note_cache WHERE notebook = ?1 AND nb_id = ?2",
-            params![notebook, nb_id as i64],
+            "DELETE FROM note_cache WHERE notebook = ?1 AND folder = ?2 AND nb_id = ?3",
+            params![notebook, folder, nb_id as i64],
         )?;
         conn.execute(
-            "DELETE FROM note_cache_tags WHERE notebook = ?1 AND nb_id = ?2",
-            params![notebook, nb_id as i64],
+            "DELETE FROM note_cache_tags WHERE notebook = ?1 AND folder = ?2 AND nb_id = ?3",
+            params![notebook, folder, nb_id as i64],
         )?;
         Ok(())
     })
@@ -838,23 +894,24 @@ pub async fn note_cache_delete(notebook: String, nb_id: u64) -> DbLibResult {
     .map_err(|e| DbLibError::Internal(format!("DB error deleting note_cache row: {}", e)))
 }
 
-/// Returns every cached `(notebook, nb_id)` key, optionally scoped to one
-/// notebook — used by the background sync pass to detect notes removed
-/// externally since the last sync, the same way `todo_cache_get_ids` does.
-pub async fn note_cache_get_keys(notebook: Option<String>) -> DbLibResult<Vec<(String, u64)>> {
+/// Returns every cached `(notebook, folder, nb_id)` key, optionally scoped
+/// to one notebook — used by the background sync pass to detect notes
+/// removed externally since the last sync, the same way `todo_cache_get_ids`
+/// does.
+pub async fn note_cache_get_keys(notebook: Option<String>) -> DbLibResult<Vec<(String, String, u64)>> {
     execute_async(move |conn| {
-        let rows: Vec<(String, i64)> = if let Some(nb) = &notebook {
-            let mut stmt = conn.prepare("SELECT notebook, nb_id FROM note_cache WHERE notebook = ?1")?;
-            let result: RusqliteResult<Vec<(String, i64)>> =
-                stmt.query_map(params![nb], |r| Ok((r.get(0)?, r.get(1)?)))?.collect();
+        let rows: Vec<(String, String, i64)> = if let Some(nb) = &notebook {
+            let mut stmt = conn.prepare("SELECT notebook, folder, nb_id FROM note_cache WHERE notebook = ?1")?;
+            let result: RusqliteResult<Vec<(String, String, i64)>> =
+                stmt.query_map(params![nb], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect();
             result?
         } else {
-            let mut stmt = conn.prepare("SELECT notebook, nb_id FROM note_cache")?;
-            let result: RusqliteResult<Vec<(String, i64)>> =
-                stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.collect();
+            let mut stmt = conn.prepare("SELECT notebook, folder, nb_id FROM note_cache")?;
+            let result: RusqliteResult<Vec<(String, String, i64)>> =
+                stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect();
             result?
         };
-        Ok(rows.into_iter().map(|(nb, id)| (nb, id as u64)).collect())
+        Ok(rows.into_iter().map(|(nb, folder, id)| (nb, folder, id as u64)).collect())
     })
     .await
     .map_err(|e| DbLibError::Internal(format!("DB error reading note_cache keys: {}", e)))
@@ -862,11 +919,11 @@ pub async fn note_cache_get_keys(notebook: Option<String>) -> DbLibResult<Vec<(S
 
 /// Returns the stored source-file mtime for a cached note, if any — same
 /// skip-unchanged use as `todo_cache_get_source_mtime`.
-pub async fn note_cache_get_source_mtime(notebook: String, nb_id: u64) -> DbLibResult<Option<DateTime<Local>>> {
+pub async fn note_cache_get_source_mtime(notebook: String, folder: String, nb_id: u64) -> DbLibResult<Option<DateTime<Local>>> {
     let opt = execute_async(move |conn| {
         conn.query_row(
-            "SELECT source_mtime FROM note_cache WHERE notebook = ?1 AND nb_id = ?2",
-            params![notebook, nb_id as i64],
+            "SELECT source_mtime FROM note_cache WHERE notebook = ?1 AND folder = ?2 AND nb_id = ?3",
+            params![notebook, folder, nb_id as i64],
             |row| row.get::<_, Option<String>>(0),
         )
         .optional()
