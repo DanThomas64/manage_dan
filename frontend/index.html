@@ -1224,6 +1224,28 @@
     }
     .home-tile:hover { background: var(--surface2); border-color: var(--accent); }
     .home-tile:active { transform: scale(0.97); }
+    .home-tile-wrap { display: flex; flex-direction: column; gap: 8px; }
+    .home-tile-add {
+      width: 100%;
+      height: 44px;
+      border-radius: 10px;
+      background: var(--surface2);
+      border: 1px dashed var(--accent);
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
+    }
+    .home-tile-add:hover { background: var(--accent); color: var(--bg); }
+    .home-tile-add:active { transform: scale(0.97); }
     .home-tile-icon { font-size: 2.8rem; }
     .home-tile-label {
       font-family: var(--font-mono);
@@ -1565,18 +1587,27 @@
         <span class="home-tile-icon">&#128722;</span>
         <span class="home-tile-label">Lists</span>
       </button>
-      <button class="home-tile" onclick="showView('notes')">
-        <span class="home-tile-icon">&#128221;</span>
-        <span class="home-tile-label">Notes</span>
-      </button>
-      <button class="home-tile" onclick="showView('log')">
-        <span class="home-tile-icon">&#128220;</span>
-        <span class="home-tile-label">Log</span>
-      </button>
-      <button class="home-tile" onclick="showView('todo')">
-        <span class="home-tile-icon">&#9989;</span>
-        <span class="home-tile-label">Todo</span>
-      </button>
+      <div class="home-tile-wrap">
+        <button class="home-tile" onclick="showView('notes')">
+          <span class="home-tile-icon">&#128221;</span>
+          <span class="home-tile-label">Notes</span>
+        </button>
+        <button class="home-tile-add" onclick="quickAddNote();" aria-label="Add note" title="Add note">+ Add</button>
+      </div>
+      <div class="home-tile-wrap">
+        <button class="home-tile" onclick="showView('log')">
+          <span class="home-tile-icon">&#128220;</span>
+          <span class="home-tile-label">Log</span>
+        </button>
+        <button class="home-tile-add" onclick="quickAddLog();" aria-label="Add log entry" title="Add log entry">+ Add</button>
+      </div>
+      <div class="home-tile-wrap">
+        <button class="home-tile" onclick="showView('todo')">
+          <span class="home-tile-icon">&#9989;</span>
+          <span class="home-tile-label">Todo</span>
+        </button>
+        <button class="home-tile-add" onclick="quickAddTodo();" aria-label="Add todo" title="Add todo">+ Add</button>
+      </div>
       <button class="home-tile" onclick="showView('projects')">
         <span class="home-tile-icon">&#128193;</span>
         <span class="home-tile-label">Projects</span>
@@ -3608,7 +3639,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   const NOTES_API = '/api/v1/notes';
-  let notesCurrentTab = 'add';
+  let notesCurrentTab = 'browse';
   let notesFilterNotebook = '';
   let notesCurrentNote = null;
   let notesViewerFromTab = 'browse';
@@ -3629,6 +3660,11 @@
           noteProjectChanged();
         }
       });
+      return;
+    }
+    if (pendingQuickAdd) {
+      pendingQuickAdd = false;
+      notesShowTab('add');
       return;
     }
     if (notesCurrentTab === 'browse') notesLoadBrowse();
@@ -3653,7 +3689,7 @@
   // LOG
   // ═══════════════════════════════════════════════════════════════════════════
 
-  let logCurrentTab = 'add';
+  let logCurrentTab = 'recent';
 
   function logOnOpen() {
     if (pendingProjectContext !== null) {
@@ -3664,6 +3700,11 @@
         const project = projectsList.find(p => p.id === pid);
         if (project) document.getElementById('log-project').value = project.slug;
       });
+      return;
+    }
+    if (pendingQuickAdd) {
+      pendingQuickAdd = false;
+      logShowTab('add');
       return;
     }
     if (logCurrentTab === 'recent') logLoadRecent();
@@ -4139,6 +4180,12 @@
       });
       return;
     }
+    if (pendingQuickAdd) {
+      pendingQuickAdd = false;
+      todoResetForm();
+      todoShowTab('add');
+      return;
+    }
     if (todoCurrentTab === 'list') todoLoadList();
     if (todoCurrentTab === 'add') ensureProjectsLoaded().then(() => populateProjectSelect('todo-project'));
   }
@@ -4472,6 +4519,16 @@
   function addTodoForProject(id) { pendingProjectContext = id; showView('todo'); }
   function addNoteForProject(id) { pendingProjectContext = id; showView('notes'); }
   function addLogForProject(id)  { pendingProjectContext = id; showView('log'); }
+
+  // Set by a Home tile's "+" quick-add button before navigating to the
+  // Todo/Notes/Log overlay, so that overlay's onOpen handler jumps straight
+  // to its Add tab instead of its normal default (list) tab. Consumed
+  // (cleared) on read, same convention as pendingProjectContext above.
+  let pendingQuickAdd = false;
+
+  function quickAddTodo() { pendingQuickAdd = true; showView('todo'); }
+  function quickAddNote() { pendingQuickAdd = true; showView('notes'); }
+  function quickAddLog()  { pendingQuickAdd = true; showView('log'); }
 
   async function openProjectListCategory(groupId, categoryId) {
     showView('lists');
