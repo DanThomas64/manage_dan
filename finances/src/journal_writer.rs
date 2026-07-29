@@ -46,6 +46,14 @@ pub fn format_spending_entry(
     )
 }
 
+/// When `category` is `Some`, a ` category:{tag}` tag is appended *last*
+/// after `name:` — same trailing-tag idiom as the account directive's
+/// `rate:`/`limit:` tags (see `format_account_directive`); the parser
+/// anchors on the last occurrence of `" category:"` so it isolates the tag
+/// correctly regardless of what `name` itself contains, as long as nothing
+/// is ever appended after it. This is purely bookkeeping metadata — it
+/// does not change which ledger account the item's expense/income leg
+/// posts against (`label`, unaffected).
 pub fn format_recurring_item(
     id: &str,
     name: &str,
@@ -55,35 +63,57 @@ pub fn format_recurring_item(
     frequency: Frequency,
     reference_date: Option<NaiveDate>,
     account: &str,
+    category: Option<SpendingCategory>,
 ) -> String {
     let label = sanitize_account_leaf(label);
     let (debit, credit) = match kind {
         TxnKind::Income => (account.to_string(), format!("income:{label}")),
         TxnKind::Expense => (format!("expenses:{label}"), account.to_string()),
     };
-    format!(
-        "~ {period}  ; id:{id} name:{name}\n    {debit}    ${amount:.2}\n    {credit}\n\n",
+    let mut header = format!(
+        "~ {period}  ; id:{id} name:{name}",
         period = build_period_phrase(frequency, reference_date),
         id = id,
         name = sanitize_line(name),
-        debit = debit,
-        amount = amount,
-        credit = credit,
-    )
+    );
+    if let Some(cat) = category {
+        header.push_str(&format!(" category:{}", cat.tag()));
+    }
+    format!("{header}\n    {debit}    ${amount:.2}\n    {credit}\n\n")
 }
 
 /// The `account` directive: registers a named account so it shows up
 /// (with a balance of $0) even before any transaction references it.
 /// hledger itself never needs this to *use* an account, but it's how this
 /// crate lets a user create one ahead of time to appear in dropdowns.
-pub fn format_account_directive(id: &str, name: &str, kind: AccountKind, slug: &str) -> String {
-    format!(
-        "account {prefix}:{slug}  ; id:{id} name:{name}\n\n",
-        prefix = kind.prefix(),
-        slug = slug,
-        id = id,
-        name = sanitize_line(name),
-    )
+///
+/// When `interest_rate`/`credit_limit` are `Some`, ` rate:{rate}`/
+/// ` limit:{limit}` tags are appended *after* `name:`, in that fixed order
+/// — deliberately last, since `name` is arbitrary free text that could
+/// itself contain either substring; the parser anchors on the *last*
+/// occurrence of `" limit:"` first (stripping it off if present), then the
+/// last occurrence of `" rate:"` on what remains, which only isolates the
+/// real tags correctly as long as the writer never appends anything after
+/// `limit` or between `rate` and `limit`. With both `None`, output is
+/// byte-identical to before either field existed.
+pub fn format_account_directive(
+    id: &str,
+    name: &str,
+    kind: AccountKind,
+    slug: &str,
+    interest_rate: Option<f64>,
+    credit_limit: Option<f64>,
+) -> String {
+    let name = sanitize_line(name);
+    let mut header = format!("account {}:{}  ; id:{} name:{}", kind.prefix(), slug, id, name);
+    if let Some(rate) = interest_rate {
+        header.push_str(&format!(" rate:{rate}"));
+    }
+    if let Some(limit) = credit_limit {
+        header.push_str(&format!(" limit:{limit}"));
+    }
+    header.push_str("\n\n");
+    header
 }
 
 /// A one-off transfer between two of the user's own accounts. Tagged
@@ -187,6 +217,7 @@ pub async fn append_spending_entry(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn append_recurring_item(
     journal_path: &str,
     name: &str,
@@ -196,6 +227,7 @@ pub async fn append_recurring_item(
     frequency: Frequency,
     reference_date: Option<NaiveDate>,
     account: &str,
+    category: Option<SpendingCategory>,
 ) -> FinancesLibResult<RecurringItem> {
     let id = Uuid::new_v4().to_string();
     let text = format_recurring_item(
@@ -207,6 +239,7 @@ pub async fn append_recurring_item(
         frequency,
         reference_date,
         account,
+        category,
     );
     append(journal_path, &text).await?;
     Ok(RecurringItem {
@@ -218,6 +251,7 @@ pub async fn append_recurring_item(
         frequency,
         reference_date,
         account: account.to_string(),
+        category,
     })
 }
 
@@ -277,10 +311,12 @@ pub async fn append_account(
     journal_path: &str,
     name: &str,
     kind: AccountKind,
+    interest_rate: Option<f64>,
+    credit_limit: Option<f64>,
 ) -> FinancesLibResult<Account> {
     let id = Uuid::new_v4().to_string();
     let slug = sanitize_account_leaf(name).to_lowercase();
-    let text = format_account_directive(&id, name, kind, &slug);
+    let text = format_account_directive(&id, name, kind, &slug, interest_rate, credit_limit);
     append(journal_path, &text).await?;
     Ok(Account {
         id,
@@ -288,7 +324,40 @@ pub async fn append_account(
         kind,
         slug,
         balance: 0.0,
+        interest_rate,
+        credit_limit,
     })
+}
+
+/// Rewrites an account's `name`/`interest_rate`/`credit_limit` in place
+/// (delete + re-append with the same id/slug/kind, same idiom as
+/// `rewrite_recurring_item`). `slug`/`kind` are never user-editable here —
+/// `slug` is the permanent hledger-account identity once transactions may
+/// reference it.
+pub async fn rewrite_account(
+    journal_path: &str,
+    id: &str,
+    name: &str,
+    kind: AccountKind,
+    slug: &str,
+    interest_rate: Option<f64>,
+    credit_limit: Option<f64>,
+) -> FinancesLibResult<Option<Account>> {
+    let removed = remove_block_with_id(journal_path, id).await?;
+    if !removed {
+        return Ok(None);
+    }
+    let text = format_account_directive(id, name, kind, slug, interest_rate, credit_limit);
+    append(journal_path, &text).await?;
+    Ok(Some(Account {
+        id: id.to_string(),
+        name: sanitize_line(name),
+        kind,
+        slug: slug.to_string(),
+        balance: 0.0,
+        interest_rate,
+        credit_limit,
+    }))
 }
 
 pub async fn append_adjustment_transaction(
@@ -334,6 +403,105 @@ pub async fn remove_block_with_id(journal_path: &str, id: &str) -> FinancesLibRe
     Ok(true)
 }
 
+/// Same delete + re-append-with-same-id idiom as the `rewrite_*` functions
+/// below, applied to a one-off spending entry. Returns `Ok(false)` if no
+/// block with that id existed to rewrite.
+pub async fn rewrite_spending_entry(
+    journal_path: &str,
+    id: &str,
+    date: NaiveDate,
+    description: &str,
+    category: SpendingCategory,
+    amount: f64,
+    account: &str,
+) -> FinancesLibResult<Option<SpendingEntry>> {
+    let removed = remove_block_with_id(journal_path, id).await?;
+    if !removed {
+        return Ok(None);
+    }
+    let text = format_spending_entry(id, date, description, category, amount, account);
+    append(journal_path, &text).await?;
+    Ok(Some(SpendingEntry {
+        id: id.to_string(),
+        date,
+        description: sanitize_line(description),
+        category,
+        amount,
+        account: account.to_string(),
+    }))
+}
+
+/// Editing a periodic rule in place isn't a thing hledger's own file format
+/// supports — there's no "update a block" primitive, only whole-block
+/// removal (`remove_block_with_id`). Every `rewrite_*` function below
+/// therefore edits by deleting the old `id:<id>` block and re-appending a
+/// freshly formatted one that reuses the same id, so anything that already
+/// referenced that id (e.g. `preview_projection`'s `exclude_recurring_ids`)
+/// keeps working. Where in the file the new block lands doesn't matter:
+/// every reader here (`parse_recurring_items`, `parse_recurring_transfers`,
+/// `parse_accounts`) scans the whole file for matching blocks regardless of
+/// position, same as already documented on `remove_block_with_id` itself.
+/// Returns `Ok(false)` if no block with that id existed to rewrite.
+#[allow(clippy::too_many_arguments)]
+pub async fn rewrite_recurring_item(
+    journal_path: &str,
+    id: &str,
+    name: &str,
+    amount: f64,
+    kind: TxnKind,
+    label: &str,
+    frequency: Frequency,
+    reference_date: Option<NaiveDate>,
+    account: &str,
+    category: Option<SpendingCategory>,
+) -> FinancesLibResult<Option<RecurringItem>> {
+    let removed = remove_block_with_id(journal_path, id).await?;
+    if !removed {
+        return Ok(None);
+    }
+    let text = format_recurring_item(id, name, amount, kind, label, frequency, reference_date, account, category);
+    append(journal_path, &text).await?;
+    Ok(Some(RecurringItem {
+        id: id.to_string(),
+        name: sanitize_line(name),
+        amount,
+        kind,
+        label: sanitize_account_leaf(label),
+        frequency,
+        reference_date,
+        account: account.to_string(),
+        category,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn rewrite_recurring_transfer(
+    journal_path: &str,
+    id: &str,
+    name: &str,
+    amount: f64,
+    frequency: Frequency,
+    reference_date: Option<NaiveDate>,
+    from_account: &str,
+    to_account: &str,
+) -> FinancesLibResult<Option<RecurringTransfer>> {
+    let removed = remove_block_with_id(journal_path, id).await?;
+    if !removed {
+        return Ok(None);
+    }
+    let text = format_recurring_transfer(id, name, amount, frequency, reference_date, from_account, to_account);
+    append(journal_path, &text).await?;
+    Ok(Some(RecurringTransfer {
+        id: id.to_string(),
+        name: sanitize_line(name),
+        amount,
+        frequency,
+        reference_date,
+        from_account: from_account.to_string(),
+        to_account: to_account.to_string(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,6 +524,47 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn rewrite_spending_entry_replaces_existing_block_same_id() {
+        let dir = std::env::temp_dir().join(format!("fin-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("journal").to_str().unwrap().to_string();
+        let date = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+
+        let text = format_spending_entry("sp-1", date, "Junk food", SpendingCategory::Stupid, 12.5, "assets:checking");
+        append(&path, &text).await.unwrap();
+
+        let new_date = NaiveDate::from_ymd_opt(2026, 7, 27).unwrap();
+        let result = rewrite_spending_entry(
+            &path, "sp-1", new_date, "Groceries", SpendingCategory::Survival, 60.0, "assets:checking",
+        ).await.unwrap();
+        assert!(result.is_some());
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content.matches("id:sp-1").count(), 1);
+        assert!(content.contains("Groceries"));
+        assert!(content.contains("expenses:survival"));
+        assert!(content.contains("$60.00"));
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn rewrite_spending_entry_returns_none_when_missing() {
+        let dir = std::env::temp_dir().join(format!("fin-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("journal").to_str().unwrap().to_string();
+        tokio::fs::write(&path, "").await.unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 7, 26).unwrap();
+
+        let result = rewrite_spending_entry(
+            &path, "missing", date, "X", SpendingCategory::Stupid, 1.0, "assets:checking",
+        ).await.unwrap();
+        assert!(result.is_none());
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
     #[test]
     fn recurring_expense_format_is_exact() {
         let text = format_recurring_item(
@@ -367,10 +576,30 @@ mod tests {
             Frequency::Monthly,
             None,
             "assets:checking",
+            None,
         );
         assert_eq!(
             text,
             "~ monthly  ; id:rec-1 name:Netflix\n    expenses:netflix    $15.00\n    assets:checking\n\n"
+        );
+    }
+
+    #[test]
+    fn recurring_expense_with_category_format_is_exact() {
+        let text = format_recurring_item(
+            "rec-1b",
+            "Netflix",
+            15.0,
+            TxnKind::Expense,
+            "netflix",
+            Frequency::Monthly,
+            None,
+            "assets:checking",
+            Some(SpendingCategory::Stupid),
+        );
+        assert_eq!(
+            text,
+            "~ monthly  ; id:rec-1b name:Netflix category:stupid\n    expenses:netflix    $15.00\n    assets:checking\n\n"
         );
     }
 
@@ -385,6 +614,7 @@ mod tests {
             Frequency::Biweekly,
             None,
             "assets:checking",
+            None,
         );
         assert_eq!(
             text,
@@ -404,6 +634,7 @@ mod tests {
             Frequency::Biweekly,
             Some(reference_date),
             "assets:checking",
+            None,
         );
         assert_eq!(
             text,
@@ -422,6 +653,7 @@ mod tests {
             Frequency::Monthly,
             None,
             "liabilities:visa",
+            None,
         );
         assert_eq!(
             text,
@@ -446,14 +678,66 @@ mod tests {
 
     #[test]
     fn account_directive_format_is_exact() {
-        let text = format_account_directive("acc-1", "Checking", AccountKind::Asset, "checking");
+        let text = format_account_directive("acc-1", "Checking", AccountKind::Asset, "checking", None, None);
         assert_eq!(text, "account assets:checking  ; id:acc-1 name:Checking\n\n");
     }
 
     #[test]
     fn liability_account_directive_format_is_exact() {
-        let text = format_account_directive("acc-2", "Visa", AccountKind::Liability, "visa");
+        let text = format_account_directive("acc-2", "Visa", AccountKind::Liability, "visa", None, None);
         assert_eq!(text, "account liabilities:visa  ; id:acc-2 name:Visa\n\n");
+    }
+
+    #[test]
+    fn account_directive_with_rate_format_is_exact() {
+        let text = format_account_directive("acc-3", "Visa", AccountKind::Liability, "visa", Some(24.99), None);
+        assert_eq!(text, "account liabilities:visa  ; id:acc-3 name:Visa rate:24.99\n\n");
+    }
+
+    #[test]
+    fn account_directive_with_rate_and_limit_format_is_exact() {
+        let text = format_account_directive("acc-4", "Visa", AccountKind::Liability, "visa", Some(24.99), Some(1000.0));
+        assert_eq!(text, "account liabilities:visa  ; id:acc-4 name:Visa rate:24.99 limit:1000\n\n");
+    }
+
+    #[test]
+    fn account_directive_with_limit_only_format_is_exact() {
+        let text = format_account_directive("acc-5", "Visa", AccountKind::Liability, "visa", None, Some(500.0));
+        assert_eq!(text, "account liabilities:visa  ; id:acc-5 name:Visa limit:500\n\n");
+    }
+
+    #[tokio::test]
+    async fn rewrite_account_replaces_existing_block_same_id() {
+        let dir = std::env::temp_dir().join(format!("fin-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("journal").to_str().unwrap().to_string();
+
+        let text = format_account_directive("acc-1", "Visa", AccountKind::Liability, "visa", None, None);
+        append(&path, &text).await.unwrap();
+
+        let result = rewrite_account(&path, "acc-1", "Visa Signature", AccountKind::Liability, "visa", Some(19.99), Some(1500.0)).await.unwrap();
+        assert!(result.is_some());
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content.matches("id:acc-1").count(), 1);
+        assert!(content.contains("Visa Signature"));
+        assert!(content.contains("rate:19.99"));
+        assert!(content.contains("limit:1500"));
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn rewrite_account_returns_none_when_missing() {
+        let dir = std::env::temp_dir().join(format!("fin-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("journal").to_str().unwrap().to_string();
+        tokio::fs::write(&path, "").await.unwrap();
+
+        let result = rewrite_account(&path, "missing", "X", AccountKind::Asset, "x", None, None).await.unwrap();
+        assert!(result.is_none());
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 
     #[test]
@@ -488,6 +772,60 @@ mod tests {
             text,
             "~ monthly  ; id:rtr-1 name:Auto-save transfer:1\n    assets:savings    $100.00\n    assets:checking\n\n"
         );
+    }
+
+    #[tokio::test]
+    async fn rewrite_recurring_item_replaces_existing_block_same_id() {
+        let dir = std::env::temp_dir().join(format!("fin-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("journal").to_str().unwrap().to_string();
+
+        let text = format_recurring_item("rec-1", "Netflix", 15.0, TxnKind::Expense, "netflix", Frequency::Monthly, None, "assets:checking", None);
+        append(&path, &text).await.unwrap();
+
+        let result = rewrite_recurring_item(&path, "rec-1", "Netflix Premium", 22.99, TxnKind::Expense, "netflix", Frequency::Monthly, None, "assets:checking", Some(SpendingCategory::Stupid)).await.unwrap();
+        assert!(result.is_some());
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content.matches("id:rec-1").count(), 1);
+        assert!(content.contains("Netflix Premium"));
+        assert!(content.contains("$22.99"));
+        assert!(content.contains("category:stupid"));
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn rewrite_recurring_item_returns_false_when_missing() {
+        let dir = std::env::temp_dir().join(format!("fin-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("journal").to_str().unwrap().to_string();
+        tokio::fs::write(&path, "").await.unwrap();
+
+        let result = rewrite_recurring_item(&path, "missing", "X", 1.0, TxnKind::Expense, "x", Frequency::Monthly, None, "assets:checking", None).await.unwrap();
+        assert!(result.is_none());
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn rewrite_recurring_transfer_replaces_existing_block_same_id() {
+        let dir = std::env::temp_dir().join(format!("fin-test-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("journal").to_str().unwrap().to_string();
+
+        let text = format_recurring_transfer("rtr-1", "Auto-save", 100.0, Frequency::Monthly, None, "assets:checking", "assets:savings");
+        append(&path, &text).await.unwrap();
+
+        let result = rewrite_recurring_transfer(&path, "rtr-1", "Auto-save Plus", 150.0, Frequency::Monthly, None, "assets:checking", "assets:savings").await.unwrap();
+        assert!(result.is_some());
+
+        let content = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(content.matches("id:rtr-1").count(), 1);
+        assert!(content.contains("Auto-save Plus"));
+        assert!(content.contains("$150.00"));
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 
     #[test]

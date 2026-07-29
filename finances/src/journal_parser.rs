@@ -6,7 +6,7 @@
 //! `journal_writer::format_recurring_item` itself writes.
 
 use crate::models::{
-    parse_period_phrase, Account, AccountKind, RecurringItem, RecurringTransfer, TxnKind,
+    parse_period_phrase, Account, AccountKind, RecurringItem, RecurringTransfer, SpendingCategory, TxnKind,
 };
 
 fn parse_amount(posting_line: &str) -> Option<f64> {
@@ -27,9 +27,28 @@ fn parse_block(block: &str) -> Option<RecurringItem> {
     let (frequency, reference_date) = parse_period_phrase(period)?;
 
     let comment = comment.trim().strip_prefix("id:")?;
-    let (id, name) = comment.split_once(" name:")?;
+    let (id, rest) = comment.split_once(" name:")?;
     let id = id.trim().to_string();
-    let name = name.trim().to_string();
+
+    // `name` is arbitrary free text and could itself contain the literal
+    // substring " category:", so anchor from the right — this only works
+    // because `format_recurring_item` guarantees `category:` is always the
+    // last tag appended, never followed by anything else.
+    let mut remaining = rest.trim();
+    let category = match remaining.rfind(" category:") {
+        Some(idx) => {
+            let cat_str = remaining[idx + " category:".len()..].trim();
+            match SpendingCategory::from_tag(cat_str) {
+                Some(cat) => {
+                    remaining = remaining[..idx].trim();
+                    Some(cat)
+                }
+                None => None,
+            }
+        }
+        None => None,
+    };
+    let name = remaining.to_string();
 
     let posting1 = lines.next()?.trim();
     let posting2 = lines.next()?.trim();
@@ -58,6 +77,7 @@ fn parse_block(block: &str) -> Option<RecurringItem> {
         frequency,
         reference_date,
         account,
+        category,
     })
 }
 
@@ -130,14 +150,49 @@ fn parse_account_block(block: &str) -> Option<Account> {
     let kind = AccountKind::from_prefix(kind_str)?;
 
     let comment = comment.trim().strip_prefix("id:")?;
-    let (id, name) = comment.split_once(" name:")?;
+    let (id, rest) = comment.split_once(" name:")?;
+
+    // `name` is arbitrary free text and could itself contain either tag's
+    // literal substring, so anchor from the right — this only works because
+    // `format_account_directive` guarantees `limit:` is always the very
+    // last tag appended (after `rate:`, when both are present), so it must
+    // be stripped first, then `rate:` stripped from what remains.
+    let mut remaining = rest.trim();
+    let credit_limit = match remaining.rfind(" limit:") {
+        Some(idx) => {
+            let limit_str = remaining[idx + " limit:".len()..].trim();
+            match limit_str.parse::<f64>() {
+                Ok(limit) => {
+                    remaining = remaining[..idx].trim();
+                    Some(limit)
+                }
+                Err(_) => None,
+            }
+        }
+        None => None,
+    };
+    let interest_rate = match remaining.rfind(" rate:") {
+        Some(idx) => {
+            let rate_str = remaining[idx + " rate:".len()..].trim();
+            match rate_str.parse::<f64>() {
+                Ok(rate) => {
+                    remaining = remaining[..idx].trim();
+                    Some(rate)
+                }
+                Err(_) => None,
+            }
+        }
+        None => None,
+    };
 
     Some(Account {
         id: id.trim().to_string(),
-        name: name.trim().to_string(),
+        name: remaining.to_string(),
         kind,
         slug: slug.trim().to_string(),
         balance: 0.0,
+        interest_rate,
+        credit_limit,
     })
 }
 
@@ -155,7 +210,7 @@ pub fn parse_accounts(content: &str) -> Vec<Account> {
 mod tests {
     use super::*;
     use crate::journal_writer::{format_account_directive, format_recurring_item};
-    use crate::models::Frequency;
+    use crate::models::{Frequency, SpendingCategory};
     use chrono::NaiveDate;
 
     #[test]
@@ -169,6 +224,7 @@ mod tests {
             Frequency::Monthly,
             None,
             "assets:checking",
+            None,
         );
         let items = parse_recurring_items(&text);
         assert_eq!(items.len(), 1);
@@ -181,6 +237,28 @@ mod tests {
         assert_eq!(item.frequency, Frequency::Monthly);
         assert_eq!(item.reference_date, None);
         assert_eq!(item.account, "assets:checking");
+        assert_eq!(item.category, None);
+    }
+
+    #[test]
+    fn round_trips_expense_item_with_category() {
+        let text = format_recurring_item(
+            "rec-1b",
+            "Netflix",
+            15.0,
+            TxnKind::Expense,
+            "netflix",
+            Frequency::Monthly,
+            None,
+            "assets:checking",
+            Some(SpendingCategory::Stupid),
+        );
+        let items = parse_recurring_items(&text);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].category, Some(SpendingCategory::Stupid));
+        // The item's own posting account is unchanged by category
+        // attribution — it's metadata, not a change to ledger structure.
+        assert_eq!(items[0].label, "netflix");
     }
 
     #[test]
@@ -194,6 +272,7 @@ mod tests {
             Frequency::Biweekly,
             None,
             "assets:checking",
+            None,
         );
         let items = parse_recurring_items(&text);
         assert_eq!(items.len(), 1);
@@ -216,6 +295,7 @@ mod tests {
             Frequency::Biweekly,
             Some(reference_date),
             "assets:checking",
+            None,
         );
         let items = parse_recurring_items(&text);
         assert_eq!(items.len(), 1);
@@ -233,6 +313,7 @@ mod tests {
             Frequency::Monthly,
             None,
             "liabilities:visa",
+            None,
         );
         let items = parse_recurring_items(&text);
         assert_eq!(items.len(), 1);
@@ -249,8 +330,8 @@ mod tests {
     fn parses_multiple_blocks_mixed_with_transactions() {
         let mut content = String::new();
         content.push_str("2026-07-01 Salary  ; id:t1\n    assets:checking    $2000.00\n    income:salary\n\n");
-        content.push_str(&format_recurring_item("rec-1", "Netflix", 15.0, TxnKind::Expense, "netflix", Frequency::Monthly, None, "assets:checking"));
-        content.push_str(&format_recurring_item("rec-2", "Taxes", 500.0, TxnKind::Expense, "taxes", Frequency::Yearly, None, "assets:checking"));
+        content.push_str(&format_recurring_item("rec-1", "Netflix", 15.0, TxnKind::Expense, "netflix", Frequency::Monthly, None, "assets:checking", None));
+        content.push_str(&format_recurring_item("rec-2", "Taxes", 500.0, TxnKind::Expense, "taxes", Frequency::Yearly, None, "assets:checking", None));
         let items = parse_recurring_items(&content);
         assert_eq!(items.len(), 2);
         assert_eq!(items[0].id, "rec-1");
@@ -292,14 +373,14 @@ mod tests {
     fn regular_recurring_item_not_parsed_as_transfer() {
         let text = format_recurring_item(
             "rec-x", "Netflix", 15.0, TxnKind::Expense, "netflix",
-            Frequency::Monthly, None, "assets:checking",
+            Frequency::Monthly, None, "assets:checking", None,
         );
         assert_eq!(parse_recurring_transfers(&text).len(), 0);
     }
 
     #[test]
     fn round_trips_account_directive() {
-        let text = format_account_directive("acc-1", "Checking", AccountKind::Asset, "checking");
+        let text = format_account_directive("acc-1", "Checking", AccountKind::Asset, "checking", None, None);
         let accounts = parse_accounts(&text);
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].id, "acc-1");
@@ -310,10 +391,84 @@ mod tests {
 
     #[test]
     fn round_trips_liability_account_directive() {
-        let text = format_account_directive("acc-2", "Visa", AccountKind::Liability, "visa");
+        let text = format_account_directive("acc-2", "Visa", AccountKind::Liability, "visa", None, None);
         let accounts = parse_accounts(&text);
         assert_eq!(accounts.len(), 1);
         assert_eq!(accounts[0].kind, AccountKind::Liability);
+    }
+
+    #[test]
+    fn round_trips_account_directive_with_rate() {
+        let text = format_account_directive("acc-3", "Visa", AccountKind::Liability, "visa", Some(24.99), None);
+        let accounts = parse_accounts(&text);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "Visa");
+        assert_eq!(accounts[0].interest_rate, Some(24.99));
+        assert_eq!(accounts[0].credit_limit, None);
+    }
+
+    #[test]
+    fn round_trips_account_directive_with_rate_and_limit() {
+        let text = format_account_directive("acc-3b", "Visa", AccountKind::Liability, "visa", Some(24.99), Some(2000.0));
+        let accounts = parse_accounts(&text);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "Visa");
+        assert_eq!(accounts[0].interest_rate, Some(24.99));
+        assert_eq!(accounts[0].credit_limit, Some(2000.0));
+    }
+
+    #[test]
+    fn round_trips_account_directive_with_limit_only() {
+        let text = format_account_directive("acc-3c", "Visa", AccountKind::Liability, "visa", None, Some(500.0));
+        let accounts = parse_accounts(&text);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].interest_rate, None);
+        assert_eq!(accounts[0].credit_limit, Some(500.0));
+    }
+
+    #[test]
+    fn account_directive_without_rate_parses_as_none() {
+        let text = format_account_directive("acc-4", "Checking", AccountKind::Asset, "checking", None, None);
+        let accounts = parse_accounts(&text);
+        assert_eq!(accounts[0].interest_rate, None);
+        assert_eq!(accounts[0].credit_limit, None);
+    }
+
+    #[test]
+    fn parses_account_name_containing_literal_rate_substring() {
+        // Adversarial: the account's own free-text name contains " rate:",
+        // which must not be mistaken for the trailing rate tag when there
+        // isn't one, and must not corrupt parsing when there is one.
+        let content = "account liabilities:visa  ; id:acc-5 name:My rate: card is high\n\n";
+        let accounts = parse_accounts(content);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "My rate: card is high");
+        assert_eq!(accounts[0].interest_rate, None);
+
+        let content_with_rate = "account liabilities:visa  ; id:acc-6 name:My rate: card is high rate:9.99\n\n";
+        let accounts = parse_accounts(content_with_rate);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "My rate: card is high");
+        assert_eq!(accounts[0].interest_rate, Some(9.99));
+    }
+
+    #[test]
+    fn parses_account_name_containing_literal_limit_substring() {
+        // Same adversarial case as the rate test above, for the `limit:`
+        // tag — and for a name containing both literal substrings when
+        // both real tags are also present.
+        let content = "account liabilities:visa  ; id:acc-7 name:My limit: is high\n\n";
+        let accounts = parse_accounts(content);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "My limit: is high");
+        assert_eq!(accounts[0].credit_limit, None);
+
+        let content_with_both = "account liabilities:visa  ; id:acc-8 name:My rate: and limit: are both high rate:9.99 limit:5000\n\n";
+        let accounts = parse_accounts(content_with_both);
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "My rate: and limit: are both high");
+        assert_eq!(accounts[0].interest_rate, Some(9.99));
+        assert_eq!(accounts[0].credit_limit, Some(5000.0));
     }
 
     #[test]

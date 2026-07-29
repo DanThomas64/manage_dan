@@ -11,7 +11,10 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 use crate::db_error::{DbLibError, DbLibResult};
 use crate::db_prelude::*;
-use crate::models::{LogEntry, NoteCacheRow, TodoCacheRow};
+use crate::models::{
+    BudgetCapAllocationRow, BudgetScenario, BudgetScenarioItemRow, LogEntry, NoteCacheRow,
+    RecurringOccurrenceRow, TodoCacheRow,
+};
 use rusqlite::{params, OptionalExtension};
 use tokio_rusqlite::Connection;
 use rusqlite::{Result as RusqliteResult, Row};
@@ -118,6 +121,86 @@ pub fn init() -> DbLibResult {
             date       TEXT NOT NULL,
             task_title TEXT NOT NULL,
             PRIMARY KEY (date, task_title)
+        )",
+        [],
+    )?;
+
+    // Local completion-tracking checklist layered over the `finances`
+    // crate's recurring items/transfers (periodic hledger rules, which have
+    // no notion of individual occurrences of their own) — a row's absence
+    // means "unresolved" (potentially overdue); a row with paid = 0 means
+    // "explicitly marked not paid", resolved and no longer flagged. This
+    // deliberately never touches the finances journal — `finances` has no
+    // dependency on `db` and stays hledger-only; see
+    // `app::finances_occurrences` for the orchestration that joins the two.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS recurring_occurrence_status (
+            recurring_id  TEXT NOT NULL,
+            kind          TEXT NOT NULL,
+            period_start  TEXT NOT NULL,
+            paid          INTEGER NOT NULL,
+            paid_date     TEXT,
+            updated_at    TEXT NOT NULL,
+            PRIMARY KEY (recurring_id, kind, period_start)
+        )",
+        [],
+    )?;
+
+    // Budget scenarios: a named, saved, reusable set of hypothetical
+    // income/expense items a user can toggle on/off against the finances
+    // crate's real projection/payoff charts (see `app::finances_budget`) —
+    // same "local metadata, not real ledger data" reasoning as
+    // `recurring_occurrence_status` above, so this lives in `db` rather
+    // than as a `finances` dependency either direction. `budget_caps` is
+    // the separate per-category (stupid/survival) spending-limit concept,
+    // sharing this table group only because both feed the Finances
+    // Overview tab, not because they're structurally related.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS budget_scenarios (
+            id         TEXT PRIMARY KEY,
+            name       TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS budget_scenario_items (
+            id                    TEXT PRIMARY KEY,
+            scenario_id           TEXT NOT NULL,
+            name                  TEXT NOT NULL,
+            kind                  TEXT NOT NULL,
+            amount                REAL NOT NULL,
+            frequency             TEXT NOT NULL,
+            reference_date        TEXT,
+            account               TEXT NOT NULL,
+            replaces_recurring_id TEXT
+        )",
+        [],
+    )?;
+    // Migration: add replaces_recurring_id to existing databases (added
+    // after this table first shipped this session) — when set, applying
+    // this item's scenario auto-excludes the referenced real recurring
+    // item/transfer so it never stacks with the item standing in for it.
+    let _ = conn.execute(
+        "ALTER TABLE budget_scenario_items ADD COLUMN replaces_recurring_id TEXT",
+        [],
+    );
+
+    // One row per (category, account) allocation — a category's overall
+    // budget is split across as many accounts as needed (e.g. part of the
+    // "stupid" budget on a credit card, part on checking); the category's
+    // total cap is *derived* (sum of its allocations' amounts) rather than
+    // stored, so there's nothing to keep in sync. Each allocation has its
+    // own `include_in_projection` toggle, independent of its siblings.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS budget_cap_allocations (
+            id                    TEXT PRIMARY KEY,
+            category              TEXT NOT NULL,
+            account               TEXT NOT NULL,
+            amount                REAL NOT NULL,
+            include_in_projection INTEGER NOT NULL DEFAULT 0,
+            updated_at            TEXT NOT NULL
         )",
         [],
     )?;
@@ -936,6 +1019,283 @@ pub async fn note_cache_get_source_mtime(notebook: String, folder: String, nb_id
         .and_then(|s| DateTime::parse_from_rfc3339(&s).ok().map(|dt| dt.with_timezone(&Local))))
 }
 
+// --- Recurring occurrence tracking (finances) ---
+
+fn row_to_recurring_occurrence(row: &Row) -> RusqliteResult<RecurringOccurrenceRow> {
+    Ok(RecurringOccurrenceRow {
+        recurring_id: row.get(0)?,
+        kind: row.get(1)?,
+        period_start: row.get(2)?,
+        paid: row.get::<_, i64>(3)? != 0,
+        paid_date: row.get(4)?,
+        updated_at: row.get(5)?,
+    })
+}
+
+/// Marks a single occurrence (one period of one recurring item/transfer) as
+/// paid or explicitly not-paid — either way, a row's mere existence resolves
+/// it (no longer counted overdue); only its absence means "unresolved".
+pub async fn recurring_occurrence_upsert(
+    recurring_id: String,
+    kind: String,
+    period_start: String,
+    paid: bool,
+    paid_date: Option<String>,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        let updated_at = Local::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO recurring_occurrence_status
+                (recurring_id, kind, period_start, paid, paid_date, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(recurring_id, kind, period_start) DO UPDATE SET
+                paid = excluded.paid,
+                paid_date = excluded.paid_date,
+                updated_at = excluded.updated_at",
+            params![recurring_id, kind, period_start, paid as i64, paid_date, updated_at],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error upserting recurring_occurrence_status: {}", e)))
+}
+
+/// Every tracked occurrence across every recurring item/transfer — the
+/// bulk read `app::finances_occurrences` joins against the live schedule
+/// computed from `finances::list_recurring_items`/`list_recurring_transfers`.
+pub async fn recurring_occurrence_get_all() -> DbLibResult<Vec<RecurringOccurrenceRow>> {
+    execute_async(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT recurring_id, kind, period_start, paid, paid_date, updated_at
+             FROM recurring_occurrence_status",
+        )?;
+        let rows = stmt.query_map([], row_to_recurring_occurrence)?;
+        rows.collect()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading recurring_occurrence_status: {}", e)))
+}
+
+/// Removes every tracked occurrence for one recurring item/transfer —
+/// called best-effort after that item/transfer is deleted, so tracking rows
+/// don't orphan.
+pub async fn recurring_occurrence_delete_for(recurring_id: String, kind: String) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "DELETE FROM recurring_occurrence_status WHERE recurring_id = ?1 AND kind = ?2",
+            params![recurring_id, kind],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting recurring_occurrence_status rows: {}", e)))
+}
+
+// --- Budget scenarios & caps (finances Overview tab) ---
+
+fn row_to_budget_scenario(row: &Row) -> RusqliteResult<BudgetScenario> {
+    Ok(BudgetScenario { id: row.get(0)?, name: row.get(1)?, created_at: row.get(2)? })
+}
+
+pub async fn budget_scenario_create(id: String, name: String, created_at: String) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO budget_scenarios (id, name, created_at) VALUES (?1, ?2, ?3)",
+            params![id, name, created_at],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error creating budget_scenario: {}", e)))
+}
+
+pub async fn budget_scenario_list() -> DbLibResult<Vec<BudgetScenario>> {
+    execute_async(|conn| {
+        let mut stmt = conn.prepare("SELECT id, name, created_at FROM budget_scenarios")?;
+        let rows = stmt.query_map([], row_to_budget_scenario)?;
+        rows.collect()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error listing budget_scenarios: {}", e)))
+}
+
+/// Deletes a scenario and every item belonging to it (no real FK constraint
+/// on this SQLite schema, so the items are removed explicitly first).
+pub async fn budget_scenario_delete(id: String) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute("DELETE FROM budget_scenario_items WHERE scenario_id = ?1", params![id])?;
+        conn.execute("DELETE FROM budget_scenarios WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting budget_scenario: {}", e)))
+}
+
+fn row_to_budget_scenario_item(row: &Row) -> RusqliteResult<BudgetScenarioItemRow> {
+    Ok(BudgetScenarioItemRow {
+        id: row.get(0)?,
+        scenario_id: row.get(1)?,
+        name: row.get(2)?,
+        kind: row.get(3)?,
+        amount: row.get(4)?,
+        frequency: row.get(5)?,
+        reference_date: row.get(6)?,
+        account: row.get(7)?,
+        replaces_recurring_id: row.get(8)?,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn budget_scenario_item_add(
+    id: String,
+    scenario_id: String,
+    name: String,
+    kind: String,
+    amount: f64,
+    frequency: String,
+    reference_date: Option<String>,
+    account: String,
+    replaces_recurring_id: Option<String>,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO budget_scenario_items
+                (id, scenario_id, name, kind, amount, frequency, reference_date, account, replaces_recurring_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![id, scenario_id, name, kind, amount, frequency, reference_date, account, replaces_recurring_id],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error adding budget_scenario_item: {}", e)))
+}
+
+pub async fn budget_scenario_item_list(scenario_id: String) -> DbLibResult<Vec<BudgetScenarioItemRow>> {
+    execute_async(move |conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, scenario_id, name, kind, amount, frequency, reference_date, account, replaces_recurring_id
+             FROM budget_scenario_items WHERE scenario_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![scenario_id], row_to_budget_scenario_item)?;
+        rows.collect()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error listing budget_scenario_items: {}", e)))
+}
+
+pub async fn budget_scenario_item_delete(id: String) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute("DELETE FROM budget_scenario_items WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting budget_scenario_item: {}", e)))
+}
+
+/// A plain in-place SQL `UPDATE` — unlike `finances`-crate entities (which
+/// live in a text journal file with no "update a block" primitive and so
+/// need a delete-and-re-append-with-same-id idiom), a scenario item is just
+/// a regular table row, so this is the ordinary way to edit it.
+#[allow(clippy::too_many_arguments)]
+pub async fn budget_scenario_item_update(
+    id: String,
+    name: String,
+    kind: String,
+    amount: f64,
+    frequency: String,
+    reference_date: Option<String>,
+    account: String,
+    replaces_recurring_id: Option<String>,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "UPDATE budget_scenario_items SET
+                name = ?2, kind = ?3, amount = ?4, frequency = ?5,
+                reference_date = ?6, account = ?7, replaces_recurring_id = ?8
+             WHERE id = ?1",
+            params![id, name, kind, amount, frequency, reference_date, account, replaces_recurring_id],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error updating budget_scenario_item: {}", e)))
+}
+
+fn row_to_budget_cap_allocation(row: &Row) -> RusqliteResult<BudgetCapAllocationRow> {
+    Ok(BudgetCapAllocationRow {
+        id: row.get(0)?,
+        category: row.get(1)?,
+        account: row.get(2)?,
+        amount: row.get(3)?,
+        include_in_projection: row.get::<_, i64>(4)? != 0,
+        updated_at: row.get(5)?,
+    })
+}
+
+pub async fn budget_cap_allocation_add(
+    id: String,
+    category: String,
+    account: String,
+    amount: f64,
+    include_in_projection: bool,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        let updated_at = Local::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO budget_cap_allocations (id, category, account, amount, include_in_projection, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, category, account, amount, include_in_projection as i64, updated_at],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error adding budget_cap_allocation: {}", e)))
+}
+
+/// A plain SQL `UPDATE` by id — same idiom `budget_scenario_item_update`
+/// already uses for this kind of local, non-journal row (`category` is
+/// never edited; an allocation moving categories is really a delete + a
+/// new add).
+pub async fn budget_cap_allocation_update(
+    id: String,
+    account: String,
+    amount: f64,
+    include_in_projection: bool,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        let updated_at = Local::now().to_rfc3339();
+        conn.execute(
+            "UPDATE budget_cap_allocations SET account = ?2, amount = ?3, include_in_projection = ?4, updated_at = ?5
+             WHERE id = ?1",
+            params![id, account, amount, include_in_projection as i64, updated_at],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error updating budget_cap_allocation: {}", e)))
+}
+
+pub async fn budget_cap_allocation_delete(id: String) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute("DELETE FROM budget_cap_allocations WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting budget_cap_allocation: {}", e)))
+}
+
+pub async fn budget_cap_allocation_list_all() -> DbLibResult<Vec<BudgetCapAllocationRow>> {
+    execute_async(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, category, account, amount, include_in_projection, updated_at FROM budget_cap_allocations",
+        )?;
+        let rows = stmt.query_map([], row_to_budget_cap_allocation)?;
+        rows.collect()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error listing budget_cap_allocations: {}", e)))
+}
+
 // --- Generic helper ---
 
 pub async fn execute_async<F, T>(f: F) -> DbLibResult<T>
@@ -955,5 +1315,147 @@ mod tests {
     fn it_works() {
         let result = init();
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn recurring_occurrence_upsert_and_read_round_trips() {
+        init().unwrap();
+        let recurring_id = format!("zz_test-{}", uuid::Uuid::new_v4());
+
+        recurring_occurrence_upsert(
+            recurring_id.clone(),
+            "item".to_string(),
+            "2026-01-01".to_string(),
+            true,
+            Some("2026-01-02".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let all = recurring_occurrence_get_all().await.unwrap();
+        let row = all.iter().find(|r| r.recurring_id == recurring_id).expect("row present");
+        assert_eq!(row.kind, "item");
+        assert_eq!(row.period_start, "2026-01-01");
+        assert!(row.paid);
+        assert_eq!(row.paid_date.as_deref(), Some("2026-01-02"));
+
+        // Upserting the same (recurring_id, kind, period_start) updates in
+        // place rather than duplicating the row.
+        recurring_occurrence_upsert(
+            recurring_id.clone(),
+            "item".to_string(),
+            "2026-01-01".to_string(),
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let all = recurring_occurrence_get_all().await.unwrap();
+        let matching: Vec<_> = all.iter().filter(|r| r.recurring_id == recurring_id).collect();
+        assert_eq!(matching.len(), 1);
+        assert!(!matching[0].paid);
+        assert_eq!(matching[0].paid_date, None);
+
+        recurring_occurrence_delete_for(recurring_id.clone(), "item".to_string()).await.unwrap();
+        let all = recurring_occurrence_get_all().await.unwrap();
+        assert!(!all.iter().any(|r| r.recurring_id == recurring_id));
+    }
+
+    #[tokio::test]
+    async fn budget_scenario_and_items_round_trip() {
+        init().unwrap();
+        let scenario_id = format!("zz_test-{}", uuid::Uuid::new_v4());
+        budget_scenario_create(scenario_id.clone(), "zz_test scenario".to_string(), Local::now().to_rfc3339())
+            .await
+            .unwrap();
+
+        let scenarios = budget_scenario_list().await.unwrap();
+        assert!(scenarios.iter().any(|s| s.id == scenario_id && s.name == "zz_test scenario"));
+
+        let item_id = format!("zz_test-item-{}", uuid::Uuid::new_v4());
+        budget_scenario_item_add(
+            item_id.clone(),
+            scenario_id.clone(),
+            "Car payment".to_string(),
+            "expense".to_string(),
+            250.0,
+            "monthly".to_string(),
+            None,
+            "assets:checking".to_string(),
+            Some("rec-123".to_string()),
+        )
+        .await
+        .unwrap();
+
+        let items = budget_scenario_item_list(scenario_id.clone()).await.unwrap();
+        assert_eq!(items[0].replaces_recurring_id.as_deref(), Some("rec-123"));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, item_id);
+        assert_eq!(items[0].amount, 250.0);
+
+        budget_scenario_item_update(
+            item_id.clone(),
+            "Car payment (higher)".to_string(),
+            "expense".to_string(),
+            300.0,
+            "monthly".to_string(),
+            None,
+            "assets:checking".to_string(),
+            None,
+        )
+        .await
+        .unwrap();
+        let items = budget_scenario_item_list(scenario_id.clone()).await.unwrap();
+        assert_eq!(items.len(), 1, "update must not duplicate the row");
+        assert_eq!(items[0].id, item_id);
+        assert_eq!(items[0].name, "Car payment (higher)");
+        assert_eq!(items[0].amount, 300.0);
+        assert_eq!(items[0].replaces_recurring_id, None);
+
+        budget_scenario_item_delete(item_id.clone()).await.unwrap();
+        assert!(budget_scenario_item_list(scenario_id.clone()).await.unwrap().is_empty());
+
+        // Deleting the scenario also removes any remaining items (none
+        // left here, but confirms the delete-items-first ordering doesn't
+        // error when there's nothing to delete).
+        budget_scenario_delete(scenario_id.clone()).await.unwrap();
+        assert!(!budget_scenario_list().await.unwrap().iter().any(|s| s.id == scenario_id));
+    }
+
+    #[tokio::test]
+    async fn budget_cap_allocations_round_trip() {
+        init().unwrap();
+        let category = format!("zz_test_cat_{}", uuid::Uuid::new_v4());
+
+        let id1 = format!("zz_test-alloc-{}", uuid::Uuid::new_v4());
+        budget_cap_allocation_add(id1.clone(), category.clone(), "liabilities:visa".to_string(), 600.0, true)
+            .await
+            .unwrap();
+        let id2 = format!("zz_test-alloc-{}", uuid::Uuid::new_v4());
+        budget_cap_allocation_add(id2.clone(), category.clone(), "assets:checking".to_string(), 400.0, false)
+            .await
+            .unwrap();
+
+        let all = budget_cap_allocation_list_all().await.unwrap();
+        let mine: Vec<_> = all.iter().filter(|a| a.category == category).collect();
+        assert_eq!(mine.len(), 2, "expected 2 allocations for this category");
+        let total: f64 = mine.iter().map(|a| a.amount).sum();
+        assert_eq!(total, 1000.0, "category's derived total is the sum of its allocations");
+
+        // A plain UPDATE by id — must not duplicate the row.
+        budget_cap_allocation_update(id1.clone(), "liabilities:visa".to_string(), 700.0, false)
+            .await
+            .unwrap();
+        let all = budget_cap_allocation_list_all().await.unwrap();
+        let updated = all.iter().find(|a| a.id == id1).expect("allocation present");
+        assert_eq!(updated.amount, 700.0);
+        assert!(!updated.include_in_projection);
+        let mine: Vec<_> = all.iter().filter(|a| a.category == category).collect();
+        assert_eq!(mine.len(), 2, "update must not duplicate the row");
+
+        budget_cap_allocation_delete(id1.clone()).await.unwrap();
+        budget_cap_allocation_delete(id2.clone()).await.unwrap();
+        let all = budget_cap_allocation_list_all().await.unwrap();
+        assert!(!all.iter().any(|a| a.category == category));
     }
 }
