@@ -1634,10 +1634,63 @@
     .todo-card.completed .todo-card-title { text-decoration: line-through; color: var(--text-muted); }
     .todo-card-desc { color: var(--text-muted); font-size: 0.82rem; white-space: pre-wrap; }
     .todo-priority-bar { font-family: var(--font-mono); font-size: 0.78rem; letter-spacing: 1px; color: var(--accent); }
-    .todo-subtasks { display: flex; flex-direction: column; gap: 3px; margin-top: 2px; padding-left: 30px; }
-    .todo-subtask-line { font-size: 0.8rem; color: var(--text-muted); }
-    .todo-subtask-line.done { text-decoration: line-through; }
+    .todo-subtasks { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding-left: 30px; }
+    /* Own dashed-border box per subtask row (not just a hover highlight,
+       which doesn't exist on touch) so the tappable boundary is visible
+       up front, mirroring this app's existing dashed-border card idiom. */
+    .todo-subtask-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.82rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 7px 10px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface2);
+    }
+    .todo-subtask-line.done { text-decoration: line-through; opacity: 0.75; }
+    .todo-subtask-checkbox { width: 20px; height: 20px; flex-shrink: 0; cursor: pointer; }
     .todo-actions { display: flex; gap: 8px; margin-top: 4px; padding-left: 30px; }
+
+    /* Kanban board (Todo → Board tab) */
+    .kanban-board { flex: 1; display: flex; gap: 10px; padding: 10px; overflow-x: auto; overflow-y: hidden; }
+    .kanban-col {
+      flex: 1 0 220px;
+      min-width: 220px;
+      max-width: 320px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .kanban-col-header {
+      padding: 10px 12px;
+      font-family: var(--font-mono);
+      text-transform: uppercase;
+      font-size: 0.72rem;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      border-bottom: 1px dashed var(--border);
+      display: flex;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .kanban-col-list { flex: 1; overflow-y: auto; padding: 8px; }
+    .kanban-card {
+      background: var(--surface);
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 10px;
+      margin-bottom: 8px;
+    }
+    .kanban-card-title { font-weight: 600; font-size: 0.88rem; cursor: pointer; }
+    .kanban-card-title:hover { color: var(--accent); }
+    .kanban-card-moves { display: flex; justify-content: space-between; gap: 6px; margin-top: 8px; }
+    .kanban-card-moves .btn-ghost { flex: 1; font-size: 0.72rem; padding: 4px 6px; }
 
     /* Note viewer panel */
     .note-viewer { flex: 1; overflow-y: auto; padding: 16px; }
@@ -2072,6 +2125,7 @@
     <div class="hbar-scroll">
       <button class="todo-tab" id="ttab-add" onclick="todoResetForm(); todoShowTab('add')">&#43; New</button>
       <button class="todo-tab active" id="ttab-list" onclick="todoShowTab('list')">List</button>
+      <button class="todo-tab" id="ttab-board" onclick="todoShowTab('board')">Board</button>
     </div>
     <div class="cat-menu-wrap">
       <button class="cat-menu-btn" onclick="toggleMenu('todo-menu-dropdown', event)" title="View options">&#9776;</button>
@@ -2135,6 +2189,7 @@
         </select>
       </div>
       <div>
+        <div id="todo-edit-subtasks-checklist"></div>
         <div class="field-label">Subtasks <span style="color:var(--text-dim)">(one per line — prefix "[x] " for already done)</span></div>
         <textarea id="todo-subtasks" placeholder="first step&#10;[x] already done step" style="min-height:80px;flex:none;"></textarea>
       </div>
@@ -2162,6 +2217,12 @@
     <div class="notes-list" id="todo-list">
       <div class="empty-state"><span class="icon">&#9989;</span><span>No todos yet</span></div>
     </div>
+  </div>
+
+  <!-- Board panel: simplified kanban over TodoStatus (not_started/in_progress/blocked).
+       Completed todos never appear here — status isn't meaningful once done. -->
+  <div class="todo-panel" id="tpanel-board">
+    <div class="kanban-board" id="todo-board"></div>
   </div>
 
 </div>
@@ -5192,7 +5253,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       todoShowTab('add');
       return;
     }
-    if (todoCurrentTab === 'list') todoLoadList();
+    if (todoCurrentTab === 'list' || todoCurrentTab === 'board') todoLoadList();
     if (todoCurrentTab === 'add') ensureProjectsLoaded().then(() => populateProjectSelect('todo-project'));
   }
 
@@ -5203,7 +5264,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     document.getElementById('ttab-' + tab).classList.add('active');
     document.querySelectorAll('.todo-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('tpanel-' + tab).classList.add('active');
-    if (tab === 'list') todoLoadList();
+    if (tab === 'list' || tab === 'board') todoLoadList();
     if (tab === 'add') {
       setTimeout(() => document.getElementById('todo-title').focus(), 80);
       ensureProjectsLoaded().then(() => populateProjectSelect('todo-project'));
@@ -5232,10 +5293,55 @@ A category's overall budget cap is the sum of its allocations — split it acros
     document.getElementById('todo-status').value = 'not_started';
     document.getElementById('todo-tags').value = '';
     document.getElementById('todo-subtasks').value = '';
+    document.getElementById('todo-edit-subtasks-checklist').innerHTML = '';
     document.getElementById('todo-print').checked = true;
     document.getElementById('btn-todo-submit').textContent = 'Save Todo';
     document.getElementById('btn-todo-cancel-edit').style.display = 'none';
     clearFormState('tpanel-add');
+  }
+
+  // Existing subtasks (edit mode only) get a quick-tick checklist above the
+  // free-text textarea, so completing one doesn't require retyping the
+  // whole list with a "[x] " prefix — the textarea stays the source of
+  // truth for adding/renaming/removing subtasks by hand, and is kept in
+  // sync (see todoToggleSubtaskInForm) after every tick.
+  function renderTodoEditSubtaskChecklist() {
+    const el = document.getElementById('todo-edit-subtasks-checklist');
+    if (!el) return;
+    const item = todoEditingId !== null ? todoItems.find(t => t.id === todoEditingId) : null;
+    const subs = (item && item.subtasks) || [];
+    if (!subs.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;">${subs.map(s => `<label class="todo-subtask-line ${s.done ? 'done' : ''}">
+      <input type="checkbox" class="todo-subtask-checkbox" ${s.done ? 'checked' : ''} ${s.id == null ? 'disabled' : ''} onchange="todoToggleSubtaskInForm(${s.id}, this.checked)" />
+      ${esc(s.title)}
+    </label>`).join('')}</div>`;
+  }
+
+  // Ticks one existing subtask from the edit form's checklist — saves
+  // immediately (independent of the form's own Save Changes button, same
+  // as the list card's checkbox), then refreshes the textarea + checklist
+  // from the server's own state so a later Save Changes can't clobber it.
+  async function todoToggleSubtaskInForm(subtaskId, done) {
+    if (todoEditingId === null) return;
+    const id = todoEditingId;
+    try {
+      const r = await cachedFetch(`${TODO_API}/${id}/subtasks/${subtaskId}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({done}),
+      });
+      if (!r.ok) throw 0;
+      const r2 = await cachedFetch(`${TODO_API}/${id}`);
+      if (!r2.ok) throw 0;
+      const updated = await r2.json();
+      const idx = todoItems.findIndex(t => t.id === id);
+      if (idx !== -1) todoItems[idx] = updated;
+      document.getElementById('todo-subtasks').value = (updated.subtasks || [])
+        .map(s => (s.done ? '[x] ' : '') + s.title).join('\n');
+      renderTodoEditSubtaskChecklist();
+    } catch (_) {
+      toast('Failed to update subtask', true);
+    }
   }
 
   function todoCancelEdit() {
@@ -5268,6 +5374,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     document.getElementById('todo-tags').value = (item.labels || []).join(', ');
     document.getElementById('todo-subtasks').value = (item.subtasks || [])
       .map(s => (s.done ? '[x] ' : '') + s.title).join('\n');
+    renderTodoEditSubtaskChecklist();
     document.getElementById('todo-print').checked = false;
     document.getElementById('btn-todo-submit').textContent = 'Save Changes';
     document.getElementById('btn-todo-cancel-edit').style.display = '';
@@ -5375,8 +5482,77 @@ A category's overall budget cap is the sum of its allocations — split it acros
       if (!r.ok) throw 0;
       todoItems = await r.json();
       renderTodoList();
+      if (todoCurrentTab === 'board') renderTodoBoard();
     } catch (_) {
       document.getElementById('todo-list').innerHTML = '<div class="empty-state"><span>Failed to load todos</span></div>';
+    }
+  }
+
+  // Simplified kanban over TodoStatus — three fixed columns, no drag/drop:
+  // each card gets ←/→ buttons that PATCH /api/v1/todo/:id/status directly,
+  // reusing the same comment-prompt convention submitTodo()/the QR page's
+  // changeStatus() already use for a real status transition. Completed
+  // todos are excluded (status isn't meaningful once done, see CLAUDE.md).
+  const TODO_STATUS_COLUMNS = [
+    {key: 'not_started', label: 'Not Started'},
+    {key: 'in_progress', label: 'In Progress'},
+    {key: 'blocked', label: 'Blocked'},
+  ];
+
+  function renderTodoBoard() {
+    const el = document.getElementById('todo-board');
+    let items = todoItems.filter(i => !i.completed);
+    if (todoHideProjectItems) items = items.filter(i => !i.project_title);
+    else if (todoFilterProject) items = items.filter(i => i.project_title === todoFilterProject);
+    items = [...items].sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+    el.innerHTML = TODO_STATUS_COLUMNS.map((col, colIdx) => {
+      const colItems = items.filter(i => (i.status || 'not_started') === col.key);
+      return `<div class="kanban-col">
+        <div class="kanban-col-header"><span>${col.label}</span><span>${colItems.length}</span></div>
+        <div class="kanban-col-list">
+          ${colItems.length ? colItems.map(i => renderKanbanCard(i, colIdx)).join('') : '<div class="empty-state" style="padding:16px 4px;"><span>Empty</span></div>'}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderKanbanCard(i, colIdx) {
+    const filled = Math.min(i.priority || 0, 5);
+    const bar = '#'.repeat(filled) + '.'.repeat(5 - filled);
+    const isOverdue = i.due_date && new Date(i.due_date).getTime() < Date.now();
+    const dueStr = i.due_date ? new Date(i.due_date).toLocaleDateString('en-GB', {day:'numeric',month:'short'}) : null;
+    const dueHtml = dueStr ? `<span class="note-badge ${isOverdue ? 'overdue' : 'tag'}">&#128197; ${esc(dueStr)}</span>` : '';
+    const projectHtml = i.project_title ? `<span class="note-badge folder">&#128193; ${esc(i.project_title)}</span>` : '';
+    const prevCol = TODO_STATUS_COLUMNS[colIdx - 1];
+    const nextCol = TODO_STATUS_COLUMNS[colIdx + 1];
+    return `<div class="kanban-card">
+      <div class="kanban-card-title" onclick="todoEditTodo(${i.id})">${esc(i.title)}</div>
+      <div class="note-card-meta">
+        <span class="todo-priority-bar">[${bar}]</span>
+        ${dueHtml}${projectHtml}
+      </div>
+      <div class="kanban-card-moves">
+        ${prevCol ? `<button class="btn-ghost" onclick="todoBoardMove(${i.id}, '${prevCol.key}')">&#8592; ${prevCol.label}</button>` : '<span></span>'}
+        ${nextCol ? `<button class="btn-ghost" onclick="todoBoardMove(${i.id}, '${nextCol.key}')">${nextCol.label} &#8594;</button>` : '<span></span>'}
+      </div>
+    </div>`;
+  }
+
+  async function todoBoardMove(id, newStatus) {
+    const comment = prompt('Add a comment for this status change (optional):', '');
+    if (comment === null) return;
+    try {
+      const r = await cachedFetch(`${TODO_API}/${id}/status`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status: newStatus, comment}),
+      });
+      if (!r.ok) throw 0;
+      toast('Status updated');
+      todoLoadList();
+    } catch (_) {
+      toast('Failed to update status', true);
     }
   }
 
@@ -5405,7 +5581,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
       : '';
     const tagsHtml = (i.labels || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
     const subtasksHtml = (i.subtasks || []).length
-      ? `<div class="todo-subtasks">${i.subtasks.map(s => `<div class="todo-subtask-line ${s.done ? 'done' : ''}">${s.done ? '&#9745;' : '&#9744;'} ${esc(s.title)}</div>`).join('')}</div>`
+      ? `<div class="todo-subtasks">${i.subtasks.map(s => `<label class="todo-subtask-line ${s.done ? 'done' : ''}">
+          <input type="checkbox" class="todo-subtask-checkbox" ${s.done ? 'checked' : ''} ${s.id == null ? 'disabled' : ''} onchange="todoToggleSubtask(${i.id}, ${s.id}, this.checked)" />
+          ${esc(s.title)}
+        </label>`).join('')}</div>`
       : '';
     return `<div class="todo-card ${i.completed ? 'completed' : ''}">
       <button class="todo-delete" title="Delete todo" onclick="todoDelete(${i.id})">&#215;</button>
@@ -5446,6 +5625,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (todoHideProjectItems) todoFilterProject = '';
     updateTodoProjectCheck();
     renderTodoList();
+    if (todoCurrentTab === 'board') renderTodoBoard();
   }
 
   // Pill row on the right side of the Active/Completed/All filter bar,
@@ -5467,6 +5647,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   function todoSetFilterProject(slug) {
     todoFilterProject = slug;
     renderTodoList();
+    if (todoCurrentTab === 'board') renderTodoBoard();
   }
 
   // Forces an immediate cache resync (see todo::sync_cache) rather than
@@ -5479,7 +5660,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       const r = await fetch(TODO_API + '/resync', { method: 'POST' });
       if (!r.ok) throw 0;
       toast('Todos refreshed');
-      if (todoCurrentTab === 'list') todoLoadList();
+      if (todoCurrentTab === 'list' || todoCurrentTab === 'board') todoLoadList();
     } catch (_) {
       toast('Failed to refresh todos', true);
     } finally {
@@ -5526,6 +5707,29 @@ A category's overall budget cap is the sum of its allocations — split it acros
       toast('Failed to update todo', true);
     }
     todoLoadList();
+  }
+
+  // Toggles one subtask's done state directly from a checkbox — the list
+  // card, Project Detail card, and the Add/Edit form's subtask checklist
+  // (see todoToggleSubtaskInForm) all call this rather than requiring the
+  // whole free-text subtask textarea to be retyped with a "[x] " prefix.
+  async function todoToggleSubtask(itemId, subtaskId, done) {
+    try {
+      const r = await cachedFetch(`${TODO_API}/${itemId}/subtasks/${subtaskId}`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({done}),
+      });
+      if (!r.ok) throw 0;
+    } catch (_) {
+      toast('Failed to update subtask', true);
+    }
+    if (currentView === 'project-detail' && currentProjectDetailId != null) {
+      projectDetailOnOpen(currentProjectDetailId);
+    } else {
+      todoLoadList();
+      if (todoCurrentTab === 'board') renderTodoBoard();
+    }
   }
 
   async function todoPrint(id) {

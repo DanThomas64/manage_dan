@@ -205,6 +205,21 @@ pub async fn set_todo_status_handler(id: i64, body: SetStatusBody) -> Result<imp
     }
 }
 
+/// PATCH /api/v1/todo/:id/subtasks/:subtask_id - Toggle one subtask's done
+/// state without touching anything else on the item.
+#[derive(Deserialize)]
+pub struct SetSubtaskDoneBody { pub done: bool }
+
+pub async fn set_todo_subtask_done_handler(id: i64, subtask_id: i64, body: SetSubtaskDoneBody) -> Result<impl Reply, Rejection> {
+    match todo::set_subtask_done(id, subtask_id, body.done).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to set subtask {} done for todo item {}: {}", subtask_id, id, e);
+            Err(warp::reject::custom(ApiError::TodoOperationFailed))
+        }
+    }
+}
+
 /// POST /api/v1/todo/:id/print - Manually print a todo item ticket
 pub async fn print_todo_handler(id: i64) -> Result<impl Reply, Rejection> {
     match todo::print_item(id).await {
@@ -276,11 +291,9 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
 .badge.overdue{{background:var(--red-cont);color:var(--red-on);border-color:transparent;}}
 .section-label{{font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;}}
 .description{{line-height:1.6;white-space:pre-wrap;}}
-.subtask{{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--border);}}
-.subtask:last-child{{border-bottom:none;}}
-.check{{width:18px;height:18px;border-radius:4px;border:2px solid var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;}}
-.check.done{{background:var(--accent);border-color:var(--accent);}}
-.check.done::after{{content:'✓';color:var(--accent-on);font-size:11px;}}
+.subtask{{display:flex;align-items:center;gap:10px;padding:9px 10px;margin-bottom:6px;border:1px dashed var(--border);border-radius:var(--radius-sm);background:var(--surface2);cursor:pointer;}}
+.subtask:last-child{{margin-bottom:0;}}
+.sub-check{{width:20px;height:20px;flex-shrink:0;accent-color:var(--accent);cursor:pointer;}}
 .sub-title.done{{text-decoration:line-through;color:var(--text-dim);}}
 .btn{{width:100%;padding:14px;background:var(--accent);color:var(--accent-on);border:none;border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;margin-top:4px;transition:filter .15s,transform .1s;letter-spacing:.01em;}}
 .btn:hover{{filter:brightness(1.12);}}
@@ -427,6 +440,7 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
 <script>
 const ID={id};
 const PRI=['UNSET','LOW','MEDIUM','HIGH','URGENT','DO NOW'];
+function escHtml(s){{return String(s).replace(/[&<>"']/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}})[c]);}}
 function fmtDate(d){{if(!d)return null;return new Date(d).toLocaleDateString('en-GB',{{weekday:'short',day:'numeric',month:'short',year:'numeric'}});}}
 function fmtRel(d){{if(!d)return'';const days=Math.floor((Date.now()-new Date(d))/86400000);if(days<1)return'today';if(days===1)return'yesterday';if(days<7)return days+' days ago';if(days<30)return Math.floor(days/7)+' wks ago';return Math.floor(days/30)+' mo ago';}}
 async function load(){{
@@ -464,7 +478,7 @@ function render(t){{
     const done=subs.filter(s=>s.done).length;
     document.getElementById('subs-label').textContent=`Subtasks [${{done}}/${{subs.length}}]`;
     const c=document.getElementById('subs');
-    subs.forEach(s=>c.innerHTML+=`<div class="subtask"><div class="check ${{s.done?'done':''}}"></div><span class="sub-title ${{s.done?'done':''}}">${{s.title}}</span></div>`);
+    subs.forEach(s=>c.innerHTML+=`<label class="subtask"><input type="checkbox" class="sub-check" ${{s.done?'checked':''}} ${{s.id==null?'disabled':''}} onchange="toggleSubtask(${{s.id}},this.checked)" /><span class="sub-title ${{s.done?'done':''}}">${{escHtml(s.title)}}</span></label>`);
     document.getElementById('subs-card').style.display='block';
   }}
   document.title=t.title||('Task #'+ID);
@@ -614,6 +628,16 @@ async function changeStatus(){{
     sbtn.disabled=false;sbtn.textContent='Update';
     msg.textContent='Failed to update status. Please try again.';msg.className='msg err';
   }}
+}}
+async function toggleSubtask(subtaskId,done){{
+  try{{
+    const r=await fetch('/api/v1/todo/'+ID+'/subtasks/'+subtaskId,{{method:'PATCH',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{done}})}});
+    if(!r.ok)throw 0;
+  }}catch{{
+    document.getElementById('msg').textContent='Failed to update subtask. Please try again.';
+    document.getElementById('msg').className='msg err';
+  }}
+  await load();
 }}
 load();
 </script>
@@ -2741,6 +2765,15 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::body::json())
         .and_then(set_todo_status_handler);
 
+    // PATCH /api/v1/todo/:id/subtasks/:subtask_id
+    let set_subtask = todo_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path("subtasks"))
+        .and(warp::path::param::<i64>())
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(set_todo_subtask_done_handler);
+
     // POST /api/v1/todo/:id/print
     let print = todo_base
         .and(warp::path::param::<i64>())
@@ -2768,7 +2801,7 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::get())
         .and_then(get_single_todo_handler);
 
-    summary.or(resync).or(read_all).or(get_one).or(create).or(update).or(set_done).or(set_status).or(print).or(archive).or(delete)
+    summary.or(resync).or(read_all).or(get_one).or(create).or(update).or(set_done).or(set_status).or(set_subtask).or(print).or(archive).or(delete)
 }
 
 /// Defines routes related to system status.
