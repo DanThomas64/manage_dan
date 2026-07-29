@@ -2390,7 +2390,7 @@
         <button class="btn-ghost btn-sm" id="overview-help-toggle" onclick="toggleOverviewHelp()">? Help</button>
       </div>
       <div class="overview-help" style="display:none;font-size:0.82rem;color:var(--text-dim);line-height:1.5;margin-top:4px;">
-        Everything below reacts together to whatever you're currently "trying on": ad-hoc items you type in, and saved scenarios you check. A scenario item only ever excludes a real recurring payment if it's explicitly linked to one — via "Import Recurring" (auto-linked) or the "Replaces" dropdown when adding an item by hand — so real payments never silently stack with a scenario meant to change them, and a genuinely new scenario item never removes anything. The balance chart and every debt's payoff chart always reflect the same combined "what if" — nothing here changes your real accounts or journal until you actually add a real Spending/Recurring entry elsewhere in the app. Budget Caps at the bottom is normally just this month's actual spending vs. a limit you set, unrelated to the charts — unless you check "Include in projection" on one, in which case it joins the same combined "what if" as an ongoing monthly expense.
+        Two kinds of chart: <b>Net Worth</b> (one line — every account added together) and one chart per <b>account</b> below it, so any single account's own trend stays readable regardless of scale. A liability's chart already assumes its minimum payment is being paid, for real — set one up as a real recurring transfer on the Recurring tab (not here) and every chart, real or preview, reflects it automatically from then on; it uses that account's interest rate too, compounding for real, not just a flat forecast. To try a hypothetical <b>extra</b> payment (or a raise, a new subscription, anything else), check a <b>Saved Scenario</b> below — its items fold into every chart's dashed preview line at once, only ever excluding the real payment they're linked to via "Replaces," never silently stacking with it. Budget Caps at the bottom is a separate concern (spending limits, not balance trends) — unless you check "Include in projection" on an allocation, in which case it joins the same preview too.
       </div>
     </div>
 
@@ -2400,54 +2400,31 @@
         <button class="btn-ghost btn-sm" onclick="createBudgetScenario()">+ New</button>
       </div>
       <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:4px;">
-        A scenario is a named, saved "what if" — e.g. a raise, a new subscription, an extra debt payment. Create one, open its <b>Items</b> list, and add income/expense lines by hand, or hit <b>Import Recurring</b> to copy every real recurring item in as a starting point you can then edit freely (editing a scenario item never touches the real one). Each item's "Replaces" field decides whether it stands in for a real payment (excluded automatically so it never stacks — set for you on import, or pick one by hand) or is a genuinely new payment (nothing excluded). Checking a scenario's box folds its items into both charts below; unchecking removes them again. You can check multiple scenarios at once to combine them.
+        A scenario is a named, saved "what if" — e.g. a raise, a new subscription, an extra debt payment. Create one, open its <b>Items</b> list, and add income/expense lines by hand, or hit <b>Import Recurring</b> to copy every real recurring item in as a starting point you can then edit freely (editing a scenario item never touches the real one). Each item's "Replaces" field decides whether it stands in for a real payment (excluded automatically so it never stacks — set for you on import, or pick one by hand) or is a genuinely new payment (nothing excluded). Checking a scenario's box folds its items into every chart below; unchecking removes them again. You can check multiple scenarios at once to combine them.
       </div>
       <div id="budget-scenarios-list" style="margin-top:6px;"></div>
     </div>
 
-    <div style="padding:8px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-        <div class="field-label">Ad-hoc preview items <span style="color:var(--text-dim)">(not saved — shows their combined effect on the charts below)</span></div>
-        <button class="btn-ghost btn-sm" onclick="addPreviewRow()">+ Add</button>
-      </div>
-      <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:4px;">
-        For a quick one-off check you don't want to keep — add a row and hit <b>Preview</b>. Unlike a saved scenario, these rows disappear the moment you leave this tab or the underlying recurring-item list changes; save it as a scenario instead if you want to come back to it later.
-      </div>
-      <div id="fin-preview-rows" style="margin-top:6px;"></div>
-      <div style="display:flex;gap:8px;margin-top:4px;">
-        <button class="btn-primary" style="flex:1;padding:8px;" onclick="submitProjectionPreview()">Preview</button>
-        <button class="btn-ghost btn-sm" id="fin-preview-clear-btn" style="display:none;" onclick="clearProjectionPreview()">Clear</button>
-      </div>
-    </div>
-
     <div style="padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
-      <div class="field-label">Projected balance trend (<span id="fin-months-label">12 months</span>)</div>
+      <div class="field-label">Net Worth (<span id="fin-months-label">12 months</span>)</div>
       <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:2px;margin-bottom:4px;">
-        Solid line is your real accounts, forecast forward with no changes. The dashed "Preview scenario" line (when present) is the same forecast with every checked scenario and ad-hoc row layered on top, so you can see the gap between "if nothing changes" and "if I do this."
+        Every account's own chart below, added together into one line — assets plus liabilities, with liabilities negative, so more debt lowers this. Liability accounts contribute their interest-aware payoff projection here too, not a flat forecast, so this reflects real compounding debt. The dashed preview line (when present) is the same sum with every checked scenario applied to whichever accounts they target.
       </div>
       <input type="range" id="fin-months-slider" min="1" max="36" value="12" style="width:100%;" oninput="onMonthsSliderInput(this.value)" />
       <div style="width:100%;">
-        <canvas id="fin-projection-chart"></canvas>
+        <canvas id="networth-chart"></canvas>
       </div>
-      <div class="field-label" id="overview-breakdown" style="margin-top:6px;"></div>
-      <div id="overview-checkpoint-summary" style="margin-top:6px;"></div>
+      <div class="field-label" id="networth-summary" style="margin-top:4px;"></div>
+      <div class="field-label" id="networth-breakdown" style="margin-top:2px;"></div>
+      <div id="networth-checkpoint-summary" style="margin-top:6px;"></div>
     </div>
 
     <div style="padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
-      <div class="field-label">Debt Payoff Projections</div>
+      <div class="field-label">Accounts</div>
       <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:2px;margin-bottom:4px;">
-        One chart per liability account. By default it uses that account's interest rate plus whatever real recurring items and <b>recurring transfers</b> already target it — a recurring transfer <i>into</i> this account already pays it down, and a transfer <i>out of</i> it already makes it worse, exactly like a scheduled expense/income item; each card lists what's currently counted below its chart so you can confirm it. Also affected by scenarios/ad-hoc items checked above. Turn on <b>Use payment plan</b> on a card to design payments from scratch instead — "Minimum (interest-only)" holds the balance flat by paying exactly each month's interest, and "Supplementary" adds a flat extra payment on top. A plan <b>replaces</b> that account's real payments for this chart (never both at once, including recurring transfers against it); its interest-only portion only shows up here, not in the combined balance chart above, since that chart can't model dynamic interest — only a plan's flat supplementary amount does.
+        One chart per account, always shown — asset accounts use the plain forecast (real transactions plus real recurring items/transfers); liability accounts use the interest-aware payoff math instead (that account's rate, plus real recurring items/transfers against it — a recurring transfer <i>into</i> it already pays it down, <i>out of</i> it already makes it worse, exactly like a scheduled expense/income item). Every card's breakdown line states exactly what's counted. Both react to scenarios checked above.
       </div>
-      <div id="overview-payoff-list" style="margin-top:6px;"></div>
-    </div>
-
-    <div style="padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
-      <div class="field-label">Account Balances</div>
-      <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:2px;margin-bottom:4px;">
-        Check any account below to chart its own balance over time — same plain forecast math as the combined chart above (not the interest-aware payoff math Debt Payoff Projections uses), reacting to the same scenarios/ad-hoc items. Nothing is charted automatically; pick only the accounts you want to watch.
-      </div>
-      <div id="account-balance-checklist" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;"></div>
-      <div id="account-balance-cards"></div>
+      <div id="overview-account-list" style="margin-top:6px;"></div>
     </div>
 
     <div style="padding:12px 16px;flex-shrink:0;">
@@ -5943,7 +5920,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (days === 1) return 'tomorrow';
     return `in ${days}d`;
   }
-  let financesChart = null;
+  let networthChart = null;
   let accountsCache = [];
 
   function accountHledgerPath(account) {
@@ -5992,17 +5969,15 @@ A category's overall budget cap is the sum of its allocations — split it acros
     financesLoaded = true;
   }
 
-  // Overview tab: combined projection chart + payoff charts + saved
+  // Overview tab: Net Worth chart + one chart per account + saved
   // scenarios + budget caps. `loadRecurringItems()` populates
-  // `lastRecurringItems` (needed by the eye-icon exclude toggle on
-  // Recurring-tab cards) and, at the end of its own chain, calls
-  // `loadProjectionChart()` for the real baseline — so calling it here
-  // covers the combined chart even if the Recurring tab is never visited.
+  // `lastRecurringItems`, needed by every account card's breakdown line
+  // (and the eye-icon exclude toggle on Recurring-tab cards).
   function financesOverviewOnOpen() {
     loadRecurringItems();
     loadBudgetScenarios();
     loadBudgetCaps();
-    renderOverviewPayoffCards();
+    renderOverviewAccountList();
     refreshOverviewCharts();
   }
 
@@ -6315,19 +6290,12 @@ A category's overall budget cap is the sum of its allocations — split it acros
     try {
       await fetchRecurringItemsAndTransfers();
       renderRecurringItemsList();
-      // The baseline changed — any previously previewed ad-hoc rows are stale now.
-      previewRowKeys = [];
-      renderPreviewRows();
-      previewProjectionPoints = null;
-      document.getElementById('fin-preview-clear-btn').style.display = 'none';
-      loadProjectionChart();
-      // Payoff cards' "counted toward this chart" breakdown and Budget
-      // Caps' recurring-commitment line both read `lastRecurringItems`,
-      // which this function just (re)populated — re-run the whole
-      // Overview refresh so charts/breakdowns never end up stuck on
-      // stale/empty data from before this load finished (e.g. Overview
-      // opened directly, racing this fetch). No-op cost when the Overview
-      // tab isn't even visible.
+      // Every account card's breakdown and Budget Caps' recurring-
+      // commitment line both read `lastRecurringItems`, which this
+      // function just (re)populated — re-run the whole Overview refresh
+      // so charts/breakdowns never end up stuck on stale/empty data from
+      // before this load finished (e.g. Overview opened directly, racing
+      // this fetch). No-op cost when the Overview tab isn't even visible.
       if (document.getElementById('fpanel-overview').classList.contains('active')) {
         refreshOverviewCharts();
         renderBudgetCaps();
@@ -6607,11 +6575,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
   }
 
-  let lastProjectionPoints = [];
-  let previewProjectionPoints = null;
   let projectionMonths = 12;
-  let previewRowKeys = [];
-  let previewRowCounter = 0;
 
   function onMonthsSliderInput(v) {
     projectionMonths = parseInt(v, 10);
@@ -6623,7 +6587,6 @@ A category's overall budget cap is the sum of its allocations — split it acros
   function scheduleMonthsRefresh() {
     clearTimeout(monthsRefreshTimer);
     monthsRefreshTimer = setTimeout(() => {
-      loadProjectionChart();
       refreshOverviewCharts();
     }, 300);
   }
@@ -6676,29 +6639,100 @@ A category's overall budget cap is the sum of its allocations — split it acros
     };
   }
 
-  async function loadProjectionChart() {
-    try {
-      const r = await fetch(`${FINANCES_API}/projection?months=${projectionMonths}`);
-      if (!r.ok) throw 0;
-      lastProjectionPoints = await r.json();
-      renderProjectionChart();
-    } catch (_) { /* chart is supplementary; leave it blank on failure */ }
+  // Net worth has no endpoint of its own — hledger has no concept of
+  // "interest-aware liability + plain-forecast asset, added together," so
+  // this sums whatever's already been fetched per-account for the charts
+  // below instead of a separate round trip. `normalizeAccountSeries` picks
+  // each account's own value field (`ending_balance` for a liability's
+  // interest-aware payoff points, `balance` for an asset's plain forecast
+  // points) so `sumAccountSeries` only ever deals with one common shape.
+  function normalizeAccountSeries(points, kind) {
+    const field = accountValueField(kind);
+    return (points || []).map(p => ({ period_start: p.period_start, period_end: p.period_end, value: Number(p[field]) }));
   }
 
-  function renderProjectionChart() {
-    const labels = lastProjectionPoints.map(p => p.period_start);
+  // Sums same-shaped `{period_start, period_end, value}` series into one
+  // `{period_start, period_end, balance}` series. Series aren't always the
+  // same length — a liability's payoff series stops early once paid off —
+  // so date labels come from whichever input series is longest (an asset
+  // series, or any not-yet-paid-off liability, never stops early), and a
+  // shorter series' *last* value is held flat for every index past its own
+  // length (a paid-off debt keeps contributing its final settled balance,
+  // not zero-by-assumption — that final value is already `>= 0`).
+  function sumAccountSeries(seriesList) {
+    const nonEmpty = seriesList.filter(s => s.length);
+    if (!nonEmpty.length) return [];
+    const reference = nonEmpty.reduce((a, b) => (b.length > a.length ? b : a));
+    return reference.map((refPoint, i) => {
+      let total = 0;
+      for (const series of nonEmpty) {
+        const point = i < series.length ? series[i] : series[series.length - 1];
+        total += point.value;
+      }
+      return { period_start: refPoint.period_start, period_end: refPoint.period_end, balance: total };
+    });
+  }
+
+  // `depthKey` is `'chart'` (interactive `projectionMonths` depth) or
+  // `'summary'` (fixed 120-month checkpoint depth) — both cached per
+  // account by `refreshAccountPanel`. An account with no preview series
+  // still contributes its own baseline to the net-worth *preview* line
+  // (it just wasn't affected by whatever scenario is checked), so the
+  // preview line is never missing an unaffected account's real balance.
+  function computeNetWorth(depthKey) {
+    const baselineSeries = [];
+    const previewSeries = [];
+    let anyPreview = false;
+    for (const a of accountsCache) {
+      const entry = lastAccountPoints[a.id];
+      const pair = entry && entry[depthKey];
+      if (!pair) continue;
+      baselineSeries.push(normalizeAccountSeries(pair.baseline, a.kind));
+      if (pair.preview) {
+        anyPreview = true;
+        previewSeries.push(normalizeAccountSeries(pair.preview, a.kind));
+      } else {
+        previewSeries.push(normalizeAccountSeries(pair.baseline, a.kind));
+      }
+    }
+    return {
+      baseline: sumAccountSeries(baselineSeries),
+      preview: anyPreview ? sumAccountSeries(previewSeries) : null,
+    };
+  }
+
+  function renderNetWorthBreakdown(hasOverrides) {
+    const el = document.getElementById('networth-breakdown');
+    if (!el) return;
+    el.innerHTML = hasOverrides
+      ? 'Solid = every account’s real baseline added together. Dashed = the same, with currently checked scenarios applied to whichever accounts they target — see that account’s own chart below for exactly what.'
+      : 'Solid = every account’s real baseline (see the charts below) added together — assets plus liabilities, liabilities negative, so more debt lowers this.';
+  }
+
+  function renderNetWorthChart(baseline, preview) {
+    const summary = document.getElementById('networth-summary');
+    if (summary) {
+      if (!baseline.length) {
+        summary.textContent = 'No projection available';
+      } else {
+        const last = (preview || baseline)[(preview || baseline).length - 1];
+        const suffix = preview ? ' (preview)' : '';
+        summary.textContent = `Projected net worth by ${last.period_end}: $${last.balance.toFixed(2)}${suffix}`;
+      }
+    }
+    const labelSource = (preview && preview.length > baseline.length) ? preview : baseline;
     const datasets = [{
-      label: 'Real (no changes)',
-      data: lastProjectionPoints.map(p => p.balance),
+      label: 'Net worth (real)',
+      data: baseline.map(p => p.balance),
       borderColor: '#6ec1ff',
       backgroundColor: 'rgba(110,193,255,0.12)',
       tension: 0.25,
       fill: true,
     }];
-    if (previewProjectionPoints) {
+    if (preview) {
       datasets.push({
-        label: 'Preview (with changes)',
-        data: previewProjectionPoints.map(p => p.balance),
+        label: 'Net worth (preview)',
+        data: preview.map(p => p.balance),
         borderColor: '#e8a33d',
         backgroundColor: 'rgba(232,163,61,0.10)',
         borderDash: [6, 4],
@@ -6706,15 +6740,15 @@ A category's overall budget cap is the sum of its allocations — split it acros
         fill: false,
       });
     }
-    const trend = trendlineDataset(lastProjectionPoints, 'balance');
+    const trend = trendlineDataset(baseline, 'balance');
     if (trend) datasets.push(trend);
     const draw = () => {
-      const ctx = document.getElementById('fin-projection-chart');
+      const ctx = document.getElementById('networth-chart');
       if (!ctx) return;
-      if (financesChart) financesChart.destroy();
-      financesChart = new window.Chart(ctx, {
+      if (networthChart) networthChart.destroy();
+      networthChart = new window.Chart(ctx, {
         type: 'line',
-        data: { labels, datasets },
+        data: { labels: labelSource.map(p => p.period_start), datasets },
         options: {
           responsive: true,
           maintainAspectRatio: true,
@@ -6727,7 +6761,6 @@ A category's overall budget cap is the sum of its allocations — split it acros
         },
       });
     };
-    renderOverviewBreakdown();
     if (window.Chart) {
       draw();
     } else {
@@ -6743,28 +6776,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
     clearTimeout(chartResizeTimer);
     chartResizeTimer = setTimeout(() => {
       if (document.getElementById('fpanel-overview').classList.contains('active')) {
-        renderProjectionChart();
-        for (const id of Object.keys(payoffCharts)) {
-          const cached = lastPayoffPoints[id];
-          if (cached) renderPayoffChart(id, cached.baseline, cached.preview);
-        }
-        for (const id of Object.keys(accountBalanceCharts)) {
-          const cached = lastAccountBalancePoints[id];
-          if (cached) renderAccountBalanceChart(id, cached.baseline, cached.preview);
+        const netWorth = computeNetWorth('chart');
+        renderNetWorthChart(netWorth.baseline, netWorth.preview);
+        for (const id of Object.keys(accountCharts)) {
+          const cached = lastAccountPoints[id] && lastAccountPoints[id].chart;
+          const account = accountsCache.find(a => a.id === id);
+          if (cached && account) renderAcctChart(account, cached.baseline, cached.preview);
         }
       }
     }, 200);
   });
-
-  function addPreviewRow() {
-    previewRowKeys.push(previewRowCounter++);
-    renderPreviewRows();
-  }
-
-  function removePreviewRow(key) {
-    previewRowKeys = previewRowKeys.filter(k => k !== key);
-    renderPreviewRows();
-  }
 
   function accountOptionsHtml(accounts) {
     return accounts.map(a =>
@@ -6772,53 +6793,22 @@ A category's overall budget cap is the sum of its allocations — split it acros
     ).join('');
   }
 
-  function previewRowHtml(key) {
-    return `
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px;" data-preview-row="${key}">
-        <input type="text" id="fin-preview-name-${key}" class="lc-first" placeholder="Name" style="flex:2;min-width:100px;" autocomplete="off" />
-        <select id="fin-preview-kind-${key}" style="flex:1;min-width:80px;">
-          <option value="expense">Expense</option>
-          <option value="income">Income</option>
-        </select>
-        <input type="number" id="fin-preview-amount-${key}" step="0.01" min="0" placeholder="Amt" style="flex:1;min-width:70px;" />
-        <select id="fin-preview-frequency-${key}" style="flex:1;min-width:90px;">
-          <option value="weekly">Weekly</option>
-          <option value="biweekly">Biweekly</option>
-          <option value="monthly" selected>Monthly</option>
-          <option value="yearly">Yearly</option>
-        </select>
-        <select id="fin-preview-account-${key}" style="flex:1;min-width:90px;">${accountOptionsHtml(accountsCache)}</select>
-        <button class="btn-ghost btn-sm" onclick="removePreviewRow(${key})">&times;</button>
-      </div>`;
-  }
-
-  function renderPreviewRows() {
-    document.getElementById('fin-preview-rows').innerHTML = previewRowKeys.map(previewRowHtml).join('');
-  }
-
-  // Gathers every hypothetical item currently in play — the ad-hoc
-  // (never-saved) preview rows plus every item belonging to a checked
-  // saved scenario — into one flat array in the shape both
-  // `/projection/preview` and `/accounts/:id/payoff/preview` accept, plus
-  // the set of real recurring item/transfer ids to exclude. Exclusions are
-  // derived, never manual: only a checked scenario's items whose
-  // `replaces_recurring_id` is set contribute one — an ad-hoc row never
-  // excludes anything (it's always a genuinely new, additive item), and a
-  // scenario item with no link doesn't either. This is what keeps a
-  // scenario from *stacking* with the real payment it's meant to replace,
-  // while a scenario item with no such link (a real new expense) still
-  // adds normally.
+  // Gathers every hypothetical item currently in play — every item
+  // belonging to a checked saved scenario, plus any budget-cap allocation
+  // marked "Include in projection" — into one flat array in the shape both
+  // `/accounts/:id/history/preview` and `/accounts/:id/payoff/preview`
+  // accept, plus the set of real recurring item/transfer ids to exclude.
+  // Exclusions are derived, never manual: only a checked scenario's items
+  // whose `replaces_recurring_id` is set contribute one, so a scenario
+  // never *stacks* with the real payment it's meant to replace, while a
+  // scenario item with no such link (a genuinely new expense) still adds
+  // normally. A liability's minimum payment is deliberately not a preview
+  // concept at all — set one up as a real recurring transfer on the
+  // Recurring tab so every chart, real or preview, reflects it
+  // automatically; any scenario/budget-cap item added here is additional
+  // on top of that.
   function collectPreviewItems() {
     const items = [];
-    for (const key of previewRowKeys) {
-      const name = document.getElementById(`fin-preview-name-${key}`).value.trim();
-      const kind = document.getElementById(`fin-preview-kind-${key}`).value;
-      const amount = parseFloat(document.getElementById(`fin-preview-amount-${key}`).value);
-      const frequency = document.getElementById(`fin-preview-frequency-${key}`).value;
-      const account = document.getElementById(`fin-preview-account-${key}`).value;
-      if (!name || !amount || amount <= 0 || !account) continue;
-      items.push({ name, kind, amount, frequency, account, reference_date: null });
-    }
     const excludeRecurringIds = new Set();
     for (const sid of appliedScenarioIds) {
       for (const it of (budgetScenarioItems[sid] || [])) {
@@ -6838,93 +6828,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
         });
       }
     }
-    // An active payment plan replaces that account's real recurring
-    // items/transfers for its own payoff chart — extend the same
-    // "replace, don't stack" semantics to the combined chart: exclude
-    // every real item/transfer targeting that account, and add the
-    // plan's flat supplementary payment (its interest-only minimum can't
-    // be represented here at all — hledger has no way to forecast "X% of
-    // the current balance" per period, same reason the payoff chart
-    // needed its own Rust math to begin with).
-    for (const [acctId, plan] of Object.entries(paymentPlans)) {
-      if (!plan.enabled) continue;
-      const account = accountsCache.find(a => a.id === acctId);
-      if (!account) continue;
-      const hledgerAccount = `${account.kind === 'asset' ? 'assets' : 'liabilities'}:${account.slug}`;
-      for (const item of lastRecurringItems) {
-        const targets = item._type === 'transfer'
-          ? (item.from_account === hledgerAccount || item.to_account === hledgerAccount)
-          : (item.account === hledgerAccount);
-        if (targets) excludeRecurringIds.add(item.id);
-      }
-      if (plan.supplementaryAmount > 0) {
-        items.push({
-          name: `${account.name} plan: supplementary`, kind: 'income', amount: plan.supplementaryAmount,
-          frequency: plan.supplementaryFrequency, account: hledgerAccount, reference_date: null,
-        });
-      }
-    }
     return { items, excludeRecurringIds: [...excludeRecurringIds] };
-  }
-
-  // Always states what the solid baseline line is built from, then — only
-  // when something's actually checked/entered — what the dashed preview
-  // line adds on top of it. A fixed legend rather than a note that only
-  // appears when something unusual is active, so "what's contributing to
-  // this chart" never has to be guessed from the controls above it.
-  function renderOverviewBreakdown() {
-    const el = document.getElementById('overview-breakdown');
-    if (!el) return;
-    const baselineLine = 'Solid = baseline: your real transactions plus every recurring item/transfer hledger already forecasts, across all accounts (assets + liabilities).';
-    const parts = [];
-
-    const adHocCount = previewRowKeys.filter(key => {
-      const nameEl = document.getElementById(`fin-preview-name-${key}`);
-      return nameEl && nameEl.value.trim();
-    }).length;
-    if (adHocCount > 0) parts.push(`${adHocCount} ad-hoc item${adHocCount === 1 ? '' : 's'}`);
-
-    for (const sid of appliedScenarioIds) {
-      const scenario = budgetScenarios.find(s => s.id === sid);
-      if (scenario) parts.push(`scenario "${esc(scenario.name)}"`);
-    }
-
-    const categoryLabels = { stupid: 'Stupid', survival: 'Survival' };
-    for (const alloc of budgetCapAllocations) {
-      if (alloc.include_in_projection && alloc.amount > 0) {
-        parts.push(`${categoryLabels[alloc.category] || alloc.category} budget (${esc(accountDisplayName(alloc.account))}, $${alloc.amount.toFixed(2)}/mo)`);
-      }
-    }
-
-    let hasInterestOnlyPlan = false;
-    for (const [acctId, plan] of Object.entries(paymentPlans)) {
-      if (!plan.enabled) continue;
-      const account = accountsCache.find(a => a.id === acctId);
-      const name = account ? esc(account.name) : acctId;
-      const bits = [];
-      if (plan.minimumInterestOnly) { bits.push('interest-only minimum'); hasInterestOnlyPlan = true; }
-      if (plan.supplementaryAmount > 0) bits.push(`$${plan.supplementaryAmount.toFixed(2)}/${plan.supplementaryFrequency} supplementary`);
-      parts.push(`${name} payment plan (${bits.join(' + ') || 'no payments'})`);
-    }
-
-    if (!parts.length) {
-      el.innerHTML = baselineLine;
-      return;
-    }
-    let html = `${baselineLine}<br>Dashed = baseline plus: ${parts.join(', ')}.`;
-    if (hasInterestOnlyPlan) {
-      html += ' An interest-only minimum payment only affects that debt’s own payoff chart above — this combined chart can’t model dynamic interest.';
-    }
-    el.innerHTML = html;
   }
 
   // "So where am I in N months/years?" — a fixed-depth (120-month) fetch
   // independent of the interactive chart's own `projectionMonths` slider
   // (which stays capped at 36 for chart readability), read off at fixed
-  // checkpoints. `valueField` is `'balance'` for combined-chart points or
-  // `'ending_balance'` for payoff points. A payoff array can end early
-  // (paid off) — any checkpoint past its length shows the payoff date
-  // instead of a raw balance.
+  // checkpoints. `valueField` is `'balance'` for Net Worth/asset points or
+  // `'ending_balance'` for a liability's payoff points. A payoff array can
+  // end early (paid off) — any checkpoint past its length shows the payoff
+  // date instead of a raw balance.
   const SUMMARY_MONTHS = 120;
   const SUMMARY_CHECKPOINTS = [12, 24, 36, 60, 120];
 
@@ -6950,11 +6863,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
       }
       const last = points[points.length - 1];
       if (last.period_end < targetStr) {
-        // A payoff array can end early once the debt is paid off; the
-        // combined/account-balance charts' arrays never stop early on
-        // their own (they only ever return fewer points than requested
-        // when hledger has nothing periodic to forecast at all, an edge
-        // case worth just showing the last real value for rather than
+        // A payoff array can end early once the debt is paid off; an
+        // asset's/Net Worth's array never stops early on its own (it only
+        // ever returns fewer points than requested when hledger has
+        // nothing periodic to forecast at all, an edge case worth just
+        // showing the last real value for rather than
         // mislabeling as "paid off").
         if (valueField === 'ending_balance' && last.ending_balance >= 0) {
           return `Paid off ${esc(last.period_end)}`;
@@ -6979,84 +6892,29 @@ A category's overall budget cap is the sum of its allocations — split it acros
       </div>`;
   }
 
-  async function loadProjectionSummary() {
-    try {
-      const baselineRes = await fetch(`${FINANCES_API}/projection?months=${SUMMARY_MONTHS}`);
-      if (!baselineRes.ok) throw 0;
-      const baseline = await baselineRes.json();
-      const { items, excludeRecurringIds } = collectPreviewItems();
-      let preview = null;
-      if (items.length > 0 || excludeRecurringIds.length > 0) {
-        const r = await fetch(`${FINANCES_API}/projection/preview`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items, exclude_recurring_ids: excludeRecurringIds, months: SUMMARY_MONTHS }),
-        });
-        if (r.ok) preview = await r.json();
-      }
-      renderCheckpointSummary('overview-checkpoint-summary', baseline, preview, 'balance');
-    } catch (_) { /* summary is supplementary; leave blank on failure */ }
-  }
-
-  // The single entry point that recomputes BOTH the combined projection
-  // chart and every liability account's payoff chart from the current
-  // ad-hoc rows + applied saved scenarios (and whatever real items those
-  // scenarios' items replace) — called whenever any of those inputs
-  // change, so the two chart types never drift out of sync with each other.
+  // The single entry point that recomputes every account's own chart from
+  // applied saved scenarios and budget-cap allocations (and whatever real
+  // items those scenarios' items replace), then sums the results into the
+  // Net Worth chart — called whenever any of those inputs change, so
+  // every chart on the tab stays in sync with the others.
   async function refreshOverviewCharts() {
     const { items, excludeRecurringIds } = collectPreviewItems();
     const hasOverrides = items.length > 0 || excludeRecurringIds.length > 0;
 
-    if (hasOverrides) {
-      try {
-        const r = await fetch(`${FINANCES_API}/projection/preview`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items, exclude_recurring_ids: excludeRecurringIds, months: projectionMonths }),
-        });
-        if (!r.ok) throw 0;
-        previewProjectionPoints = await r.json();
-        document.getElementById('fin-preview-clear-btn').style.display = '';
-      } catch (_) {
-        toast('Failed to compute preview', true);
-      }
-    } else {
-      previewProjectionPoints = null;
-      document.getElementById('fin-preview-clear-btn').style.display = 'none';
-    }
-    renderProjectionChart();
     renderRecurringItemsList();
 
-    for (const a of accountsCache.filter(acc => acc.kind === 'liability')) {
-      refreshPayoffPanel(a.id, items, excludeRecurringIds);
-    }
-    for (const id of chartedAccountIds) {
-      refreshAccountBalancePanel(id, items, excludeRecurringIds);
-    }
-    loadProjectionSummary();
-  }
+    await Promise.all(accountsCache.map(a => refreshAccountPanel(a, items, excludeRecurringIds)));
 
-  async function submitProjectionPreview() {
-    const { items, excludeRecurringIds } = collectPreviewItems();
-    if (!items.length && !excludeRecurringIds.length) {
-      toast('Add a preview item, or apply a saved scenario', true);
-      return;
-    }
-    await refreshOverviewCharts();
-  }
+    const chartNetWorth = computeNetWorth('chart');
+    renderNetWorthChart(chartNetWorth.baseline, chartNetWorth.preview);
+    renderNetWorthBreakdown(hasOverrides);
 
-  // "Clear" only ever meant "stop previewing the ad-hoc rows" — any
-  // exclusions now come from applied scenarios, which have their own
-  // checkbox to turn off individually.
-  function clearProjectionPreview() {
-    previewRowKeys = [];
-    renderPreviewRows();
-    refreshOverviewCharts();
+    const summaryNetWorth = computeNetWorth('summary');
+    renderCheckpointSummary('networth-checkpoint-summary', summaryNetWorth.baseline, summaryNetWorth.preview, 'balance');
   }
 
   // ── Saved budget scenarios (Overview tab) ──
-  // A named, persisted set of hypothetical income/expense items — unlike
-  // the ad-hoc preview rows above (which live only in page state), these
+  // A named, persisted set of hypothetical income/expense items — these
   // round-trip through `/budget/scenarios` so they survive a reload and can
   // be checked on/off against both charts via `appliedScenarioIds`.
   let budgetScenarios = [];
@@ -7512,6 +7370,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function loadAccounts() {
     const list = document.getElementById('fin-accounts-list');
+    // This ends with refreshOverviewCharts(), whose per-account breakdown
+    // lines read `lastRecurringItems` — refresh it here too, not just from
+    // the Recurring/Spending/Overview tabs, so it's accurate even if this
+    // is the first Finances tab visited this session.
+    try { await fetchRecurringItemsAndTransfers(); } catch (_) { /* breakdown lines just show stale/empty data */ }
     try {
       const accounts = await fetchAccountsList();
       populateAccountSelects(accounts);
@@ -7523,10 +7386,9 @@ A category's overall budget cap is the sum of its allocations — split it acros
     } catch (_) {
       list.innerHTML = '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load accounts</span></div>';
     }
-    // Liability accounts (and their names/rates) may have just changed —
-    // the Overview tab's payoff cards are keyed off this same accountsCache.
-    renderOverviewPayoffCards();
-    renderAccountBalanceChecklist();
+    // Account list (and names/rates) may have just changed — the Overview
+    // tab's per-account cards are keyed off this same accountsCache.
+    renderOverviewAccountList();
     refreshOverviewCharts();
   }
 
@@ -7535,9 +7397,6 @@ A category's overall budget cap is the sum of its allocations — split it acros
     document.getElementById('fin-acct-rate-wrap').style.display = isLiability ? '' : 'none';
     document.getElementById('fin-acct-limit-wrap').style.display = isLiability ? '' : 'none';
   }
-
-  let payoffCharts = {};
-  let lastPayoffPoints = {};
 
   function renderAccountCard(a) {
     const kindLabel = a.kind === 'asset' ? 'Asset' : 'Liability';
@@ -7627,154 +7486,15 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // recurring items/transfers against that account for its payoff chart
   // (never stacks with them) — mutually exclusive with scenario/ad-hoc
   // overrides for that same account, plan always wins.
-  let paymentPlans = {};
-
-  function getPaymentPlan(id) {
-    if (!paymentPlans[id]) {
-      paymentPlans[id] = { enabled: false, minimumInterestOnly: true, supplementaryAmount: 0, supplementaryFrequency: 'monthly' };
-    }
-    return paymentPlans[id];
-  }
-
-  function togglePaymentPlan(id) {
-    const plan = getPaymentPlan(id);
-    plan.enabled = document.getElementById(`plan-enabled-${id}`).checked;
-    const controls = document.getElementById(`plan-controls-${id}`);
-    if (controls) controls.style.display = plan.enabled ? '' : 'none';
-    // A plan change affects both this account's own payoff chart *and*
-    // the combined chart (its supplementary amount + exclusions feed
-    // collectPreviewItems()), so go through the shared refresh entry point
-    // rather than just this one card.
-    refreshOverviewCharts();
-  }
-
-  function refreshPaymentPlan(id) {
-    const plan = getPaymentPlan(id);
-    plan.minimumInterestOnly = document.getElementById(`plan-min-${id}`).checked;
-    plan.supplementaryAmount = parseFloat(document.getElementById(`plan-supp-amount-${id}`).value) || 0;
-    plan.supplementaryFrequency = document.getElementById(`plan-supp-freq-${id}`).value;
-    refreshOverviewCharts();
-  }
-
-  function renderOverviewPayoffCards() {
-    const list = document.getElementById('overview-payoff-list');
-    if (!list) return;
-    const liabilities = accountsCache.filter(a => a.kind === 'liability');
-    if (!liabilities.length) {
-      list.innerHTML = '<div class="empty-state"><span class="icon">&#128179;</span><span>No liability accounts</span></div>';
-      return;
-    }
-    list.innerHTML = liabilities.map(a => {
-      const plan = getPaymentPlan(a.id);
-      return `
-      <div class="card" style="padding:10px 14px;margin-bottom:8px;">
-        <div style="font-weight:600;">${esc(a.name)}</div>
-        <div class="field-label" id="payoff-summary-${a.id}">Loading payoff projection&hellip;</div>
-        <canvas id="payoff-chart-${a.id}"></canvas>
-        <div class="field-label" id="payoff-breakdown-${a.id}" style="margin-top:2px;"></div>
-        <div id="payoff-checkpoint-${a.id}"></div>
-        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">
-          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;">
-            <input type="checkbox" id="plan-enabled-${a.id}" ${plan.enabled ? 'checked' : ''} onchange="togglePaymentPlan('${a.id}')" />
-            Use payment plan <span style="color:var(--text-dim)">(replaces real recurring items for this chart)</span>
-          </label>
-          <div id="plan-controls-${a.id}" style="${plan.enabled ? '' : 'display:none;'}margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;white-space:nowrap;" title="Each month pays exactly that month's accrued interest, holding the balance flat">
-              <input type="checkbox" id="plan-min-${a.id}" ${plan.minimumInterestOnly ? 'checked' : ''} onchange="refreshPaymentPlan('${a.id}')" /> Minimum (interest-only)
-            </label>
-            <input type="number" id="plan-supp-amount-${a.id}" step="0.01" min="0" placeholder="Supplementary $" value="${plan.supplementaryAmount || ''}" style="flex:1;min-width:100px;" onchange="refreshPaymentPlan('${a.id}')" />
-            <select id="plan-supp-freq-${a.id}" style="flex:1;min-width:90px;" onchange="refreshPaymentPlan('${a.id}')">
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Biweekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-            </select>
-          </div>
-        </div>
-      </div>`;
-    }).join('');
-    for (const a of liabilities) {
-      const select = document.getElementById(`plan-supp-freq-${a.id}`);
-      if (select) select.value = getPaymentPlan(a.id).supplementaryFrequency;
-    }
-  }
-
-  // Always fetches the plain, unmodified baseline (real recurring
-  // items/interest, nothing toggled) *and*, when a payment plan is enabled
-  // or scenario/ad-hoc overrides are active for this account, a second
-  // "preview" series — plan and overrides are mutually exclusive per
-  // account (plan always wins), same two-line idea as the combined chart.
-  // Shared by the interactive-chart fetch and the fixed-120-month
-  // checkpoint-summary fetch below — same plan/override branching, just a
-  // different `months` depth each time.
-  async function fetchPayoffPair(id, months, plan, usingPlan, extraItems, excludeRecurringIds, hasOverrides) {
-    const baselineRes = await fetch(`${FINANCES_API}/accounts/${id}/payoff?months=${months}`);
-    if (!baselineRes.ok) throw 0;
-    const baseline = await baselineRes.json();
-
-    let preview = null;
-    if (usingPlan) {
-      const r = await fetch(`${FINANCES_API}/accounts/${id}/payoff/plan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          months,
-          minimum_interest_only: plan.minimumInterestOnly,
-          supplementary_amount: plan.supplementaryAmount,
-          supplementary_frequency: plan.supplementaryFrequency,
-          supplementary_reference_date: null,
-        }),
-      });
-      if (!r.ok) throw 0;
-      preview = await r.json();
-    } else if (hasOverrides) {
-      const r = await fetch(`${FINANCES_API}/accounts/${id}/payoff/preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          months,
-          extra_items: extraItems || [],
-          exclude_recurring_ids: excludeRecurringIds || [],
-        }),
-      });
-      if (!r.ok) throw 0;
-      preview = await r.json();
-    }
-    return { baseline, preview };
-  }
-
-  async function refreshPayoffPanel(id, extraItems, excludeRecurringIds) {
-    const summary = document.getElementById(`payoff-summary-${id}`);
-    if (!summary) return;
-    summary.textContent = 'Loading payoff projection…';
-    const plan = paymentPlans[id];
-    const usingPlan = !!(plan && plan.enabled);
-    const hasOverrides = !usingPlan && ((extraItems && extraItems.length) || (excludeRecurringIds && excludeRecurringIds.length));
-    try {
-      const { baseline, preview } = await fetchPayoffPair(
-        id, projectionMonths, plan, usingPlan, extraItems, excludeRecurringIds, hasOverrides,
-      );
-      lastPayoffPoints[id] = { baseline, preview };
-      renderPayoffChart(id, baseline, preview);
-      renderPayoffBreakdown(id, usingPlan, hasOverrides);
-    } catch (_) {
-      summary.textContent = 'Failed to load payoff projection';
-    }
-
-    try {
-      const summaryPair = await fetchPayoffPair(
-        id, SUMMARY_MONTHS, plan, usingPlan, extraItems, excludeRecurringIds, hasOverrides,
-      );
-      renderCheckpointSummary(`payoff-checkpoint-${id}`, summaryPair.baseline, summaryPair.preview, 'ending_balance');
-    } catch (_) { /* checkpoint summary is supplementary; leave blank on failure */ }
-  }
-
   // Every real recurring item/transfer currently scheduled against this
   // hledger account path — items via their own `account`, transfers via
   // either `to_account` (pays this account down/up) or `from_account`
   // (the reverse). Used purely for display, so a user can see at a glance
-  // that a recurring transfer into a liability already counts toward its
-  // payoff, not just expense/income items.
+  // that a recurring transfer into a liability already counts toward it,
+  // not just expense/income items — this is also how a liability's
+  // minimum payment (a real recurring transfer, set up on the Recurring
+  // tab) always ends up assumed in that account's own baseline below,
+  // with no separate "payment plan" toggle needed.
   const FREQ_ABBR = { weekly: 'wk', biweekly: 'biwk', monthly: 'mo', yearly: 'yr' };
   function scheduledAgainstAccount(hledgerAccount) {
     const matches = [];
@@ -7789,41 +7509,14 @@ A category's overall budget cap is the sum of its allocations — split it acros
     return matches;
   }
 
-  // Shared by the payoff and account-balance breakdowns below — both need
-  // the same "which real items/transfers post against this account"
-  // sentence, just wrapped in different surrounding text.
+  // Shared by every account card's breakdown line below — the same "which
+  // real items/transfers post against this account" sentence.
   function scheduledSummaryText(hledgerAccount) {
     const scheduled = scheduledAgainstAccount(hledgerAccount);
     if (!scheduled.length) return 'nothing scheduled against it';
     return scheduled
       .map(s => `${esc(s.name)} (${s.direction === 'in' ? '+' : '-'}$${Number(s.amount).toFixed(2)}/${FREQ_ABBR[s.frequency] || s.frequency})`)
       .join(', ');
-  }
-
-  // Always states, in plain text, exactly what each line on this card's
-  // chart is built from — a fixed legend, not just a note that appears
-  // when something unusual is active, so "what's contributing to this
-  // chart" never has to be guessed from the controls alone.
-  function renderPayoffBreakdown(id, usingPlan, hasOverrides) {
-    const el = document.getElementById(`payoff-breakdown-${id}`);
-    if (!el) return;
-    const account = accountsCache.find(a => a.id === id);
-    if (!account) { el.innerHTML = ''; return; }
-    const rateText = account.interest_rate != null ? `${Number(account.interest_rate).toFixed(2)}% APR` : 'no interest rate set';
-    const lines = [];
-    if (usingPlan) {
-      lines.push(`Solid = baseline: ${rateText}, real recurring items/transfers, no plan.`);
-      lines.push(`Dashed = payment plan below, which replaces (not stacks with) this account's real items/transfers: ${scheduledSummaryText(accountHledgerPath(account))}.`);
-    } else {
-      // Transfers count here too (into this account pays it down, out of
-      // it makes it worse), not just expense/income items — the reason
-      // this line spells out the schedule instead of just a count.
-      lines.push(`Solid = baseline: ${rateText} + real recurring items/transfers against this account: ${scheduledSummaryText(accountHledgerPath(account))}.`);
-      if (hasOverrides) {
-        lines.push('Dashed = baseline plus currently checked scenarios/ad-hoc items (see Saved Scenarios above).');
-      }
-    }
-    el.innerHTML = lines.join('<br>');
   }
 
   // Points are daily now, so `points.length` is a day count, not a month
@@ -7836,143 +7529,56 @@ A category's overall budget cap is the sum of its allocations — split it acros
     return `${months} month${months === 1 ? '' : 's'}`;
   }
 
-  function renderPayoffChart(id, baseline, preview) {
-    const summary = document.getElementById(`payoff-summary-${id}`);
-    const summaryPoints = preview || baseline;
-    if (!summaryPoints.length) {
-      summary.textContent = 'No projection available';
-      return;
-    }
-    const last = summaryPoints[summaryPoints.length - 1];
-    const span = friendlySpan(summaryPoints[0].period_start, last.period_end);
-    const suffix = preview ? ' (preview)' : '';
-    summary.textContent = last.ending_balance >= 0
-      ? `Paid off by ${last.period_end} (${span})${suffix}`
-      : `Not paid off within ${span}${suffix} — balance would be $${last.ending_balance.toFixed(2)}`;
+  // Every account (asset and liability alike) gets its own chart card,
+  // always rendered — no opt-in checklist — so a single account's own
+  // trend is always readable on its own scale, one chart per account
+  // rather than everything crammed onto shared axes.
+  let accountCharts = {};
+  // Per-account fetched series, keyed by account id: `{ kind, chart:
+  // {baseline, preview}, summary: {baseline, preview} }` — `chart` is at
+  // the interactive `projectionMonths` depth, `summary` is the fixed
+  // 120-month depth used for checkpoint tiles. The Net Worth chart sums
+  // across this same cache rather than fetching its own combined series.
+  let lastAccountPoints = {};
 
-    const labelSource = (preview && preview.length > baseline.length) ? preview : baseline;
-    const datasets = [{
-      label: 'Baseline (real payments)',
-      data: baseline.map(p => p.ending_balance),
-      borderColor: '#6ec1ff',
-      backgroundColor: 'rgba(110,193,255,0.12)',
-      tension: 0.25,
-      fill: true,
-    }];
-    if (preview) {
-      datasets.push({
-        label: 'Preview (plan/scenario)',
-        data: preview.map(p => p.ending_balance),
-        borderColor: '#e8a33d',
-        backgroundColor: 'rgba(232,163,61,0.10)',
-        borderDash: [6, 4],
-        tension: 0.25,
-        fill: false,
-      });
-    }
-    const trend = trendlineDataset(baseline, 'ending_balance');
-    if (trend) datasets.push(trend);
-    const draw = () => {
-      const ctx = document.getElementById(`payoff-chart-${id}`);
-      if (!ctx) return;
-      if (payoffCharts[id]) payoffCharts[id].destroy();
-      payoffCharts[id] = new window.Chart(ctx, {
-        type: 'line',
-        data: { labels: labelSource.map(p => p.period_start), datasets },
-        options: {
-          responsive: true,
-          maintainAspectRatio: true,
-          aspectRatio: chartAspectRatio(),
-          plugins: { legend: { display: true, labels: { color: '#a89b86' } } },
-          scales: {
-            x: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-            y: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
-          },
-        },
-      });
-    };
-    if (window.Chart) {
-      draw();
-    } else {
-      const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
-      s.onload = draw;
-      document.head.appendChild(s);
-    }
+  function accountValueField(kind) {
+    return kind === 'liability' ? 'ending_balance' : 'balance';
   }
 
-  // Which accounts get a balance-over-time chart on the Overview tab — an
-  // opt-in checklist (like saved scenarios), not automatic for every
-  // account. Ephemeral, client-side only — never persisted, reset on reload
-  // like `paymentPlans`/`previewRowKeys`.
-  let chartedAccountIds = new Set();
-  let accountBalanceCharts = {};
-  let lastAccountBalancePoints = {};
-
-  function renderAccountBalanceChecklist() {
-    const el = document.getElementById('account-balance-checklist');
-    if (!el) return;
+  function renderOverviewAccountList() {
+    const list = document.getElementById('overview-account-list');
+    if (!list) return;
     if (!accountsCache.length) {
-      el.innerHTML = '<div class="field-label">No accounts yet</div>';
+      list.innerHTML = '<div class="empty-state"><span class="icon">&#127974;</span><span>No accounts yet</span></div>';
       return;
     }
-    // Drop any charted id for an account that no longer exists (deleted
-    // since it was checked).
-    chartedAccountIds = new Set([...chartedAccountIds].filter(id => accountsCache.some(a => a.id === id)));
-    el.innerHTML = accountsCache.map(a => `
-      <label style="display:flex;align-items:center;gap:5px;font-size:0.82rem;padding:4px 8px;border:1px dashed var(--border);border-radius:var(--radius-sm);cursor:pointer;">
-        <input type="checkbox" ${chartedAccountIds.has(a.id) ? 'checked' : ''} onchange="toggleChartedAccount('${a.id}')" />
-        ${esc(a.name)}
-      </label>`).join('');
-  }
-
-  function toggleChartedAccount(id) {
-    if (chartedAccountIds.has(id)) {
-      chartedAccountIds.delete(id);
-      if (accountBalanceCharts[id]) { accountBalanceCharts[id].destroy(); delete accountBalanceCharts[id]; }
-      delete lastAccountBalancePoints[id];
-      renderAccountBalanceCards();
-    } else {
-      chartedAccountIds.add(id);
-      renderAccountBalanceCards();
-      const { items, excludeRecurringIds } = collectPreviewItems();
-      refreshAccountBalancePanel(id, items, excludeRecurringIds);
-    }
-  }
-
-  function renderAccountBalanceCards() {
-    const container = document.getElementById('account-balance-cards');
-    if (!container) return;
-    if (!chartedAccountIds.size) {
-      container.innerHTML = '';
-      return;
-    }
-    container.innerHTML = [...chartedAccountIds].map(id => {
-      const a = accountsCache.find(acc => acc.id === id);
-      if (!a) return '';
-      return `
+    list.innerHTML = accountsCache.map(a => `
       <div class="card" style="padding:10px 14px;margin-bottom:8px;">
-        <div style="font-weight:600;">${esc(a.name)}</div>
-        <div class="field-label" id="account-balance-summary-${id}">Loading balance history&hellip;</div>
-        <canvas id="account-balance-chart-${id}"></canvas>
-        <div class="field-label" id="account-balance-breakdown-${id}" style="margin-top:2px;"></div>
-        <div id="account-balance-checkpoint-${id}"></div>
-      </div>`;
-    }).join('');
+        <div style="font-weight:600;">${esc(a.name)} <span class="field-label">(${a.kind === 'asset' ? 'Asset' : 'Liability'})</span></div>
+        <div class="field-label" id="acct-summary-${a.id}">Loading&hellip;</div>
+        <canvas id="acct-chart-${a.id}"></canvas>
+        <div class="field-label" id="acct-breakdown-${a.id}" style="margin-top:2px;"></div>
+        <div id="acct-checkpoint-${a.id}"></div>
+      </div>`).join('');
   }
 
-  // Mirrors `fetchPayoffPair` — a plain baseline fetch, plus an optional
-  // preview fetch when scenarios/ad-hoc items are active. No payment-plan
-  // concept here (that's payoff-specific); just the same additive overlay
-  // the combined chart uses.
-  async function fetchAccountBalancePair(id, months, extraItems, excludeRecurringIds, hasOverrides) {
-    const baselineRes = await fetch(`${FINANCES_API}/accounts/${id}/history?months=${months}`);
+  // Liability accounts read interest-aware `debt_payoff_projection` math
+  // (`/payoff`, `/payoff/preview`); asset accounts read the plain
+  // hledger-forecast `account_balance_history` math (`/history`,
+  // `/history/preview`) — both preview endpoints already accept the exact
+  // same `{months, extra_items, exclude_recurring_ids}` body shape, so one
+  // fetch function covers both, just pointed at a different base path.
+  async function fetchAccountPair(account, months, extraItems, excludeRecurringIds, hasOverrides) {
+    const base = account.kind === 'liability'
+      ? `${FINANCES_API}/accounts/${account.id}/payoff`
+      : `${FINANCES_API}/accounts/${account.id}/history`;
+    const baselineRes = await fetch(`${base}?months=${months}`);
     if (!baselineRes.ok) throw 0;
     const baseline = await baselineRes.json();
 
     let preview = null;
     if (hasOverrides) {
-      const r = await fetch(`${FINANCES_API}/accounts/${id}/history/preview`, {
+      const r = await fetch(`${base}/preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -7987,38 +7593,59 @@ A category's overall budget cap is the sum of its allocations — split it acros
     return { baseline, preview };
   }
 
-  async function refreshAccountBalancePanel(id, extraItems, excludeRecurringIds) {
-    const summary = document.getElementById(`account-balance-summary-${id}`);
+  async function refreshAccountPanel(account, extraItems, excludeRecurringIds) {
+    const id = account.id;
+    const summary = document.getElementById(`acct-summary-${id}`);
     if (!summary) return;
-    summary.textContent = 'Loading balance history…';
+    summary.textContent = 'Loading projection…';
     const hasOverrides = !!((extraItems && extraItems.length) || (excludeRecurringIds && excludeRecurringIds.length));
     try {
-      const { baseline, preview } = await fetchAccountBalancePair(id, projectionMonths, extraItems, excludeRecurringIds, hasOverrides);
-      lastAccountBalancePoints[id] = { baseline, preview };
-      renderAccountBalanceChart(id, baseline, preview);
-      const breakdown = document.getElementById(`account-balance-breakdown-${id}`);
-      if (breakdown) {
-        const account = accountsCache.find(a => a.id === id);
-        const lines = account
-          ? [`Solid = baseline: real transactions plus real recurring items/transfers against this account: ${scheduledSummaryText(accountHledgerPath(account))}.`]
-          : [];
-        if (hasOverrides) {
-          lines.push('Dashed = baseline plus currently checked scenarios/ad-hoc items (see Saved Scenarios above).');
-        }
-        breakdown.innerHTML = lines.join('<br>');
-      }
+      const { baseline, preview } = await fetchAccountPair(account, projectionMonths, extraItems, excludeRecurringIds, hasOverrides);
+      lastAccountPoints[id] = lastAccountPoints[id] || {};
+      lastAccountPoints[id].kind = account.kind;
+      lastAccountPoints[id].chart = { baseline, preview };
+      renderAcctChart(account, baseline, preview);
+      renderAcctBreakdown(account, hasOverrides);
     } catch (_) {
-      summary.textContent = 'Failed to load balance history';
+      summary.textContent = 'Failed to load projection';
     }
 
     try {
-      const summaryPair = await fetchAccountBalancePair(id, SUMMARY_MONTHS, extraItems, excludeRecurringIds, hasOverrides);
-      renderCheckpointSummary(`account-balance-checkpoint-${id}`, summaryPair.baseline, summaryPair.preview, 'balance');
+      const summaryPair = await fetchAccountPair(account, SUMMARY_MONTHS, extraItems, excludeRecurringIds, hasOverrides);
+      lastAccountPoints[id] = lastAccountPoints[id] || {};
+      lastAccountPoints[id].kind = account.kind;
+      lastAccountPoints[id].summary = summaryPair;
+      renderCheckpointSummary(`acct-checkpoint-${id}`, summaryPair.baseline, summaryPair.preview, accountValueField(account.kind));
     } catch (_) { /* checkpoint summary is supplementary; leave blank on failure */ }
   }
 
-  function renderAccountBalanceChart(id, baseline, preview) {
-    const summary = document.getElementById(`account-balance-summary-${id}`);
+  // Always states, in plain text, exactly what this card's chart is built
+  // from — a fixed legend, not just a note that appears when something
+  // unusual is active, so "what's contributing to this chart" never has
+  // to be guessed.
+  function renderAcctBreakdown(account, hasOverrides) {
+    const el = document.getElementById(`acct-breakdown-${account.id}`);
+    if (!el) return;
+    const hledgerAccount = accountHledgerPath(account);
+    const lines = [];
+    if (account.kind === 'liability') {
+      const rateText = account.interest_rate != null ? `${Number(account.interest_rate).toFixed(2)}% APR` : 'no interest rate set';
+      // Transfers count here too (into this account pays it down, out of
+      // it makes it worse), not just expense/income items.
+      lines.push(`Solid = baseline: ${rateText} + real recurring items/transfers against this account: ${scheduledSummaryText(hledgerAccount)}.`);
+    } else {
+      lines.push(`Solid = baseline: real transactions plus real recurring items/transfers against this account: ${scheduledSummaryText(hledgerAccount)}.`);
+    }
+    if (hasOverrides) {
+      lines.push('Dashed = baseline plus currently checked scenarios (see Saved Scenarios above).');
+    }
+    el.innerHTML = lines.join('<br>');
+  }
+
+  function renderAcctChart(account, baseline, preview) {
+    const id = account.id;
+    const valueField = accountValueField(account.kind);
+    const summary = document.getElementById(`acct-summary-${id}`);
     const summaryPoints = preview || baseline;
     if (!summary) return;
     if (!summaryPoints.length) {
@@ -8027,12 +7654,19 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
     const last = summaryPoints[summaryPoints.length - 1];
     const suffix = preview ? ' (preview)' : '';
-    summary.textContent = `Projected balance by ${last.period_end}: $${last.balance.toFixed(2)}${suffix}`;
+    if (account.kind === 'liability') {
+      const span = friendlySpan(summaryPoints[0].period_start, last.period_end);
+      summary.textContent = last.ending_balance >= 0
+        ? `Paid off by ${last.period_end} (${span})${suffix}`
+        : `Not paid off within ${span}${suffix} — balance would be $${last.ending_balance.toFixed(2)}`;
+    } else {
+      summary.textContent = `Projected balance by ${last.period_end}: $${last.balance.toFixed(2)}${suffix}`;
+    }
 
     const labelSource = (preview && preview.length > baseline.length) ? preview : baseline;
     const datasets = [{
-      label: 'Baseline (real accounts)',
-      data: baseline.map(p => p.balance),
+      label: 'Baseline (real)',
+      data: baseline.map(p => p[valueField]),
       borderColor: '#6ec1ff',
       backgroundColor: 'rgba(110,193,255,0.12)',
       tension: 0.25,
@@ -8040,8 +7674,8 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }];
     if (preview) {
       datasets.push({
-        label: 'Preview scenario',
-        data: preview.map(p => p.balance),
+        label: 'Preview (scenario)',
+        data: preview.map(p => p[valueField]),
         borderColor: '#e8a33d',
         backgroundColor: 'rgba(232,163,61,0.10)',
         borderDash: [6, 4],
@@ -8049,13 +7683,13 @@ A category's overall budget cap is the sum of its allocations — split it acros
         fill: false,
       });
     }
-    const trend = trendlineDataset(baseline, 'balance');
+    const trend = trendlineDataset(baseline, valueField);
     if (trend) datasets.push(trend);
     const draw = () => {
-      const ctx = document.getElementById(`account-balance-chart-${id}`);
+      const ctx = document.getElementById(`acct-chart-${id}`);
       if (!ctx) return;
-      if (accountBalanceCharts[id]) accountBalanceCharts[id].destroy();
-      accountBalanceCharts[id] = new window.Chart(ctx, {
+      if (accountCharts[id]) accountCharts[id].destroy();
+      accountCharts[id] = new window.Chart(ctx, {
         type: 'line',
         data: { labels: labelSource.map(p => p.period_start), datasets },
         options: {
