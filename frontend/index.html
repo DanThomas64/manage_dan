@@ -1292,6 +1292,7 @@
       align-items: center;
       padding: 24px;
       overflow-y: auto;
+      overscroll-behavior-y: contain;
     }
     .home-hero-inner {
       margin: auto 0;
@@ -2124,7 +2125,7 @@
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn-primary" id="btn-todo-submit" style="flex:1;padding:10px;" onclick="submitTodo()">Save Todo</button>
-        <button class="btn-ghost btn-sm" id="btn-todo-cancel-edit" style="display:none;" onclick="todoResetForm(); todoShowTab('list')">Cancel</button>
+        <button class="btn-ghost btn-sm" id="btn-todo-cancel-edit" style="display:none;" onclick="todoCancelEdit()">Cancel</button>
       </div>
     </div>
   </div>
@@ -3885,6 +3886,59 @@ A category's overall budget cap is the sum of its allocations — split it acros
     elements.forEach(initSwipeReveal);
   }
 
+  // ── Pull-to-refresh (Home only) ─────────────────────────────────────────────
+  // Native pull-to-refresh is suppressed on .home-hero via overscroll-behavior-y:
+  // contain (CSS), so this owns the gesture fully — deliberately a much larger
+  // pull than a stock browser threshold (~60-80px) so an accidental brush near
+  // the top of Home's tile list can't trigger a reload; only a slow, sustained
+  // pull does, and releasing early springs back to the original position.
+  const PTR_THRESHOLD = 140; // px of raw finger travel required
+  const PTR_RESISTANCE = 0.5; // visual drag lags behind the finger past this factor
+  const PTR_MAX_VISUAL = 100; // clamp on the visible translateY
+
+  function initPullToRefresh(el) {
+    let startY = 0, axis = null, pulling = false;
+
+    el.addEventListener('touchstart', e => {
+      if (el.scrollTop > 0) { axis = null; pulling = false; return; }
+      startY = e.touches[0].clientY;
+      axis = null;
+      pulling = false;
+      el.style.transition = 'none';
+    }, { passive: true });
+
+    el.addEventListener('touchmove', e => {
+      if (el.scrollTop > 0) return;
+      const dy = e.touches[0].clientY - startY;
+      if (!axis) {
+        if (Math.abs(dy) < 8) return;
+        axis = dy > 0 ? 'pull' : 'other';
+      }
+      if (axis !== 'pull') return;
+      pulling = true;
+      const visual = Math.min(PTR_MAX_VISUAL, dy * PTR_RESISTANCE);
+      el.style.transform = `translateY(${visual}px)`;
+    }, { passive: true });
+
+    el.addEventListener('touchend', () => {
+      if (!pulling) return;
+      pulling = false;
+      const match = /translateY\(([\d.]+)px\)/.exec(el.style.transform || '');
+      const visual = match ? parseFloat(match[1]) : 0;
+      el.style.transition = 'transform 0.25s ease';
+      el.style.transform = '';
+      if (visual >= PTR_THRESHOLD * PTR_RESISTANCE) {
+        location.reload();
+      }
+    }, { passive: true });
+
+    el.addEventListener('touchcancel', () => {
+      pulling = false;
+      el.style.transition = 'transform 0.25s ease';
+      el.style.transform = '';
+    });
+  }
+
   function closeAllSwipeReveals() {
     document.querySelectorAll('.swiped').forEach(el => el.classList.remove('swiped'));
   }
@@ -3980,7 +4034,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // ── Start ──────────────────────────────────────────────────────────────────
   init();
   restoreFormState();
-  restoreLastView();
+  const restoredViewExtra = restoreLastView();
   loadAppVersions();
   setInterval(loadAppVersions, 60000);
   // Deferred, not called directly here: renderHomeFavourites() calls
@@ -3991,6 +4045,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // through would throw; setTimeout(...,0) defers to after the whole script
   // has finished its first pass, once everything is actually initialized.
   setTimeout(renderHomeFavourites, 0);
+  initPullToRefresh(document.querySelector('.home-hero'));
 
   // ═══════════════════════════════════════════════════════════════════════════
   // APP NAVIGATION (Home / Lists / Notes / Log — full-screen overlays)
@@ -3998,9 +4053,14 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   const OVERLAY_IDS = { home: 'home-overlay', lists: 'lists-overlay', notes: 'notes-overlay', log: 'log-overlay', todo: 'todo-overlay', finances: 'finances-overlay', projects: 'projects-overlay', 'project-detail': 'project-detail-overlay' };
   let currentView = 'home';
+  // Declared here (rather than alongside currentProjectDetail/currentProjectMeta
+  // further below) because showView()'s `changed` check reads it, and showView
+  // can run at boot via restoreLastView() before the rest of the Project
+  // Detail section's own `let`s further down the script have initialized.
+  let currentProjectDetailId = null;
 
   function showView(view, fromPopState, extra) {
-    const changed = view !== currentView;
+    const changed = view !== currentView || (view === 'project-detail' && extra && extra.projectId !== currentProjectDetailId);
     currentView = view;
     Object.entries(OVERLAY_IDS).forEach(([v, id]) => {
       document.getElementById(id).classList.toggle('active', v === view);
@@ -4137,19 +4197,32 @@ A category's overall budget cap is the sum of its allocations — split it acros
   function restoreLastView() {
     try {
       const raw = sessionStorage.getItem('lastView');
-      if (!raw) return;
+      if (!raw) return null;
       const { view, extra } = JSON.parse(raw);
-      if (!view || view === 'home') return;
+      if (!view || view === 'home') return null;
       showView(view, true, extra);
       if (view === 'notes') { const t = sessionStorage.getItem('notesTab'); if (t) notesShowTab(t); }
       if (view === 'log')   { const t = sessionStorage.getItem('logTab');   if (t) logShowTab(t); }
       if (view === 'todo')  { const t = sessionStorage.getItem('todoTab');  if (t) todoShowTab(t); }
-    } catch (_) {}
+      return extra || null;
+    } catch (_) { return null; }
   }
 
   window.addEventListener('popstate', (e) => {
     const state = e.state || { view: 'home' };
-    showView(state.view, true, state);
+    // A project-detail history entry with no projectId (a stale pre-fix
+    // entry, or one that lost it via the boot-time replaceState below) can't
+    // be resolved — fall back to the last project actually loaded this
+    // session, or Home, rather than showing "Failed to load project".
+    if (state.view === 'project-detail' && state.projectId == null) {
+      if (currentProjectDetailId != null) {
+        showView('project-detail', true, { projectId: currentProjectDetailId });
+      } else {
+        showView('home', true);
+      }
+    } else {
+      showView(state.view, true, state);
+    }
     if (state.view === 'lists' && isMobile()) {
       const inPanel = document.getElementById('main').classList.contains('show-panel');
       if (state.panel && state.categoryId) {
@@ -4161,7 +4234,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
       }
     }
   });
-  history.replaceState({ view: currentView }, '', '#' + currentView);
+  // Preserves whatever `extra` (e.g. projectId) restoreLastView() just
+  // restored — previously this unconditionally reconstructed state from
+  // `currentView` alone, dropping it, so a reload mid-Project-Detail left a
+  // base history entry with no projectId for a later popstate to recover.
+  history.replaceState(Object.assign({ view: currentView }, restoredViewExtra), '', '#' + currentView + (restoredViewExtra && restoredViewExtra.projectId ? '/' + restoredViewExtra.projectId : ''));
 
   // ═══════════════════════════════════════════════════════════════════════════
   // NOTES
@@ -4794,7 +4871,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
   }
 
   function notesCloseViewer() {
-    if (notesViewerFromTab === 'project-detail') { history.back(); return; }
+    if (pendingProjectReturnId != null) {
+      const pid = pendingProjectReturnId; pendingProjectReturnId = null;
+      showView('project-detail', false, { projectId: pid });
+      return;
+    }
     notesShowTab(notesViewerFromTab === 'search' ? 'search' : 'browse');
   }
 
@@ -4815,6 +4896,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
   }
 
   function notesCancelEdit() {
+    if (pendingProjectReturnId != null) {
+      const pid = pendingProjectReturnId; pendingProjectReturnId = null;
+      showView('project-detail', false, { projectId: pid });
+      return;
+    }
     notesRenderViewer(notesCurrentNote);
     document.querySelectorAll('.notes-panel').forEach(p => p.classList.remove('active'));
     document.getElementById('npanel-viewer').classList.add('active');
@@ -4965,7 +5051,12 @@ A category's overall budget cap is the sum of its allocations — split it acros
       document.getElementById('log-tags').value = '';
       clearFormState('lpanel-add');
       toast('Log entry saved');
-      logShowTab('recent');
+      if (pendingProjectReturnId != null) {
+        const pid = pendingProjectReturnId; pendingProjectReturnId = null;
+        showView('project-detail', false, { projectId: pid });
+      } else {
+        logShowTab('recent');
+      }
     } catch (_) {
       toast('Failed to save log entry', true);
     }
@@ -5088,6 +5179,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
     clearFormState('tpanel-add');
   }
 
+  function todoCancelEdit() {
+    todoResetForm();
+    if (pendingProjectReturnId != null) {
+      const pid = pendingProjectReturnId; pendingProjectReturnId = null;
+      showView('project-detail', false, { projectId: pid });
+    } else {
+      todoShowTab('list');
+    }
+  }
+
   function todoEditTodo(id) {
     const item = todoItems.find(t => t.id === id);
     if (!item) return;
@@ -5183,7 +5284,12 @@ A category's overall budget cap is the sum of its allocations — split it acros
       if (!r.ok) throw 0;
       toast(editing ? 'Todo updated' : 'Todo saved');
       todoResetForm();
-      todoShowTab('list');
+      if (pendingProjectReturnId != null) {
+        const pid = pendingProjectReturnId; pendingProjectReturnId = null;
+        showView('project-detail', false, { projectId: pid });
+      } else {
+        todoShowTab('list');
+      }
     } catch (_) {
       toast(editing ? 'Failed to update todo' : 'Failed to save todo', true);
     }
@@ -5402,9 +5508,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // pre-selected. Consumed (cleared) on read.
   let pendingProjectContext = null;
 
-  function addTodoForProject(id) { pendingProjectContext = id; showView('todo'); }
-  function addNoteForProject(id) { pendingProjectContext = id; showView('notes'); }
-  function addLogForProject(id)  { pendingProjectContext = id; showView('log'); }
+  // Project to jump back to after Save/Complete/Cancel, set whenever the user
+  // leaves Project Detail into Todo/Notes/Log. Distinct from
+  // pendingProjectContext above (that one pre-fills the Add form going
+  // forward; this one is consumed on the way back) — both may be set at once.
+  // Consumed (cleared) on read.
+  let pendingProjectReturnId = null;
+
+  function addTodoForProject(id) { pendingProjectContext = id; pendingProjectReturnId = currentProjectDetailId; showView('todo', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined); }
+  function addNoteForProject(id) { pendingProjectContext = id; pendingProjectReturnId = currentProjectDetailId; showView('notes', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined); }
+  function addLogForProject(id)  { pendingProjectContext = id; pendingProjectReturnId = currentProjectDetailId; showView('log', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined); }
 
   // Set by a Home tile's "+" quick-add button before navigating to the
   // Todo/Notes/Log overlay, so that overlay's onOpen handler jumps straight
@@ -5426,7 +5539,8 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (!item) return;
     const idx = todoItems.findIndex(t => t.id === id);
     if (idx >= 0) todoItems[idx] = item; else todoItems.push(item);
-    showView('todo');
+    pendingProjectReturnId = currentProjectDetailId;
+    showView('todo', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined);
     todoEditTodo(id);
   }
 
@@ -5562,7 +5676,6 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
   }
 
-  let currentProjectDetailId = null;
   // The last-loaded /detail payload — kept around so pdEditTodo() can look
   // up a todo's full data without a second fetch (see below).
   let currentProjectDetail = null;
@@ -5678,7 +5791,8 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // of Notes by default, so that has to be switched off here or the filter
   // would strip out every note in the very notebook being requested.
   async function openProjectNotes(slug) {
-    showView('notes');
+    pendingProjectReturnId = currentProjectDetailId;
+    showView('notes', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined);
     notesHideProjectItems = false;
     updateNotesProjectCheck();
     await ensureProjectsLoaded();
