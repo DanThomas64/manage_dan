@@ -23,7 +23,7 @@ use std::sync::OnceLock;
 use chrono::Local;
 use tracing::{info, warn};
 
-use crate::models::{Subtask, TodoItem};
+use crate::models::{Subtask, TodoItem, TodoStatus};
 use crate::todo_error::{TodoLibError, TodoLibResult};
 use printer::PrintJob;
 
@@ -93,6 +93,12 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
 
     lines.push(info_row);
 
+    // Progress status — only shown once actually set (NotStarted is the
+    // common case and would just be noise on every ticket).
+    if item.status != TodoStatus::NotStarted {
+        lines.push(format!("Status: {}", item.status.label()));
+    }
+
     if !item.labels.is_empty() {
         lines.push(format!("Labels: {}", item.labels.join(", ")));
     }
@@ -143,19 +149,39 @@ pub(crate) async fn print_ticket(item: &TodoItem) -> printer::printer_error::Pri
         .await
 }
 
-pub(crate) async fn print_ticket_on_creation(item: &mut TodoItem) -> TodoLibResult {
+/// Prints a ticket for `item` if `should_print` is true, and either way
+/// leaves `printed_tasks` seeded with the item's current content hash —
+/// shared by both create and update, since both now carry an explicit
+/// caller-supplied "should this print?" flag (create defaults it to true,
+/// update defaults it to false; see `create_item`/`update_item`).
+///
+/// When `should_print` is false, seeding the claim (without printing) is
+/// what actually suppresses printing: the background print monitor
+/// (`monitor::poll`) decides "does this need printing" purely by comparing
+/// an item's current content hash against whatever's stored here — if the
+/// caller declined to print but left the old hash in place, the monitor
+/// would see a mismatch on its very next poll and print it anyway.
+pub(crate) async fn print_ticket_if_requested(item: &mut TodoItem, should_print: bool) -> TodoLibResult {
     if item.completed || item.archived {
         return Ok(());
     }
 
     let id = item.id.unwrap_or(0);
-    info!("Attempting to print ticket for newly created Todo ID {}", id);
+    let hash = crate::monitor::content_hash(item);
+
+    if !should_print {
+        if let Err(e) = db::printed_claim(id, hash).await {
+            warn!("Failed to seed print-suppression claim for Todo {}: {}", id, e);
+        }
+        return Ok(());
+    }
+
+    info!("Attempting to print ticket for Todo ID {}", id);
 
     // Claim the print atomically before doing it. Backends like `nb` shell
     // out several times during creation, which takes long enough for the
     // background print monitor's own poll to see the new item first and
     // print it — whichever side claims the hash wins, the other skips.
-    let hash = crate::monitor::content_hash(item);
     match db::printed_claim(id, hash).await {
         Ok(true) => {}
         Ok(false) => {
@@ -210,6 +236,7 @@ fn from_cache_row(row: db::models::TodoCacheRow) -> TodoItem {
         project_title: row.project_title,
         labels: row.labels,
         reminders: row.reminders,
+        status: crate::models::TodoStatus::from_u8(row.status),
     }
 }
 
@@ -236,8 +263,8 @@ async fn sync_one(id: i64) -> Option<TodoItem> {
 }
 
 /// Creates a new TodoItem and prints a ticket.
-pub async fn create_item(item: TodoItem) -> TodoLibResult<TodoItem> {
-    let result = backends::nb::create_item(notebook(), item).await?;
+pub async fn create_item(item: TodoItem, print: bool) -> TodoLibResult<TodoItem> {
+    let result = backends::nb::create_item(notebook(), item, print).await?;
     if let Err(e) = cache_upsert(&result, None).await {
         warn!("create_item: failed to sync cache for todo {:?}: {}", result.id, e);
     }
@@ -263,12 +290,18 @@ pub async fn read_items_by_project(project_title: &str) -> TodoLibResult<Vec<Tod
     Ok(rows.into_iter().map(from_cache_row).collect())
 }
 
-/// Updates a TodoItem, replacing its subtasks entirely.
-pub async fn update_item(item: TodoItem) -> TodoLibResult {
+/// Updates a TodoItem, replacing its subtasks entirely. `print` controls
+/// whether this edit reprints the ticket — see `print_ticket_if_requested`;
+/// callers typically default this to `false` for an edit (unlike creation,
+/// which defaults to `true`), since printing a fresh ticket for every minor
+/// edit would be far noisier than printing one on creation.
+pub async fn update_item(item: TodoItem, print: bool) -> TodoLibResult {
     let id = item.id;
     backends::nb::update_item(notebook(), item).await?;
     if let Some(id) = id {
-        sync_one(id).await;
+        if let Some(mut updated) = sync_one(id).await {
+            print_ticket_if_requested(&mut updated, print).await?;
+        }
     }
     Ok(())
 }
@@ -288,6 +321,56 @@ pub async fn complete_item(id: i64, completed: bool) -> TodoLibResult {
     }
 
     Ok(())
+}
+
+/// Changes a task's progress status (see `TodoStatus`) — independent of
+/// `completed`; a longer-running task can be marked `InProgress`/`Blocked`
+/// well before it's actually done. On an actual transition (not a no-op
+/// call with the item's current status), also prints a dedicated
+/// status-change ticket — see `print_status_change_ticket` — best-effort,
+/// same reasoning as `log_completion`: the status change itself already
+/// succeeded, so a print failure only warns, it doesn't fail the call.
+pub async fn set_status(id: i64, status: TodoStatus) -> TodoLibResult {
+    let old_status = get_item(id).await.map(|i| i.status).unwrap_or(TodoStatus::NotStarted);
+
+    backends::nb::set_status(notebook(), id, status).await?;
+
+    let updated = sync_one(id).await;
+
+    if status != old_status {
+        if let Some(item) = updated {
+            print_status_change_ticket(&item, status).await;
+        }
+    }
+
+    Ok(())
+}
+
+/// Prints a dedicated ticket announcing a status change — the new status in
+/// big, bold text (reusing `PrintJob.title`, which already gets
+/// bold+double-strike centered treatment on USB prints) plus the task's own
+/// title (reusing `PrintJob.origin`, which already gets double-height +
+/// underline treatment) and the same QR code the task's detail/complete
+/// page uses (`manage-dan://todo/<id>`) — reusing both existing struct
+/// roles needs no new escpos formatting code.
+async fn print_status_change_ticket(item: &TodoItem, new_status: TodoStatus) {
+    let id = item.id.unwrap_or(0);
+    let width = printer::line_width();
+    let sep = "-".repeat(width);
+
+    let mut lines = vec![format!("Todo #{}", id), sep];
+    if let Some(project) = &item.project_title {
+        lines.push(format!("Project: {}", project));
+    }
+    lines.push(String::new());
+    lines.push(format!("Status changed to: {}", new_status.label()));
+
+    let job = PrintJob::new(item.title.clone(), new_status.label().to_string(), lines)
+        .with_qr(format!("manage-dan://todo/{}", id));
+
+    if let Err(e) = job.execute(0, 0).await {
+        warn!("Failed to print status-change ticket for Todo {}: {}", id, e);
+    }
 }
 
 /// Logs a todo's completion as a daily-log entry (the same `nb log`
@@ -408,6 +491,7 @@ pub(crate) async fn cache_upsert(item: &TodoItem, source_mtime: Option<chrono::D
         archived: item.archived,
         source_mtime,
         synced_at: Local::now(),
+        status: item.status.as_u8(),
     };
     db::todo_cache_upsert(row).await.map_err(|e| TodoLibError::Db(e.to_string()))
 }

@@ -63,12 +63,28 @@ pub async fn create(req: CreateNoteRequest) -> NotesLibResult<Note> {
     let notebook = req.notebook.as_deref().unwrap_or("home");
     let tags = req.tags.unwrap_or_default();
     let nb_id = nb_client::nb_add(notebook, title, &req.content, &tags).await?;
-    // A freshly created note always lands at the notebook's root — there's
-    // no `folder` field on `CreateNoteRequest` (moving into a folder is a
-    // separate, deliberate action, see `move_note`).
-    let note = nb_client::nb_show(notebook, "", nb_id).await?;
+    let folder = req
+        .folder
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .trim_matches('/');
+    let note = if folder.is_empty() {
+        nb_client::nb_show(notebook, "", nb_id).await?
+    } else {
+        // `nb add` has no folder-targeting flag, so the note always lands at
+        // the notebook's root first (above) — land it into the requested
+        // folder with an immediate move, same as the notes-tree "Move"
+        // action. `nb_add_folder` best-effort creates the destination if it
+        // doesn't already exist (a no-op otherwise), mirroring the "+ New
+        // folder" flow the Move menu already offers.
+        nb_client::nb_add_folder(notebook, folder).await?;
+        let dest = format!("{}:{}/", notebook, folder);
+        let (new_folder, new_id) = nb_client::nb_move(notebook, "", nb_id, &dest).await?;
+        nb_client::nb_show(notebook, &new_folder, new_id).await?
+    };
     if let Err(e) = db::note_cache_upsert(to_cache_row(&note, None)).await {
-        warn!("create: failed to sync cache for note {}:{}: {}", notebook, nb_id, e);
+        warn!("create: failed to sync cache for note {}:{}: {}", notebook, note.nb_id, e);
     }
     Ok(note)
 }

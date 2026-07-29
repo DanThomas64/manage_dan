@@ -41,13 +41,14 @@ async fn archive_then_restore_then_delete() {
     // A todo and a note, both scoped to the project.
     let mut item = todo::models::TodoItem::new("scoped todo".to_string(), String::new());
     item.project_title = Some(slug.to_string());
-    todo::create_item(item).await.expect("create scoped todo");
+    todo::create_item(item, true).await.expect("create scoped todo");
 
     notes::create(notes::CreateNoteRequest {
         title: Some("scoped note".to_string()),
         content: "body".to_string(),
         tags: Some(vec![created.tag.clone()]),
         notebook: Some(slug.to_string()),
+        folder: None,
     })
     .await
     .expect("create scoped note");

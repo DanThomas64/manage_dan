@@ -50,6 +50,10 @@ pub struct TodoCacheRow {
     /// skip re-reading/re-parsing files that haven't changed since.
     pub source_mtime: Option<DateTime<Local>>,
     pub synced_at: DateTime<Local>,
+    /// 0=Not Started, 1=In Progress, 2=Blocked — mirrors `todo::models::TodoStatus`'s
+    /// own `as_u8`/`from_u8`; kept as a plain `u8` here since `db` doesn't
+    /// depend on the `todo` crate.
+    pub status: u8,
 }
 
 /// A local mirror of a `notes::models::Note`, minus its full `content` —

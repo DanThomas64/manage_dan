@@ -10,6 +10,50 @@ pub struct Subtask {
     pub done: bool,
 }
 
+/// Progress status for a longer-running task, independent of `completed` —
+/// a task can be `Blocked` or `InProgress` well before it's done, and
+/// `completed` still governs the existing done/pending distinction
+/// everywhere else (log-on-complete, print-monitor suppression, etc.).
+/// Encoded on disk the same way `priority` is (see
+/// `backends::nb::parse_status_header`/`set_status`): no native `nb` field,
+/// so it round-trips as a `<!-- status: N -->` comment header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TodoStatus {
+    #[default]
+    NotStarted,
+    InProgress,
+    Blocked,
+}
+
+impl TodoStatus {
+    pub fn as_u8(self) -> u8 {
+        match self {
+            TodoStatus::NotStarted => 0,
+            TodoStatus::InProgress => 1,
+            TodoStatus::Blocked => 2,
+        }
+    }
+
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => TodoStatus::InProgress,
+            2 => TodoStatus::Blocked,
+            _ => TodoStatus::NotStarted,
+        }
+    }
+
+    /// Upper-case label used on the printed ticket badge and the
+    /// status-change print job's big/bold title line.
+    pub fn label(self) -> &'static str {
+        match self {
+            TodoStatus::NotStarted => "NOT STARTED",
+            TodoStatus::InProgress => "IN PROGRESS",
+            TodoStatus::Blocked => "BLOCKED",
+        }
+    }
+}
+
 /// Application-level representation of a todo item.
 ///
 /// `printed_at` is tracked locally in SQLite since `nb` has no equivalent
@@ -43,6 +87,9 @@ pub struct TodoItem {
     /// Reminder datetimes set on this task.
     #[serde(default)]
     pub reminders: Vec<DateTime<Local>>,
+    /// Progress status — see `TodoStatus`. Independent of `completed`.
+    #[serde(default)]
+    pub status: TodoStatus,
 }
 
 impl TodoItem {
@@ -64,6 +111,7 @@ impl TodoItem {
             project_title: None,
             labels: Vec::new(),
             reminders: Vec::new(),
+            status: TodoStatus::NotStarted,
         }
     }
 }

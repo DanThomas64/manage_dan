@@ -21,6 +21,10 @@ pub struct CreateNoteRequest {
     pub content: String,
     pub tags: Option<Vec<String>>,
     pub notebook: Option<String>,
+    /// Subfolder to create the note directly into, e.g. `"Projects/Sub"` —
+    /// empty/absent creates at the notebook's root, matching prior behavior.
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -25,9 +25,9 @@
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone};
 use tracing::{info, warn};
 
-use crate::models::{Subtask, TodoItem};
+use crate::models::{Subtask, TodoItem, TodoStatus};
 use crate::todo_error::{TodoLibError, TodoLibResult};
-use crate::print_ticket_on_creation;
+use crate::print_ticket_if_requested;
 
 const REMINDER_TAG_PREFIX: &str = "remind-";
 
@@ -145,6 +145,7 @@ fn format_reminder_tag(dt: &DateTime<Local>) -> String {
 
 struct ParsedNote {
     priority: u8,
+    status: TodoStatus,
     completed: bool,
     title: String,
     due: Option<DateTime<Local>>,
@@ -188,16 +189,30 @@ fn parse_priority_header(line: &str) -> Option<u8> {
     p.trim().parse().ok()
 }
 
+/// Parses the `<!-- status: N -->` header out of a line — the same
+/// invisible-comment convention `parse_priority_header` already uses.
+fn parse_status_header(line: &str) -> Option<TodoStatus> {
+    let inner = line.trim().strip_prefix("<!--")?.strip_suffix("-->")?;
+    let s = inner.trim().strip_prefix("status:")?;
+    let v: u8 = s.trim().parse().ok()?;
+    Some(TodoStatus::from_u8(v))
+}
+
 fn parse_note_content(content: &str) -> TodoLibResult<ParsedNote> {
     let mut priority = 0u8;
+    let mut status = TodoStatus::NotStarted;
     let lines: Vec<&str> = content
         .lines()
-        .filter(|line| match parse_priority_header(line) {
-            Some(p) => {
+        .filter(|line| {
+            if let Some(p) = parse_priority_header(line) {
                 priority = p;
-                false
+                return false;
             }
-            None => true,
+            if let Some(s) = parse_status_header(line) {
+                status = s;
+                return false;
+            }
+            true
         })
         .collect();
 
@@ -282,6 +297,7 @@ fn parse_note_content(content: &str) -> TodoLibResult<ParsedNote> {
 
     Ok(ParsedNote {
         priority,
+        status,
         completed,
         title,
         due,
@@ -387,6 +403,7 @@ async fn hydrate_item(folder: &str, local_id: i64, path: &str) -> TodoLibResult<
         project_title: folder_to_project_title(folder),
         labels: parsed.labels,
         reminders: parsed.reminders,
+        status: parsed.status,
     })
 }
 
@@ -427,17 +444,23 @@ async fn create_raw(notebook: &str, item: &TodoItem) -> TodoLibResult<(String, i
     let out = run(&args).await?;
     let (folder, local_id, _filename) = parse_added_ref(&out)?;
 
-    if item.priority > 0 {
+    if item.priority > 0 || item.status != TodoStatus::NotStarted {
         // `nb edit` has no `--append`, so read back what nb just generated
-        // and rewrite the whole file with the header below it (below where
-        // the `## Tags` section would be, matching nb's own section order).
+        // and rewrite the whole file with the header(s) below it (below
+        // where the `## Tags` section would be, matching nb's own section
+        // order). A freshly-created note never already has either header,
+        // so there's nothing to strip here first — unlike `set_status`,
+        // which changes status on an existing item that may already carry
+        // one or both.
         let sel = selector(&folder, local_id);
         let current = run(&[format!("{}:show", notebook), sel.clone()]).await?;
-        let new_content = format!(
-            "{}\n\n<!-- priority: {} -->\n",
-            current.trim_end(),
-            item.priority
-        );
+        let mut new_content = current.trim_end().to_string();
+        if item.priority > 0 {
+            new_content.push_str(&format!("\n\n<!-- priority: {} -->\n", item.priority));
+        }
+        if item.status != TodoStatus::NotStarted {
+            new_content.push_str(&format!("\n\n<!-- status: {} -->\n", item.status.as_u8()));
+        }
         run(&[
             format!("{}:edit", notebook),
             sel,
@@ -470,14 +493,14 @@ async fn create_raw(notebook: &str, item: &TodoItem) -> TodoLibResult<(String, i
 
 // --- Public CRUD ---
 
-pub async fn create_item(notebook: &str, item: TodoItem) -> TodoLibResult<TodoItem> {
+pub async fn create_item(notebook: &str, item: TodoItem, print: bool) -> TodoLibResult<TodoItem> {
     info!("Creating new nb todo item: {}", item.title);
     let (folder, local_id) = create_raw(notebook, &item).await?;
     let id = db::todo_nb_index_get_or_create(folder, local_id)
         .await
         .map_err(|e| TodoLibError::Db(e.to_string()))?;
     let mut result = get_item(notebook, id).await?;
-    print_ticket_on_creation(&mut result).await?;
+    print_ticket_if_requested(&mut result, print).await?;
     Ok(result)
 }
 
@@ -618,6 +641,54 @@ pub async fn complete_item(notebook: &str, id: i64, completed: bool) -> TodoLibR
         format!("{}:todo", notebook),
         sub.to_string(),
         selector(&folder, local_id),
+    ])
+    .await?;
+    Ok(())
+}
+
+/// Changes only the status header, leaving everything else in the file
+/// untouched (including the priority header, if any). Unlike `create_raw`'s
+/// header write (a freshly-created note that never already has one), this
+/// item may already carry stale priority/status header lines from an
+/// earlier write — read the current file, capture its existing priority
+/// while stripping both header lines, then rewrite with the preserved
+/// priority plus the new status.
+pub async fn set_status(notebook: &str, id: i64, status: TodoStatus) -> TodoLibResult {
+    info!("Setting nb todo item {} status={:?}", id, status);
+    let (folder, local_id) = db::todo_nb_index_resolve(id)
+        .await
+        .map_err(|e| TodoLibError::Db(e.to_string()))?
+        .ok_or(TodoLibError::NotFound(id))?;
+
+    let sel = selector(&folder, local_id);
+    let current = run(&[format!("{}:show", notebook), sel.clone()]).await?;
+
+    let mut priority = 0u8;
+    let stripped: Vec<&str> = current
+        .lines()
+        .filter(|line| {
+            if let Some(p) = parse_priority_header(line) {
+                priority = p;
+                return false;
+            }
+            parse_status_header(line).is_none()
+        })
+        .collect();
+
+    let mut new_content = stripped.join("\n").trim_end().to_string();
+    if priority > 0 {
+        new_content.push_str(&format!("\n\n<!-- priority: {} -->\n", priority));
+    }
+    if status != TodoStatus::NotStarted {
+        new_content.push_str(&format!("\n\n<!-- status: {} -->\n", status.as_u8()));
+    }
+
+    run(&[
+        format!("{}:edit", notebook),
+        sel,
+        "--overwrite".to_string(),
+        "--content".to_string(),
+        new_content,
     ])
     .await?;
     Ok(())
