@@ -2206,6 +2206,9 @@
           <span class="field-label" style="margin:0;">Print ticket</span>
         </label>
       </div>
+      <div id="todo-complete-row" style="display:none;">
+        <button class="btn-success" id="btn-todo-complete" style="width:100%;padding:10px;" onclick="todoCompleteFromForm()">&#10003; Mark Complete</button>
+      </div>
       <div style="display:flex;gap:8px;">
         <button class="btn-primary" id="btn-todo-submit" style="flex:1;padding:10px;" onclick="submitTodo()">Save Todo</button>
         <button class="btn-ghost btn-sm" id="btn-todo-cancel-edit" style="display:none;" onclick="todoCancelEdit()">Cancel</button>
@@ -4264,11 +4267,36 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // boot so a fold/unfold-triggered reload resumes on the same screen (and,
   // via restoreFormState(), with in-progress form text intact) instead of
   // dumping back to Home.
+  //
+  // `history.state` (set by our own pushState/replaceState calls in
+  // showView()) is checked *first* and, when present, wins over
+  // sessionStorage.lastView — the two normally agree, but a swipe-back (or
+  // browser back button) that lands the browser on an *earlier* history
+  // entry can trigger a hard reload instead of a soft popstate (the same
+  // "some browsers/foldables reload the page outright" behavior this
+  // function was already written to survive, just triggered by navigating
+  // backward instead of folding/unfolding) — sessionStorage.lastView still
+  // holds whatever view was current *before* that back-navigation (it's
+  // only ever updated by in-app showView() calls, which a bypassed-bfcache
+  // reload skips entirely), so trusting it here would resurrect the screen
+  // the user just backed out of instead of the one the browser actually
+  // navigated to. history.state, by contrast, is tracked per-entry by the
+  // browser itself and correctly reflects the *current* entry regardless of
+  // how it was reached (soft popstate or a hard reload), so it's the
+  // authoritative source whenever it's available at all; sessionStorage is
+  // only the right fallback for a genuinely fresh tab/session with no prior
+  // history state yet.
   function restoreLastView() {
     try {
-      const raw = sessionStorage.getItem('lastView');
-      if (!raw) return null;
-      const { view, extra } = JSON.parse(raw);
+      let view, extra;
+      if (window.history.state && window.history.state.view) {
+        view = window.history.state.view;
+        extra = window.history.state;
+      } else {
+        const raw = sessionStorage.getItem('lastView');
+        if (!raw) return null;
+        ({ view, extra } = JSON.parse(raw));
+      }
       if (!view || view === 'home') return null;
       showView(view, true, extra);
       if (view === 'notes') { const t = sessionStorage.getItem('notesTab'); if (t) notesShowTab(t); }
@@ -4894,7 +4922,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
     // Switches to the Notes overlay itself (idempotent if already active) —
     // needed when opening a note from outside Notes (e.g. project detail),
     // since this function otherwise only toggles internal tab/panel classes.
-    showView('notes');
+    // Threads projectId the same way every other project-exit call site
+    // does — a no-op when currentView is already 'notes' (showView's own
+    // `changed` check skips the history push either way), but matters if
+    // this is ever reached while a different view is current.
+    showView('notes', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined);
     try {
       const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''));
       if (!r.ok) throw 0;
@@ -5228,7 +5260,12 @@ A category's overall budget cap is the sum of its allocations — split it acros
       clearFormState('npanel-add');
       toast('Note saved');
       notesLoadNotebooks();
-      notesShowTab('browse');
+      if (pendingProjectReturnId != null) {
+        const pid = pendingProjectReturnId; pendingProjectReturnId = null;
+        showView('project-detail', false, { projectId: pid });
+      } else {
+        notesShowTab('browse');
+      }
     } catch (_) {
       toast('Failed to save note', true);
     }
@@ -5307,6 +5344,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     document.getElementById('todo-print').checked = true;
     document.getElementById('btn-todo-submit').textContent = 'Save Todo';
     document.getElementById('btn-todo-cancel-edit').style.display = 'none';
+    document.getElementById('todo-complete-row').style.display = 'none';
     clearFormState('tpanel-add');
   }
 
@@ -5364,6 +5402,27 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
   }
 
+  // "Mark Complete" button on the Edit form itself — same PATCH .../done
+  // call the list card's checkbox uses (todoToggleDone), so completing a
+  // task doesn't require leaving the edit form first. Exits back to the
+  // list/Project Detail afterward via todoCancelEdit, same as Cancel,
+  // since there's nothing further to edit on a task just marked done.
+  async function todoCompleteFromForm() {
+    if (todoEditingId === null) return;
+    try {
+      const r = await cachedFetch(`${TODO_API}/${todoEditingId}/done`, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({done: true}),
+      });
+      if (!r.ok) throw 0;
+      toast('Marked complete');
+    } catch (_) {
+      toast('Failed to update todo', true);
+    }
+    todoCancelEdit();
+  }
+
   function todoEditTodo(id) {
     const item = todoItems.find(t => t.id === id);
     if (!item) return;
@@ -5388,6 +5447,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
     document.getElementById('todo-print').checked = false;
     document.getElementById('btn-todo-submit').textContent = 'Save Changes';
     document.getElementById('btn-todo-cancel-edit').style.display = '';
+    const completeBtn = document.getElementById('btn-todo-complete');
+    completeBtn.textContent = item.completed ? '✓ Already Completed' : '✓ Mark Complete';
+    completeBtn.disabled = item.completed;
+    document.getElementById('todo-complete-row').style.display = '';
     todoShowTab('add');
     ensureProjectsLoaded().then(() => {
       populateProjectSelect('todo-project');
@@ -5844,8 +5907,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
     todoEditTodo(id);
   }
 
+  // Unlike addTodoForProject/addNoteForProject/addLogForProject/
+  // openProjectNotes, this deliberately does NOT set pendingProjectReturnId
+  // — Lists has no submit/cancel workflow launched from Project Detail (just
+  // a passive category view) to consume it on exit, and leaving it set here
+  // would leak into whichever unrelated Notes/Todo/Log save happens next,
+  // wrongly redirecting that back to this project. Threading projectId into
+  // the pushed history state is still correct/needed on its own, so browser
+  // back/swipe from here returns to this project like every other section.
   async function openProjectListCategory(groupId, categoryId) {
-    showView('lists');
+    showView('lists', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined);
     await selectGroup(groupId);
     selectCategory(categoryId);
   }
@@ -6064,7 +6135,21 @@ A category's overall budget cap is the sum of its allocations — split it acros
       </div>`;
   }
 
+  // Bumped at the start of every projectDetailOnOpen() call and captured
+  // locally as `token` — before *applying* its fetch's result (success or
+  // failure) to the DOM, a call checks its token is still current. Without
+  // this, navigating away from Project Detail (e.g. into Notes) and straight
+  // back before the first visit's fetch has resolved starts a *second*
+  // fetch; if the first, now-stale one finishes later — for any reason, a
+  // slow/errored request, connection queuing behind the new view's own
+  // fetches, whatever — it unconditionally overwrote whatever the second,
+  // current one had already rendered, most visibly as "Failed to load
+  // project" clobbering a perfectly good render (confirmed reproducible:
+  // delay the first request and have it error after the second succeeds).
+  let projectDetailRequestToken = 0;
+
   async function projectDetailOnOpen(id) {
+    const token = ++projectDetailRequestToken;
     currentProjectDetailId = id;
     pdSectionCollapsed = { todos: false, log: true, lists: true };
     pdTodoView = pdTodoDefaultView();
@@ -6077,6 +6162,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       const r = await fetch(PROJECT_API + '/' + id + '/detail');
       if (!r.ok) throw 0;
       const detail = await r.json();
+      if (token !== projectDetailRequestToken) return; // superseded by a newer visit — discard
       currentProjectMeta = detail.project;
       updatePdFavouriteCheck();
       updatePdTodoDefaultCheck();
@@ -6086,6 +6172,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       }
       renderProjectDetail(detail);
     } catch (_) {
+      if (token !== projectDetailRequestToken) return; // superseded — don't clobber a newer render with a stale failure
       el.innerHTML = '<div class="empty-state"><span>Failed to load project</span></div>';
     }
   }
