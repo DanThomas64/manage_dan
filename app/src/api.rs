@@ -5,7 +5,7 @@
 
 use crate::prelude::*;
 use warp::{Filter, Rejection, Reply, http::StatusCode};
-use todo::todo_prelude::TodoItem;
+use todo::todo_prelude::{TodoItem, TodoStatus};
 use warp::query::query; // NEW: Import query filter
 use chrono::{Local, NaiveDate};
 use finances::finances_error::FinancesLibError;
@@ -88,9 +88,37 @@ pub async fn read_todo_summary_handler() -> Result<impl Reply, Rejection> {
     }
 }
 
+fn default_print_true() -> bool {
+    true
+}
+
+/// Request body for creating a todo — every `TodoItem` field plus an
+/// optional `print` flag controlling whether this create prints a ticket,
+/// defaulting to `true` (unlike an edit, see `UpdateTodoBody`) so existing
+/// clients that don't send it at all keep today's "always prints on
+/// creation" behavior.
+#[derive(Deserialize)]
+pub struct CreateTodoBody {
+    #[serde(flatten)]
+    pub item: TodoItem,
+    #[serde(default = "default_print_true")]
+    pub print: bool,
+}
+
+/// Request body for updating a todo — same shape as `CreateTodoBody`, but
+/// `print` defaults to `false`: reprinting a ticket on every minor edit
+/// would be far noisier than the one-time print on creation.
+#[derive(Deserialize)]
+pub struct UpdateTodoBody {
+    #[serde(flatten)]
+    pub item: TodoItem,
+    #[serde(default)]
+    pub print: bool,
+}
+
 /// POST /api/v1/todo - Create a new todo item
-pub async fn create_todo_handler(item: TodoItem) -> Result<impl Reply, Rejection> {
-    match todo::create_item(item).await {
+pub async fn create_todo_handler(body: CreateTodoBody) -> Result<impl Reply, Rejection> {
+    match todo::create_item(body.item, body.print).await {
         Ok(new_item) => Ok(warp::reply::with_status(warp::reply::json(&new_item), StatusCode::CREATED)),
         Err(e) => {
             error!("Failed to create todo item: {}", e);
@@ -124,12 +152,12 @@ pub async fn resync_todos_handler() -> Result<impl Reply, Rejection> {
 }
 
 /// PUT /api/v1/todo/:id - Update an existing todo item
-pub async fn update_todo_handler(id: i64, item: TodoItem) -> Result<impl Reply, Rejection> {
-    if item.id != Some(id) {
+pub async fn update_todo_handler(id: i64, body: UpdateTodoBody) -> Result<impl Reply, Rejection> {
+    if body.item.id != Some(id) {
         return Err(warp::reject::custom(ApiError::MismatchedId));
     }
-    
-    match todo::update_item(item).await {
+
+    match todo::update_item(body.item, body.print).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
             error!("Failed to update todo item {}: {}", id, e);
@@ -147,6 +175,20 @@ pub async fn set_todo_done_handler(id: i64, body: SetDoneBody) -> Result<impl Re
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
             error!("Failed to set done for todo item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::TodoOperationFailed))
+        }
+    }
+}
+
+/// PATCH /api/v1/todo/:id/status - Change a todo's progress status
+#[derive(Deserialize)]
+pub struct SetStatusBody { pub status: TodoStatus }
+
+pub async fn set_todo_status_handler(id: i64, body: SetStatusBody) -> Result<impl Reply, Rejection> {
+    match todo::set_status(id, body.status).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to set status for todo item {}: {}", id, e);
             Err(warp::reject::custom(ApiError::TodoOperationFailed))
         }
     }
@@ -293,6 +335,17 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
       <div id="hist"></div>
     </div>
     <div class="completed-banner" id="comp-banner" style="display:none"></div>
+    <div class="card">
+      <div class="section-label">Status</div>
+      <div class="field-row">
+        <select id="status-select" style="flex:1;padding:10px 12px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text);font-size:15px;">
+          <option value="not_started">Not Started</option>
+          <option value="in_progress">In Progress</option>
+          <option value="blocked">Blocked</option>
+        </select>
+        <button class="btn-secondary" style="width:auto;margin-top:0;padding:10px 16px;" id="status-btn" onclick="changeStatus()">Update</button>
+      </div>
+    </div>
     <button class="btn" id="btn" onclick="complete()">Mark Complete</button>
     <div class="msg" id="msg"></div>
     <div class="btn-row">
@@ -333,12 +386,24 @@ body{{font-family:var(--font-sans);background:var(--bg);color:var(--text);min-he
         </select>
       </div>
       <div class="field">
+        <label for="edit-status">Status</label>
+        <select id="edit-status">
+          <option value="not_started">Not Started</option>
+          <option value="in_progress">In Progress</option>
+          <option value="blocked">Blocked</option>
+        </select>
+      </div>
+      <div class="field">
         <label for="edit-labels">Labels (comma separated)</label>
         <input type="text" id="edit-labels" placeholder="e.g. work, urgent" />
       </div>
       <div class="field">
         <label for="edit-subtasks">Subtasks (one per line, prefix "[x] " for done)</label>
         <textarea id="edit-subtasks" placeholder="first step&#10;[x] already done step"></textarea>
+      </div>
+      <div class="field" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="edit-print" style="width:auto;" />
+        <label for="edit-print" style="margin:0;">Print ticket</label>
       </div>
       <div class="msg" id="edit-msg"></div>
       <div class="btn-row">
@@ -375,6 +440,9 @@ function render(t){{
   if(t.due_date){{const ov=!t.completed&&new Date(t.due_date)<new Date();m.innerHTML+=`<span class="badge due${{ov?' overdue':''}}">${{ov?'&#9888;':'&#128197;'}} ${{fmtDate(t.due_date)}}</span>`;}}
 
   if(t.priority>0)m.innerHTML+=`<span class="badge p${{t.priority}}">&#9873; ${{PRI[Math.min(t.priority,5)]}}</span>`;
+  const statusLabels={{in_progress:'In Progress',blocked:'Blocked'}};
+  if(t.status&&statusLabels[t.status])m.innerHTML+=`<span class="badge${{t.status==='blocked'?' overdue':''}}">${{statusLabels[t.status]}}</span>`;
+  document.getElementById('status-select').value=t.status||'not_started';
   (t.labels||[]).forEach(l=>m.innerHTML+=`<span class="badge label">${{l}}</span>`);
   document.getElementById('desc-card').style.display='none';
   if(t.description){{document.getElementById('desc').textContent=t.description;document.getElementById('desc-card').style.display='block';}}
@@ -437,8 +505,10 @@ function populateEdit(){{
     document.getElementById('edit-due-time').value='';
   }}
   document.getElementById('edit-priority').value=String(CURRENT.priority||0);
+  document.getElementById('edit-status').value=CURRENT.status||'not_started';
   document.getElementById('edit-labels').value=(CURRENT.labels||[]).join(', ');
   document.getElementById('edit-subtasks').value=(CURRENT.subtasks||[]).map(s=>(s.done?'[x] ':'')+s.title).join('\n');
+  document.getElementById('edit-print').checked=false;
 }}
 function parseSubtasks(buf){{
   return buf.split('\n').map(l=>l.trim()).filter(Boolean).map(line=>{{
@@ -461,8 +531,10 @@ async function saveEdit(){{
     due_date=local.toISOString();
   }}
   const priority=parseInt(document.getElementById('edit-priority').value,10)||0;
+  const status=document.getElementById('edit-status').value;
   const labels=document.getElementById('edit-labels').value.split(',').map(s=>s.trim()).filter(Boolean);
   const subtasks=parseSubtasks(document.getElementById('edit-subtasks').value);
+  const print=document.getElementById('edit-print').checked;
   const payload={{
     id:CURRENT.id,
     title,
@@ -476,9 +548,11 @@ async function saveEdit(){{
     archived:CURRENT.archived,
     due_date,
     priority,
+    status,
     project_title:CURRENT.project_title||null,
     labels,
     reminders:CURRENT.reminders||[],
+    print,
   }};
   const btn=document.getElementById('save-btn');
   btn.disabled=true;btn.textContent='Saving…';
@@ -504,6 +578,21 @@ async function complete(){{
   }}catch{{
     btn.disabled=false;btn.textContent='Mark Complete';
     msg.textContent='Failed to complete task. Please try again.';msg.className='msg err';
+  }}
+}}
+async function changeStatus(){{
+  const sel=document.getElementById('status-select'),sbtn=document.getElementById('status-btn'),msg=document.getElementById('msg');
+  const status=sel.value;
+  sbtn.disabled=true;sbtn.textContent='Updating\u2026';msg.className='msg';
+  try{{
+    const r=await fetch('/api/v1/todo/'+ID+'/status',{{method:'PATCH',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{status}})}});
+    if(!r.ok)throw 0;
+    sbtn.textContent='Update';sbtn.disabled=false;
+    msg.textContent='Status updated!';msg.className='msg ok';
+    await load();
+  }}catch{{
+    sbtn.disabled=false;sbtn.textContent='Update';
+    msg.textContent='Failed to update status. Please try again.';msg.className='msg err';
   }}
 }}
 load();
@@ -1488,7 +1577,7 @@ pub async fn project_todos_handler(id: i64) -> Result<impl Reply, Rejection> {
 }
 
 /// POST /api/v1/project/:id/todos - creates a todo scoped to the project
-pub async fn create_project_todo_handler(id: i64, mut item: TodoItem) -> Result<impl Reply, Rejection> {
+pub async fn create_project_todo_handler(id: i64, mut body: CreateTodoBody) -> Result<impl Reply, Rejection> {
     let p = match project::get_project(id).await {
         Ok(p) => p,
         Err(ProjectLibError::NotFound(_)) => return Err(warp::reject::not_found()),
@@ -1497,8 +1586,8 @@ pub async fn create_project_todo_handler(id: i64, mut item: TodoItem) -> Result<
             return Err(warp::reject::custom(ApiError::ProjectOperationFailed));
         }
     };
-    item.project_title = Some(p.slug);
-    match todo::create_item(item).await {
+    body.item.project_title = Some(p.slug);
+    match todo::create_item(body.item, body.print).await {
         Ok(new_item) => Ok(warp::reply::with_status(warp::reply::json(&new_item), StatusCode::CREATED)),
         Err(e) => {
             error!("Failed to create project todo: {}", e);
@@ -2624,6 +2713,14 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::body::json())
         .and_then(set_todo_done_handler);
 
+    // PATCH /api/v1/todo/:id/status
+    let set_status = todo_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path("status"))
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(set_todo_status_handler);
+
     // POST /api/v1/todo/:id/print
     let print = todo_base
         .and(warp::path::param::<i64>())
@@ -2651,7 +2748,7 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::get())
         .and_then(get_single_todo_handler);
 
-    summary.or(resync).or(read_all).or(get_one).or(create).or(update).or(set_done).or(print).or(archive).or(delete)
+    summary.or(resync).or(read_all).or(get_one).or(create).or(update).or(set_done).or(set_status).or(print).or(archive).or(delete)
 }
 
 /// Defines routes related to system status.
@@ -3694,4 +3791,60 @@ pub async fn start_server(systems_status: SystemsStatus, go_nogo_status: Systems
     let addr = ([0, 0, 0, 0], port);
     info!("Starting API server on http://0.0.0.0:{}", port);
     warp::serve(routes).run(addr).await;
+}
+
+#[cfg(test)]
+mod todo_body_tests {
+    use super::*;
+
+    // A minimal but complete TodoItem-shaped JSON payload, the same shape
+    // the frontend/TUI/QR page all send today (pre-dating the `print`
+    // toggle and `status` field) — confirms CreateTodoBody/UpdateTodoBody's
+    // #[serde(flatten)] correctly combines with TodoItem's own fields, and
+    // that both `print`'s and TodoItem::status's #[serde(default)] keep
+    // old, field-less payloads deserializing exactly as they did before.
+    const BASE_ITEM_JSON: &str = r#"{
+        "id": null,
+        "title": "Buy milk",
+        "description": "",
+        "completed": false,
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "updated_at": "2026-01-01T00:00:00+00:00",
+        "completed_at": null,
+        "printed_at": null,
+        "subtasks": [],
+        "archived": false,
+        "due_date": null,
+        "priority": 0
+    }"#;
+
+    #[test]
+    fn create_body_defaults_print_true_when_omitted() {
+        let body: CreateTodoBody = serde_json::from_str(BASE_ITEM_JSON).expect("deserialize CreateTodoBody");
+        assert!(body.print, "print should default to true on create when the field is absent");
+        assert_eq!(body.item.title, "Buy milk");
+        assert_eq!(body.item.status, todo::todo_prelude::TodoStatus::NotStarted);
+    }
+
+    #[test]
+    fn create_body_respects_explicit_print_false() {
+        let json = BASE_ITEM_JSON.trim_end().trim_end_matches('}').to_string() + ", \"print\": false }";
+        let body: CreateTodoBody = serde_json::from_str(&json).expect("deserialize CreateTodoBody");
+        assert!(!body.print);
+    }
+
+    #[test]
+    fn update_body_defaults_print_false_when_omitted() {
+        let body: UpdateTodoBody = serde_json::from_str(BASE_ITEM_JSON).expect("deserialize UpdateTodoBody");
+        assert!(!body.print, "print should default to false on update when the field is absent");
+    }
+
+    #[test]
+    fn status_field_round_trips_through_flatten() {
+        let json = BASE_ITEM_JSON.trim_end().trim_end_matches('}').to_string()
+            + ", \"status\": \"in_progress\", \"print\": true }";
+        let body: CreateTodoBody = serde_json::from_str(&json).expect("deserialize CreateTodoBody");
+        assert_eq!(body.item.status, todo::todo_prelude::TodoStatus::InProgress);
+        assert!(body.print);
+    }
 }

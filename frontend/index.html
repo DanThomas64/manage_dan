@@ -1916,6 +1916,10 @@
         <input type="text" id="note-tags" placeholder="e.g. idea, work" autocomplete="off" />
       </div>
       <div>
+        <div class="field-label">Folder <span style="color:var(--text-dim)">(optional)</span></div>
+        <input type="text" id="note-folder" placeholder="e.g. Projects/Sub" autocomplete="off" />
+      </div>
+      <div>
         <div class="field-label">Project <span style="color:var(--text-dim)">(optional)</span></div>
         <select id="note-project" style="width:100%;" onchange="noteProjectChanged()">
           <option value="">No project</option>
@@ -2110,6 +2114,14 @@
         </div>
       </div>
       <div>
+        <div class="field-label">Status</div>
+        <select id="todo-status" style="width:100%;">
+          <option value="not_started">Not Started</option>
+          <option value="in_progress">In Progress</option>
+          <option value="blocked">Blocked</option>
+        </select>
+      </div>
+      <div>
         <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
         <input type="text" id="todo-tags" placeholder="e.g. work, urgent" autocomplete="off" />
       </div>
@@ -2122,6 +2134,12 @@
       <div>
         <div class="field-label">Subtasks <span style="color:var(--text-dim)">(one per line — prefix "[x] " for already done)</span></div>
         <textarea id="todo-subtasks" placeholder="first step&#10;[x] already done step" style="min-height:80px;flex:none;"></textarea>
+      </div>
+      <div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="todo-print" checked />
+          <span class="field-label" style="margin:0;">Print ticket</span>
+        </label>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn-primary" id="btn-todo-submit" style="flex:1;padding:10px;" onclick="submitTodo()">Save Todo</button>
@@ -4000,7 +4018,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (!container) return;
     const data = {};
     container.querySelectorAll('input, textarea, select').forEach(el => {
-      if (el.id) data[el.id] = el.value;
+      if (el.id) data[el.id] = el.type === 'checkbox' ? el.checked : el.value;
     });
     try { sessionStorage.setItem('form:' + containerId, JSON.stringify(data)); } catch (_) {}
   }
@@ -4014,7 +4032,8 @@ A category's overall budget cap is the sum of its allocations — split it acros
         const data = JSON.parse(raw);
         Object.entries(data).forEach(([fieldId, val]) => {
           const el = document.getElementById(fieldId);
-          if (el) el.value = val;
+          if (!el) return;
+          if (el.type === 'checkbox') el.checked = !!val; else el.value = val;
         });
       } catch (_) {}
     });
@@ -5082,6 +5101,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const tagsRaw = document.getElementById('note-tags').value;
     const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
     const notebook = document.getElementById('note-notebook').value.trim() || null;
+    const folder = document.getElementById('note-folder').value.trim() || null;
     const projectSlug = document.getElementById('note-project').value;
     if (projectSlug) {
       const project = projectsList.find(p => p.slug === projectSlug);
@@ -5091,12 +5111,13 @@ A category's overall budget cap is the sum of its allocations — split it acros
       const r = await fetch(NOTES_API, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({content, title, tags, notebook}),
+        body: JSON.stringify({content, title, tags, notebook, folder}),
       });
       if (!r.ok) throw 0;
       document.getElementById('note-content').value = '';
       document.getElementById('note-title').value = '';
       document.getElementById('note-tags').value = '';
+      document.getElementById('note-folder').value = '';
       clearFormState('npanel-add');
       toast('Note saved');
       notesLoadNotebooks();
@@ -5172,8 +5193,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
     document.getElementById('todo-due-date').value = '';
     document.getElementById('todo-due-time').value = '';
     document.getElementById('todo-priority').value = '0';
+    document.getElementById('todo-status').value = 'not_started';
     document.getElementById('todo-tags').value = '';
     document.getElementById('todo-subtasks').value = '';
+    document.getElementById('todo-print').checked = true;
     document.getElementById('btn-todo-submit').textContent = 'Save Todo';
     document.getElementById('btn-todo-cancel-edit').style.display = 'none';
     clearFormState('tpanel-add');
@@ -5205,9 +5228,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
       document.getElementById('todo-due-time').value = '';
     }
     document.getElementById('todo-priority').value = String(item.priority || 0);
+    document.getElementById('todo-status').value = item.status || 'not_started';
     document.getElementById('todo-tags').value = (item.labels || []).join(', ');
     document.getElementById('todo-subtasks').value = (item.subtasks || [])
       .map(s => (s.done ? '[x] ' : '') + s.title).join('\n');
+    document.getElementById('todo-print').checked = false;
     document.getElementById('btn-todo-submit').textContent = 'Save Changes';
     document.getElementById('btn-todo-cancel-edit').style.display = '';
     todoShowTab('add');
@@ -5232,9 +5257,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
 
     const priority = parseInt(document.getElementById('todo-priority').value, 10) || 0;
+    const status = document.getElementById('todo-status').value;
     const labels = document.getElementById('todo-tags').value.split(',').map(s => s.trim()).filter(Boolean);
     const subtasks = parseTodoSubtasks(document.getElementById('todo-subtasks').value);
     const project_title = document.getElementById('todo-project').value || null;
+    const print = document.getElementById('todo-print').checked;
 
     const editing = todoEditingId !== null;
     const original = editing ? todoItems.find(t => t.id === todoEditingId) : null;
@@ -5253,9 +5280,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
       archived: original.archived,
       due_date,
       priority,
+      status,
       project_title,
       labels,
       reminders: original.reminders || [],
+      print,
     } : {
       id: null,
       title,
@@ -5269,9 +5298,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
       archived: false,
       due_date,
       priority,
+      status,
       project_title,
       labels,
       reminders: [],
+      print,
     };
 
     try {
@@ -5325,6 +5356,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const dueStr = i.due_date ? new Date(i.due_date).toLocaleDateString('en-GB', {day:'numeric',month:'short'}) : null;
     const dueHtml = dueStr ? `<span class="note-badge ${isOverdue ? 'overdue' : 'tag'}">&#128197; ${esc(dueStr)}</span>` : '';
     const projectHtml = i.project_title ? `<span class="note-badge folder">&#128193; ${esc(i.project_title)}</span>` : '';
+    const statusLabels = {in_progress: 'In Progress', blocked: 'Blocked'};
+    const statusHtml = (i.status && statusLabels[i.status])
+      ? `<span class="note-badge ${i.status === 'blocked' ? 'overdue' : 'tag'}">${statusLabels[i.status]}</span>`
+      : '';
     const tagsHtml = (i.labels || []).map(t => `<span class="note-badge tag">#${esc(t)}</span>`).join('');
     const subtasksHtml = (i.subtasks || []).length
       ? `<div class="todo-subtasks">${i.subtasks.map(s => `<div class="todo-subtask-line ${s.done ? 'done' : ''}">${s.done ? '&#9745;' : '&#9744;'} ${esc(s.title)}</div>`).join('')}</div>`
@@ -5340,7 +5375,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       </div>
       <div class="note-card-meta" style="padding-left:30px;">
         <span class="todo-priority-bar">[${bar}]</span>
-        ${dueHtml}${projectHtml}${tagsHtml}
+        ${statusHtml}${dueHtml}${projectHtml}${tagsHtml}
       </div>
       ${subtasksHtml}
       <div class="todo-actions">

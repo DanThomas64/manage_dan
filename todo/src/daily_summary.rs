@@ -207,6 +207,26 @@ pub async fn print_summary(level: SummaryLevel) {
         }
     }
 
+    // --- Status (in-progress/blocked tasks — completed ones don't carry a
+    // meaningful status, so this is scoped to pending items only) ---
+    let in_progress: Vec<_> = items
+        .iter()
+        .filter(|i| !i.completed && i.status == crate::models::TodoStatus::InProgress)
+        .collect();
+    let blocked: Vec<_> = items
+        .iter()
+        .filter(|i| !i.completed && i.status == crate::models::TodoStatus::Blocked)
+        .collect();
+    lines.push(String::new());
+    lines.push(format!("STATUS: {} in progress, {} blocked", in_progress.len(), blocked.len()));
+    for item in &blocked {
+        let proj = item.project_title.as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|p| format!(" [{}]", p))
+            .unwrap_or_default();
+        lines.push(format!("  ! {}{}", item.title, proj));
+    }
+
     lines.push(String::new());
 
     // --- Footer ---

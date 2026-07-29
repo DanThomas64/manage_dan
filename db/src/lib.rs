@@ -247,6 +247,12 @@ pub fn init() -> DbLibResult {
         "CREATE INDEX IF NOT EXISTS idx_todo_cache_project ON todo_cache(project_title)",
         [],
     )?;
+    // Migration: add status (0=Not Started, 1=In Progress, 2=Blocked) to
+    // existing databases — best-effort, no-op once the column exists.
+    let _ = conn.execute(
+        "ALTER TABLE todo_cache ADD COLUMN status INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS note_cache (
@@ -675,12 +681,13 @@ fn row_to_todo_cache_row(row: &Row) -> RusqliteResult<TodoCacheRow> {
         archived: row.get::<_, i64>(14)? != 0,
         source_mtime: parse_opt_dt(row.get(15)?)?,
         synced_at: parse_dt(row.get(16)?)?,
+        status: row.get::<_, i64>(17)? as u8,
     })
 }
 
 const TODO_CACHE_COLUMNS: &str = "id, title, description, completed, created_at, updated_at,
      completed_at, printed_at, due_date, priority, project_title,
-     labels, subtasks, reminders, archived, source_mtime, synced_at";
+     labels, subtasks, reminders, archived, source_mtime, synced_at, status";
 
 /// Inserts or fully replaces the cached row for a todo item — called by the
 /// write-path dispatcher right after a successful create/update/complete
@@ -695,8 +702,8 @@ pub async fn todo_cache_upsert(row: TodoCacheRow) -> DbLibResult {
             "INSERT INTO todo_cache (
                 id, title, description, completed, created_at, updated_at,
                 completed_at, printed_at, due_date, priority, project_title,
-                labels, subtasks, reminders, archived, source_mtime, synced_at
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+                labels, subtasks, reminders, archived, source_mtime, synced_at, status
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 description = excluded.description,
@@ -713,7 +720,8 @@ pub async fn todo_cache_upsert(row: TodoCacheRow) -> DbLibResult {
                 reminders = excluded.reminders,
                 archived = excluded.archived,
                 source_mtime = excluded.source_mtime,
-                synced_at = excluded.synced_at",
+                synced_at = excluded.synced_at,
+                status = excluded.status",
             params![
                 row.id,
                 row.title,
@@ -732,6 +740,7 @@ pub async fn todo_cache_upsert(row: TodoCacheRow) -> DbLibResult {
                 row.archived as i64,
                 row.source_mtime.map(|d| d.to_rfc3339()),
                 row.synced_at.to_rfc3339(),
+                row.status as i64,
             ],
         )?;
         Ok(())

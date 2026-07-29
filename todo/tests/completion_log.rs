@@ -49,7 +49,7 @@ async fn completing_a_todo_logs_an_entry() {
     // Plain (non-project) todo — its completion log should carry only the
     // `todo-complete` tag.
     let item = TodoItem::new("Buy groceries".to_string(), "milk, eggs, bread".to_string());
-    let created = todo::create_item(item).await.expect("create_item");
+    let created = todo::create_item(item, true).await.expect("create_item");
     let id = created.id.expect("created item has an id");
 
     todo::complete_item(id, true).await.expect("complete_item(true)");
@@ -77,7 +77,7 @@ async fn completing_a_todo_logs_an_entry() {
     // matching project-<slug> tag.
     let mut project_item = TodoItem::new("Ship the release".to_string(), String::new());
     project_item.project_title = Some("launch".to_string());
-    let created_project_item = todo::create_item(project_item).await.expect("create_item (project)");
+    let created_project_item = todo::create_item(project_item, true).await.expect("create_item (project)");
     let project_item_id = created_project_item.id.expect("created project item has an id");
 
     todo::complete_item(project_item_id, true).await.expect("complete_item(true) (project)");

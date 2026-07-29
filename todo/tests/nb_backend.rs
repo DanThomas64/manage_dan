@@ -53,7 +53,7 @@ async fn nb_backend_end_to_end() {
         Subtask { id: None, title: "sub B".to_string(), done: true },
     ];
 
-    let created = todo::create_item(item).await.expect("create_item");
+    let created = todo::create_item(item, true).await.expect("create_item");
     assert_eq!(created.title, "zz_test: Integration test todo");
     assert_eq!(created.description, "desc line one");
     assert_eq!(created.priority, 3);
@@ -106,7 +106,7 @@ async fn nb_backend_end_to_end() {
     updated.title = "zz_test: Updated title".to_string();
     updated.priority = 1;
     updated.project_title = Some("work".to_string());
-    todo::update_item(updated).await.expect("update_item");
+    todo::update_item(updated, false).await.expect("update_item");
 
     let after_update = todo::get_item(id).await.expect("get_item after update");
     assert_eq!(after_update.id, Some(id), "id must stay stable across update");
