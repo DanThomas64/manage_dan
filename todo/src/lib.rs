@@ -339,6 +339,28 @@ pub async fn complete_item(id: i64, completed: bool) -> TodoLibResult {
     Ok(())
 }
 
+/// Flips one subtask's `done` state without touching anything else on the
+/// item, addressed by its position-based `Subtask.id` (assigned by
+/// `backends::nb::hydrate_item`'s 1-indexed parse of the "Tasks" section) —
+/// backs the checkbox-tap UI on the list/QR-page/edit-form subtask rows, so
+/// completing a subtask never requires retyping the whole free-text
+/// subtask list with a `[x] ` prefix. nb has no per-subtask primitive (a
+/// subtask is just a markdown checkbox line inside the item's own note
+/// body, not a separate nb todo item), so this reads the item fresh, flips
+/// the one subtask in memory, and goes through the same full-item
+/// delete-and-recreate `update_item` path a normal edit already uses —
+/// deliberately `print: false` (a checkbox tick isn't a content edit worth
+/// a fresh ticket) and no status comment (subtasks are independent of
+/// `TodoStatus`).
+pub async fn set_subtask_done(id: i64, subtask_id: i64, done: bool) -> TodoLibResult {
+    let mut item = get_item(id).await?;
+    match item.subtasks.iter_mut().find(|s| s.id == Some(subtask_id)) {
+        Some(sub) => sub.done = done,
+        None => return Err(TodoLibError::NotFound(subtask_id)),
+    }
+    update_item(item, false, None).await
+}
+
 /// Changes a task's progress status (see `TodoStatus`) — independent of
 /// `completed`; a longer-running task can be marked `InProgress`/`Blocked`
 /// well before it's actually done. On an actual transition (not a no-op
