@@ -107,13 +107,18 @@ pub struct CreateTodoBody {
 
 /// Request body for updating a todo — same shape as `CreateTodoBody`, but
 /// `print` defaults to `false`: reprinting a ticket on every minor edit
-/// would be far noisier than the one-time print on creation.
+/// would be far noisier than the one-time print on creation. `status_comment`
+/// is a one-time note about *why* the status changed, if it did — never
+/// stored on the `TodoItem` itself (there's no field for it), only fed
+/// into the status-change log entry/ticket (see `todo::log_status_change`).
 #[derive(Deserialize)]
 pub struct UpdateTodoBody {
     #[serde(flatten)]
     pub item: TodoItem,
     #[serde(default)]
     pub print: bool,
+    #[serde(default)]
+    pub status_comment: Option<String>,
 }
 
 /// POST /api/v1/todo - Create a new todo item
@@ -157,7 +162,7 @@ pub async fn update_todo_handler(id: i64, body: UpdateTodoBody) -> Result<impl R
         return Err(warp::reject::custom(ApiError::MismatchedId));
     }
 
-    match todo::update_item(body.item, body.print).await {
+    match todo::update_item(body.item, body.print, body.status_comment).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
             error!("Failed to update todo item {}: {}", id, e);
@@ -180,12 +185,18 @@ pub async fn set_todo_done_handler(id: i64, body: SetDoneBody) -> Result<impl Re
     }
 }
 
-/// PATCH /api/v1/todo/:id/status - Change a todo's progress status
+/// PATCH /api/v1/todo/:id/status - Change a todo's progress status. `comment`
+/// is a one-time note about why, fed into the status-change log entry/ticket
+/// only — never persisted on the todo itself.
 #[derive(Deserialize)]
-pub struct SetStatusBody { pub status: TodoStatus }
+pub struct SetStatusBody {
+    pub status: TodoStatus,
+    #[serde(default)]
+    pub comment: Option<String>,
+}
 
 pub async fn set_todo_status_handler(id: i64, body: SetStatusBody) -> Result<impl Reply, Rejection> {
-    match todo::set_status(id, body.status).await {
+    match todo::set_status(id, body.status, body.comment).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(e) => {
             error!("Failed to set status for todo item {}: {}", id, e);
@@ -535,6 +546,11 @@ async function saveEdit(){{
   const labels=document.getElementById('edit-labels').value.split(',').map(s=>s.trim()).filter(Boolean);
   const subtasks=parseSubtasks(document.getElementById('edit-subtasks').value);
   const print=document.getElementById('edit-print').checked;
+  let status_comment=null;
+  if(status!==CURRENT.status){{
+    status_comment=prompt('Add a comment for this status change (optional):','');
+    if(status_comment===null){{emsg.textContent='Status change cancelled';emsg.className='msg err';return;}}
+  }}
   const payload={{
     id:CURRENT.id,
     title,
@@ -553,6 +569,7 @@ async function saveEdit(){{
     labels,
     reminders:CURRENT.reminders||[],
     print,
+    status_comment,
   }};
   const btn=document.getElementById('save-btn');
   btn.disabled=true;btn.textContent='Saving…';
@@ -583,9 +600,12 @@ async function complete(){{
 async function changeStatus(){{
   const sel=document.getElementById('status-select'),sbtn=document.getElementById('status-btn'),msg=document.getElementById('msg');
   const status=sel.value;
+  if(status===CURRENT.status)return;
+  const comment=prompt('Add a comment for this status change (optional):','');
+  if(comment===null)return;
   sbtn.disabled=true;sbtn.textContent='Updating\u2026';msg.className='msg';
   try{{
-    const r=await fetch('/api/v1/todo/'+ID+'/status',{{method:'PATCH',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{status}})}});
+    const r=await fetch('/api/v1/todo/'+ID+'/status',{{method:'PATCH',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{status,comment}})}});
     if(!r.ok)throw 0;
     sbtn.textContent='Update';sbtn.disabled=false;
     msg.textContent='Status updated!';msg.className='msg ok';
