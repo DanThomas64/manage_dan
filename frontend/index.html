@@ -1908,7 +1908,7 @@
       <div style="position:relative;">
         <div class="field-label">Notebook <span style="color:var(--text-dim)">(optional)</span></div>
         <input type="text" id="note-notebook" class="lc-first" placeholder="e.g. work" autocomplete="off"
-               onfocus="notebookShowSuggestions()" oninput="notebookFilterSuggestions()" />
+               onfocus="notebookShowSuggestions()" oninput="notebookFilterSuggestions();clearTimeout(noteFolderRefreshTimer);noteFolderRefreshTimer=setTimeout(notesCreateRefreshFolders,300);" />
         <div class="suggestions-dropdown" id="notebook-suggestions-list"></div>
       </div>
       <div>
@@ -1916,13 +1916,16 @@
         <input type="text" id="note-tags" placeholder="e.g. idea, work" autocomplete="off" />
       </div>
       <div>
-        <div class="field-label">Folder <span style="color:var(--text-dim)">(optional)</span></div>
-        <input type="text" id="note-folder" placeholder="e.g. Projects/Sub" autocomplete="off" />
-      </div>
-      <div>
         <div class="field-label">Project <span style="color:var(--text-dim)">(optional)</span></div>
         <select id="note-project" style="width:100%;" onchange="noteProjectChanged()">
           <option value="">No project</option>
+        </select>
+      </div>
+      <div>
+        <div class="field-label">Folder <span style="color:var(--text-dim)">(optional)</span></div>
+        <select id="note-folder" style="width:100%;" onchange="noteFolderChanged()">
+          <option value="">(notebook root)</option>
+          <option value="__new__">+ New folder…</option>
         </select>
       </div>
       <div>
@@ -4246,6 +4249,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   let notesCurrentNote = null;
   let notesViewerFromTab = 'browse';
   let notesSearchTimer = null;
+  let noteFolderRefreshTimer = null;
   let markedLoaded = false;
   // Notes-tree state: which subfolder is being browsed within
   // notesFilterNotebook (empty = that notebook's root), and its full folder
@@ -4281,6 +4285,8 @@ A category's overall budget cap is the sum of its allocations — split it acros
         if (project) {
           document.getElementById('note-project').value = project.slug;
           noteProjectChanged();
+        } else {
+          notesCreateRefreshFolders();
         }
       });
       return;
@@ -4291,7 +4297,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
       return;
     }
     if (notesCurrentTab === 'browse') notesLoadBrowse();
-    if (notesCurrentTab === 'add') ensureProjectsLoaded().then(() => populateProjectSelect('note-project'));
+    if (notesCurrentTab === 'add') {
+      ensureProjectsLoaded().then(() => populateProjectSelect('note-project'));
+      notesCreateRefreshFolders();
+    }
   }
 
   function notesShowTab(tab) {
@@ -4306,6 +4315,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (tab === 'add') {
       setTimeout(() => document.getElementById('note-content').focus(), 80);
       ensureProjectsLoaded().then(() => populateProjectSelect('note-project'));
+      notesCreateRefreshFolders();
     }
   }
 
@@ -4495,6 +4505,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   function notebookPick(nb) {
     document.getElementById('note-notebook').value = nb;
     document.getElementById('notebook-suggestions-list').classList.remove('open');
+    notesCreateRefreshFolders();
   }
 
   document.addEventListener('click', e => {
@@ -5068,6 +5079,54 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (!projectSlug) return;
     const project = projectsList.find(p => p.slug === projectSlug);
     if (project) document.getElementById('note-notebook').value = project.slug;
+    notesCreateRefreshFolders();
+  }
+
+  // Populates the create form's Folder dropdown from whichever notebook is
+  // currently typed into the Notebook field (defaulting to 'home', matching
+  // the backend's own default) — called whenever that notebook value
+  // changes, so the dropdown always reflects the notebook the note will
+  // actually be created into rather than staying pinned to a previous one.
+  // Preserves the current selection if it's still a valid folder in the
+  // freshly-fetched list; falls back to the root otherwise (e.g. after
+  // switching to a notebook that doesn't have that folder).
+  async function notesCreateRefreshFolders() {
+    const sel = document.getElementById('note-folder');
+    const notebook = document.getElementById('note-notebook').value.trim() || 'home';
+    const previous = sel.value;
+    let folders = [];
+    try {
+      const r = await fetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notebook));
+      folders = r.ok ? await r.json() : [];
+    } catch (_) {
+      folders = [];
+    }
+    const folderItems = folders.map(f => {
+      const depth = f.split('/').length - 1;
+      const indent = '    '.repeat(depth);
+      const name = f.slice(f.lastIndexOf('/') + 1);
+      return `<option value="${esc(f)}">${indent}${esc(name)}</option>`;
+    }).join('');
+    sel.innerHTML = `<option value="">(notebook root)</option>${folderItems}<option value="__new__">+ New folder…</option>`;
+    sel.value = folders.includes(previous) ? previous : '';
+  }
+
+  // "+ New folder…" is a sentinel option, not a real folder — prompting and
+  // resolving it back to a normal selected value here (rather than at
+  // submit time) mirrors the notes-tree "Move" action's own "+ New
+  // folder…" flow, so a freshly-typed name is immediately visible as the
+  // selection instead of staying on the sentinel until Save.
+  function noteFolderChanged() {
+    const sel = document.getElementById('note-folder');
+    if (sel.value !== '__new__') return;
+    const name = prompt('New folder name:');
+    if (!name || !name.trim()) { sel.value = ''; return; }
+    const path = name.trim();
+    const opt = document.createElement('option');
+    opt.value = path;
+    opt.textContent = path;
+    sel.insertBefore(opt, sel.lastElementChild);
+    sel.value = path;
   }
 
   async function submitQuickNote() {
