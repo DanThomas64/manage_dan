@@ -295,7 +295,7 @@ pub async fn read_items_by_project(project_title: &str) -> TodoLibResult<Vec<Tod
 /// callers typically default this to `false` for an edit (unlike creation,
 /// which defaults to `true`), since printing a fresh ticket for every minor
 /// edit would be far noisier than printing one on creation.
-pub async fn update_item(item: TodoItem, print: bool) -> TodoLibResult {
+pub async fn update_item(item: TodoItem, print: bool, status_comment: Option<String>) -> TodoLibResult {
     let id = item.id;
     let old_status = match id {
         Some(id) => get_item(id).await.map(|i| i.status).unwrap_or(TodoStatus::NotStarted),
@@ -312,7 +312,9 @@ pub async fn update_item(item: TodoItem, print: bool) -> TodoLibResult {
             // should never be silenced by an unrelated "don't print this
             // edit" choice.
             if new_status != old_status {
-                print_status_change_ticket(&updated, new_status).await;
+                let comment = status_comment.as_deref();
+                log_status_change(&updated, new_status, comment).await;
+                print_status_change_ticket(&updated, new_status, comment).await;
             }
             print_ticket_if_requested(&mut updated, print).await?;
         }
@@ -344,7 +346,7 @@ pub async fn complete_item(id: i64, completed: bool) -> TodoLibResult {
 /// status-change ticket — see `print_status_change_ticket` — best-effort,
 /// same reasoning as `log_completion`: the status change itself already
 /// succeeded, so a print failure only warns, it doesn't fail the call.
-pub async fn set_status(id: i64, status: TodoStatus) -> TodoLibResult {
+pub async fn set_status(id: i64, status: TodoStatus, comment: Option<String>) -> TodoLibResult {
     let old_status = get_item(id).await.map(|i| i.status).unwrap_or(TodoStatus::NotStarted);
 
     backends::nb::set_status(notebook(), id, status).await?;
@@ -353,7 +355,9 @@ pub async fn set_status(id: i64, status: TodoStatus) -> TodoLibResult {
 
     if status != old_status {
         if let Some(item) = updated {
-            print_status_change_ticket(&item, status).await;
+            let comment = comment.as_deref();
+            log_status_change(&item, status, comment).await;
+            print_status_change_ticket(&item, status, comment).await;
         }
     }
 
@@ -366,8 +370,11 @@ pub async fn set_status(id: i64, status: TodoStatus) -> TodoLibResult {
 /// title (reusing `PrintJob.origin`, which already gets double-height +
 /// underline treatment) and the same QR code the task's detail/complete
 /// page uses (`manage-dan://todo/<id>`) — reusing both existing struct
-/// roles needs no new escpos formatting code.
-async fn print_status_change_ticket(item: &TodoItem, new_status: TodoStatus) {
+/// roles needs no new escpos formatting code. `comment` is an optional,
+/// caller-supplied note about *why* the status changed — never persisted on
+/// the `TodoItem` itself (see [`log_status_change`]), it only ever lives in
+/// this ticket and the paired daily-log entry.
+async fn print_status_change_ticket(item: &TodoItem, new_status: TodoStatus, comment: Option<&str>) {
     let id = item.id.unwrap_or(0);
     let width = printer::line_width();
     let sep = "-".repeat(width);
@@ -378,12 +385,46 @@ async fn print_status_change_ticket(item: &TodoItem, new_status: TodoStatus) {
     }
     lines.push(String::new());
     lines.push(format!("Status changed to: {}", new_status.label()));
+    if let Some(comment) = comment.filter(|c| !c.trim().is_empty()) {
+        lines.push(String::new());
+        lines.push(format!("Comment: {}", comment.trim()));
+    }
 
     let job = PrintJob::new(item.title.clone(), new_status.label().to_string(), lines)
         .with_qr(format!("manage-dan://todo/{}", id));
 
     if let Err(e) = job.execute(0, 0).await {
         warn!("Failed to print status-change ticket for Todo {}: {}", id, e);
+    }
+}
+
+/// Logs a status change as a daily-log entry (the same `nb log` notebook
+/// [`log_completion`] writes to), tagged `todo-status-change` and, if the
+/// todo belongs to a project, also `project-<slug>` — mirrors
+/// `log_completion`'s shape so status changes show up in the same places
+/// (Recent Log, a project's Log section) a completion already does.
+/// `comment` becomes the log entry's own content; it's never written back
+/// onto the todo itself, only into this log entry and the paired printed
+/// ticket. Best-effort: a logging failure only warns, same reasoning as
+/// `log_completion`.
+async fn log_status_change(item: &TodoItem, new_status: TodoStatus, comment: Option<&str>) {
+    let id = item.id.unwrap_or(0);
+    let mut tags = vec!["todo-status-change".to_string()];
+    if let Some(slug) = &item.project_title {
+        tags.push(format!("project-{}", slug));
+    }
+
+    let req = notes::CreateLogRequest {
+        title: format!("Status changed to {}: {}", new_status.label(), item.title),
+        content: match comment.map(str::trim) {
+            Some(c) if !c.is_empty() => c.to_string(),
+            _ => "(no comment)".to_string(),
+        },
+        tags: Some(tags),
+    };
+
+    if let Err(e) = notes::create_log(req).await {
+        warn!("set_status: failed to log status change for todo {}: {}", id, e);
     }
 }
 

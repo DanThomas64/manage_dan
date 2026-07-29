@@ -5303,6 +5303,12 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const original = editing ? todoItems.find(t => t.id === todoEditingId) : null;
     const now = new Date().toISOString();
 
+    let status_comment = null;
+    if (editing && original && status !== original.status) {
+      status_comment = prompt('Add a comment for this status change (optional):', '');
+      if (status_comment === null) return;
+    }
+
     const payload = editing && original ? {
       id: original.id,
       title,
@@ -5321,6 +5327,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       labels,
       reminders: original.reminders || [],
       print,
+      status_comment,
     } : {
       id: null,
       title,
