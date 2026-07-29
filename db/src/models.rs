@@ -75,3 +75,73 @@ pub struct NoteCacheRow {
     pub source_mtime: Option<DateTime<Local>>,
     pub synced_at: DateTime<Local>,
 }
+
+/// A per-occurrence "paid" tracking row for a `finances` recurring item or
+/// recurring transfer — see the `recurring_occurrence_status` table comment
+/// in `db::init`. Kept independent of any `finances` types (this crate
+/// doesn't depend on `finances`, and shouldn't — see `app::finances_occurrences`
+/// for the module that actually joins this against real recurring items);
+/// `period_start`/`paid_date` are plain ISO (`YYYY-MM-DD`) date strings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringOccurrenceRow {
+    pub recurring_id: String,
+    /// `"item"` | `"transfer"`.
+    pub kind: String,
+    pub period_start: String,
+    pub paid: bool,
+    pub paid_date: Option<String>,
+    pub updated_at: String,
+}
+
+/// A named, saved budget scenario — see the `budget_scenarios` table
+/// comment in `db::init`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetScenario {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+/// One hypothetical income/expense item belonging to a `BudgetScenario`.
+/// Deliberately mirrors `finances::models::PreviewItem`'s fields (this
+/// crate doesn't depend on `finances`, so it's its own plain-string copy —
+/// `app::finances_budget` converts between the two); `kind` is `"income"` |
+/// `"expense"`, `frequency` is `"weekly"` | `"biweekly"` | `"monthly"` |
+/// `"yearly"`, `reference_date` is an ISO (`YYYY-MM-DD`) date string.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetScenarioItemRow {
+    pub id: String,
+    pub scenario_id: String,
+    pub name: String,
+    pub kind: String,
+    pub amount: f64,
+    pub frequency: String,
+    pub reference_date: Option<String>,
+    pub account: String,
+    /// When set, applying this item's scenario auto-excludes the
+    /// referenced real recurring item/transfer id from the projection —
+    /// so an item representing "this payment, changed" never stacks with
+    /// the real payment it stands in for. `None` for a genuinely new item.
+    pub replaces_recurring_id: Option<String>,
+}
+
+/// One (category, account) budget allocation — see the
+/// `budget_cap_allocations` table comment in `db::init`. A category's
+/// overall budget cap is the sum of its allocations' `amount`s.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetCapAllocationRow {
+    pub id: String,
+    /// "stupid" | "survival".
+    pub category: String,
+    /// Which account this allocation's *projected future* spending should
+    /// post against if included in a projection — a real spending entry's
+    /// own account is separate and unaffected by this.
+    pub account: String,
+    pub amount: f64,
+    /// When true (and `amount` > 0), the Overview tab folds this one
+    /// allocation in as an ongoing monthly expense alongside ad-hoc
+    /// preview items and applied scenarios — independent of any other
+    /// allocation in the same category.
+    pub include_in_projection: bool,
+    pub updated_at: String,
+}

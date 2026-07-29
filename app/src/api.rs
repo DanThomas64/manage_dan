@@ -1638,6 +1638,41 @@ pub async fn delete_spending_handler(id: String) -> Result<impl Reply, Rejection
     }
 }
 
+#[derive(Deserialize)]
+pub struct UpdateSpendingBody {
+    pub id: String,
+    pub category: SpendingCategory,
+    pub amount: f64,
+    pub description: String,
+    pub date: NaiveDate,
+    pub account: String,
+}
+
+/// PUT /api/v1/finances/spending/:id
+pub async fn update_spending_handler(id: String, body: UpdateSpendingBody) -> Result<impl Reply, Rejection> {
+    if body.id != id {
+        return Err(warp::reject::custom(ApiError::MismatchedId));
+    }
+    match finances::update_spending_entry(
+        &finances_journal_path(),
+        &id,
+        body.category,
+        body.amount,
+        &body.description,
+        body.date,
+        &body.account,
+    )
+    .await
+    {
+        Ok(entry) => Ok(warp::reply::json(&entry)),
+        Err(FinancesLibError::EntryNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to update spending entry {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
 /// GET /api/v1/finances/spending/stats?from=&to=
 pub async fn spending_stats_handler(query: SpendingQuery) -> Result<impl Reply, Rejection> {
     let from = parse_date_or(&query.from, NaiveDate::from_ymd_opt(2000, 1, 1).unwrap());
@@ -1714,6 +1749,8 @@ pub struct AddRecurringBody {
     pub frequency: Frequency,
     pub reference_date: Option<NaiveDate>,
     pub account: String,
+    #[serde(default)]
+    pub category: Option<SpendingCategory>,
 }
 
 /// GET /api/v1/finances/recurring
@@ -1738,6 +1775,7 @@ pub async fn add_recurring_handler(body: AddRecurringBody) -> Result<impl Reply,
         body.frequency,
         body.reference_date,
         &body.account,
+        body.category,
     )
     .await
     {
@@ -1752,10 +1790,57 @@ pub async fn add_recurring_handler(body: AddRecurringBody) -> Result<impl Reply,
 /// DELETE /api/v1/finances/recurring/:id
 pub async fn delete_recurring_handler(id: String) -> Result<impl Reply, Rejection> {
     match finances::delete_recurring_item(&finances_journal_path(), &id).await {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Ok(()) => {
+            if let Err(e) = db::recurring_occurrence_delete_for(id.clone(), "item".to_string()).await {
+                error!("Failed to clean up occurrence tracking for recurring item {}: {}", id, e);
+            }
+            Ok(StatusCode::NO_CONTENT)
+        }
         Err(FinancesLibError::RecurringItemNotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
             error!("Failed to delete recurring item {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UpdateRecurringBody {
+    pub id: String,
+    pub name: String,
+    pub amount: f64,
+    pub kind: TxnKind,
+    pub label: String,
+    pub frequency: Frequency,
+    pub reference_date: Option<NaiveDate>,
+    pub account: String,
+    #[serde(default)]
+    pub category: Option<SpendingCategory>,
+}
+
+/// PUT /api/v1/finances/recurring/:id
+pub async fn update_recurring_handler(id: String, body: UpdateRecurringBody) -> Result<impl Reply, Rejection> {
+    if body.id != id {
+        return Err(warp::reject::custom(ApiError::MismatchedId));
+    }
+    match finances::update_recurring_item(
+        &finances_journal_path(),
+        &id,
+        &body.name,
+        body.amount,
+        body.kind,
+        &body.label,
+        body.frequency,
+        body.reference_date,
+        &body.account,
+        body.category,
+    )
+    .await
+    {
+        Ok(item) => Ok(warp::reply::json(&item)),
+        Err(FinancesLibError::RecurringItemNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to update recurring item {}: {}", id, e);
             Err(warp::reject::custom(ApiError::FinancesOperationFailed))
         }
     }
@@ -1806,10 +1891,161 @@ pub async fn add_recurring_transfer_handler(body: AddRecurringTransferBody) -> R
 /// DELETE /api/v1/finances/recurring-transfers/:id
 pub async fn delete_recurring_transfer_handler(id: String) -> Result<impl Reply, Rejection> {
     match finances::delete_recurring_transfer(&finances_journal_path(), &id).await {
-        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Ok(()) => {
+            if let Err(e) = db::recurring_occurrence_delete_for(id.clone(), "transfer".to_string()).await {
+                error!("Failed to clean up occurrence tracking for recurring transfer {}: {}", id, e);
+            }
+            Ok(StatusCode::NO_CONTENT)
+        }
         Err(FinancesLibError::RecurringTransferNotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
             error!("Failed to delete recurring transfer {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct OccurrencesQuery {
+    pub as_of: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct OccurrenceIdQuery {
+    pub kind: String,
+    pub as_of: Option<String>,
+}
+
+/// GET /api/v1/finances/recurring/occurrences?as_of=
+pub async fn list_recurring_occurrences_handler(query: OccurrencesQuery) -> Result<impl Reply, Rejection> {
+    let as_of = parse_date_or(&query.as_of, Local::now().date_naive());
+    match crate::finances_occurrences::compute_occurrence_summaries(
+        &finances_journal_path(),
+        as_of,
+        crate::finances_occurrences::LOOKBACK_MONTHS,
+    )
+    .await
+    {
+        Ok(summaries) => Ok(warp::reply::json(&summaries)),
+        Err(e) => {
+            error!("Failed to compute recurring occurrence summaries: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/finances/recurring/:id/occurrences?kind=&as_of=
+pub async fn get_recurring_occurrences_handler(id: String, query: OccurrenceIdQuery) -> Result<impl Reply, Rejection> {
+    let as_of = parse_date_or(&query.as_of, Local::now().date_naive());
+    match crate::finances_occurrences::compute_occurrences_for(
+        &finances_journal_path(),
+        &id,
+        &query.kind,
+        as_of,
+        crate::finances_occurrences::LOOKBACK_MONTHS,
+    )
+    .await
+    {
+        Ok(Some(summary)) => Ok(warp::reply::json(&summary)),
+        Ok(None) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to compute occurrence summary for {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct OccurrenceUpdate {
+    pub period_start: NaiveDate,
+    pub paid: bool,
+}
+
+#[derive(Deserialize)]
+pub struct PostOccurrencesBody {
+    pub updates: Vec<OccurrenceUpdate>,
+}
+
+/// POST /api/v1/finances/recurring/:id/occurrences?kind=
+/// Body: `{ "updates": [ { "period_start": "2026-05-01", "paid": true }, ... ] }`
+/// Upserts each occurrence's paid/not-paid state (a row's mere existence
+/// resolves it, regardless of `paid`'s value — see the `db` table's own
+/// doc comment) and returns the refreshed summary.
+pub async fn post_recurring_occurrences_handler(
+    id: String,
+    query: OccurrenceIdQuery,
+    body: PostOccurrencesBody,
+) -> Result<impl Reply, Rejection> {
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    for update in &body.updates {
+        let paid_date = if update.paid { Some(today.clone()) } else { None };
+        if let Err(e) = db::recurring_occurrence_upsert(
+            id.clone(),
+            query.kind.clone(),
+            update.period_start.format("%Y-%m-%d").to_string(),
+            update.paid,
+            paid_date,
+        )
+        .await
+        {
+            error!("Failed to upsert occurrence for {}: {}", id, e);
+            return Err(warp::reject::custom(ApiError::FinancesOperationFailed));
+        }
+    }
+    let as_of = Local::now().date_naive();
+    match crate::finances_occurrences::compute_occurrences_for(
+        &finances_journal_path(),
+        &id,
+        &query.kind,
+        as_of,
+        crate::finances_occurrences::LOOKBACK_MONTHS,
+    )
+    .await
+    {
+        Ok(Some(summary)) => Ok(warp::reply::json(&summary)),
+        Ok(None) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to refresh occurrence summary for {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UpdateRecurringTransferBody {
+    pub id: String,
+    pub name: String,
+    pub amount: f64,
+    pub frequency: Frequency,
+    pub reference_date: Option<NaiveDate>,
+    pub from_account: String,
+    pub to_account: String,
+}
+
+/// PUT /api/v1/finances/recurring-transfers/:id
+pub async fn update_recurring_transfer_handler(
+    id: String,
+    body: UpdateRecurringTransferBody,
+) -> Result<impl Reply, Rejection> {
+    if body.id != id {
+        return Err(warp::reject::custom(ApiError::MismatchedId));
+    }
+    match finances::update_recurring_transfer(
+        &finances_journal_path(),
+        &id,
+        &body.name,
+        body.amount,
+        body.frequency,
+        body.reference_date,
+        &body.from_account,
+        &body.to_account,
+    )
+    .await
+    {
+        Ok(item) => Ok(warp::reply::json(&item)),
+        Err(FinancesLibError::RecurringTransferNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to update recurring transfer {}: {}", id, e);
             Err(warp::reject::custom(ApiError::FinancesOperationFailed))
         }
     }
@@ -1863,6 +2099,19 @@ pub async fn preview_projection_handler(body: PreviewProjectionBody) -> Result<i
 pub struct AddAccountBody {
     pub name: String,
     pub kind: AccountKind,
+    #[serde(default)]
+    pub interest_rate: Option<f64>,
+    #[serde(default)]
+    pub credit_limit: Option<f64>,
+}
+
+#[derive(Deserialize)]
+pub struct UpdateAccountBody {
+    pub name: String,
+    #[serde(default)]
+    pub interest_rate: Option<f64>,
+    #[serde(default)]
+    pub credit_limit: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -1883,7 +2132,7 @@ pub async fn list_accounts_handler() -> Result<impl Reply, Rejection> {
 
 /// POST /api/v1/finances/accounts
 pub async fn add_account_handler(body: AddAccountBody) -> Result<impl Reply, Rejection> {
-    match finances::create_account(&finances_journal_path(), &body.name, body.kind).await {
+    match finances::create_account(&finances_journal_path(), &body.name, body.kind, body.interest_rate, body.credit_limit).await {
         Ok(account) => Ok(warp::reply::with_status(warp::reply::json(&account), StatusCode::CREATED)),
         Err(e) => {
             error!("Failed to create account: {}", e);
@@ -1904,6 +2153,18 @@ pub async fn delete_account_handler(id: String) -> Result<impl Reply, Rejection>
     }
 }
 
+/// PATCH /api/v1/finances/accounts/:id
+pub async fn update_account_handler(id: String, body: UpdateAccountBody) -> Result<impl Reply, Rejection> {
+    match finances::update_account(&finances_journal_path(), &id, &body.name, body.interest_rate, body.credit_limit).await {
+        Ok(account) => Ok(warp::reply::json(&account)),
+        Err(FinancesLibError::AccountNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to update account {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
 /// PATCH /api/v1/finances/accounts/:id/balance
 pub async fn set_account_balance_handler(
     id: String,
@@ -1914,6 +2175,362 @@ pub async fn set_account_balance_handler(
         Err(FinancesLibError::AccountNotFound(_)) => Err(warp::reject::not_found()),
         Err(e) => {
             error!("Failed to set balance for account {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/finances/accounts/:id/payoff?months=
+pub async fn account_payoff_handler(id: String, query: ProjectionQuery) -> Result<impl Reply, Rejection> {
+    let months = query.months.unwrap_or(12);
+    match finances::debt_payoff_projection(&finances_journal_path(), &id, months).await {
+        Ok(points) => Ok(warp::reply::json(&points)),
+        Err(FinancesLibError::AccountNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to compute payoff projection for account {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PayoffPreviewBody {
+    pub months: Option<u32>,
+    #[serde(default)]
+    pub extra_items: Vec<PreviewItem>,
+    #[serde(default)]
+    pub exclude_recurring_ids: Vec<String>,
+}
+
+/// POST /api/v1/finances/accounts/:id/payoff/preview
+/// Same as the plain payoff endpoint, plus an Overview-tab budget-scenario
+/// overlay (extra hypothetical items and/or excluded real recurring ids) —
+/// mirrors `preview_projection_handler`'s body shape for the combined
+/// chart's equivalent feature.
+pub async fn account_payoff_preview_handler(id: String, body: PayoffPreviewBody) -> Result<impl Reply, Rejection> {
+    let months = body.months.unwrap_or(12);
+    match finances::debt_payoff_projection_with_overrides(
+        &finances_journal_path(),
+        &id,
+        months,
+        &body.extra_items,
+        &body.exclude_recurring_ids,
+    )
+    .await
+    {
+        Ok(points) => Ok(warp::reply::json(&points)),
+        Err(FinancesLibError::AccountNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to compute payoff preview for account {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PayoffPlanBody {
+    pub months: Option<u32>,
+    pub minimum_interest_only: bool,
+    pub supplementary_amount: f64,
+    pub supplementary_frequency: Frequency,
+    #[serde(default)]
+    pub supplementary_reference_date: Option<NaiveDate>,
+}
+
+/// POST /api/v1/finances/accounts/:id/payoff/plan
+/// A payment plan designed from scratch — replaces real recurring
+/// items/transfers against this account entirely (never stacks with them),
+/// unlike `/payoff/preview`'s additive overlay.
+pub async fn account_payoff_plan_handler(id: String, body: PayoffPlanBody) -> Result<impl Reply, Rejection> {
+    let months = body.months.unwrap_or(12);
+    match finances::debt_payoff_projection_with_plan(
+        &finances_journal_path(),
+        &id,
+        months,
+        body.minimum_interest_only,
+        body.supplementary_amount,
+        body.supplementary_frequency,
+        body.supplementary_reference_date,
+    )
+    .await
+    {
+        Ok(points) => Ok(warp::reply::json(&points)),
+        Err(FinancesLibError::AccountNotFound(_)) => Err(warp::reject::not_found()),
+        Err(e) => {
+            error!("Failed to compute payoff plan for account {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/finances/accounts/:id/history?months=
+/// Same plain hledger-forecast math as the combined `/projection` endpoint,
+/// scoped to this one account — deliberately *not* the interest-aware
+/// `/payoff` math (that stays liability-specific); this works for any
+/// account, asset or liability.
+pub async fn account_balance_history_handler(id: String, query: ProjectionQuery) -> Result<impl Reply, Rejection> {
+    let months = query.months.unwrap_or(12);
+    let journal_path = finances_journal_path();
+    let accounts = match finances::list_accounts(&journal_path).await {
+        Ok(accounts) => accounts,
+        Err(e) => {
+            error!("Failed to list accounts for balance history: {}", e);
+            return Err(warp::reject::custom(ApiError::FinancesOperationFailed));
+        }
+    };
+    let account = match accounts.iter().find(|a| a.id == id) {
+        Some(a) => a,
+        None => return Err(warp::reject::not_found()),
+    };
+    match finances::account_balance_history(&journal_path, &account.hledger_account(), months).await {
+        Ok(points) => Ok(warp::reply::json(&points)),
+        Err(e) => {
+            error!("Failed to compute balance history for account {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// POST /api/v1/finances/accounts/:id/history/preview
+/// Same body shape as `/payoff/preview` (reuses `PayoffPreviewBody`) —
+/// an additive overlay of hypothetical items and/or excluded real recurring
+/// ids on top of this one account's own balance trend.
+pub async fn account_balance_history_preview_handler(
+    id: String,
+    body: PayoffPreviewBody,
+) -> Result<impl Reply, Rejection> {
+    let months = body.months.unwrap_or(12);
+    let journal_path = finances_journal_path();
+    let accounts = match finances::list_accounts(&journal_path).await {
+        Ok(accounts) => accounts,
+        Err(e) => {
+            error!("Failed to list accounts for balance history preview: {}", e);
+            return Err(warp::reject::custom(ApiError::FinancesOperationFailed));
+        }
+    };
+    let account = match accounts.iter().find(|a| a.id == id) {
+        Some(a) => a,
+        None => return Err(warp::reject::not_found()),
+    };
+    match finances::account_balance_history_preview(
+        &journal_path,
+        &account.hledger_account(),
+        months,
+        &body.extra_items,
+        &body.exclude_recurring_ids,
+    )
+    .await
+    {
+        Ok(points) => Ok(warp::reply::json(&points)),
+        Err(e) => {
+            error!("Failed to compute balance history preview for account {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+// --- Budget scenarios & caps (Finances Overview tab) ---
+
+/// GET /api/v1/finances/budget/scenarios
+pub async fn list_scenarios_handler() -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::list_scenarios().await {
+        Ok(scenarios) => Ok(warp::reply::json(&scenarios)),
+        Err(e) => {
+            error!("Failed to list budget scenarios: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CreateScenarioBody {
+    pub name: String,
+}
+
+/// POST /api/v1/finances/budget/scenarios
+pub async fn create_scenario_handler(body: CreateScenarioBody) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::create_scenario(&body.name).await {
+        Ok(scenario) => Ok(warp::reply::with_status(warp::reply::json(&scenario), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to create budget scenario: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/finances/budget/scenarios/:id
+pub async fn delete_scenario_handler(id: String) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::delete_scenario(&id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to delete budget scenario {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/finances/budget/scenarios/:id/items
+pub async fn list_scenario_items_handler(id: String) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::list_scenario_items(&id).await {
+        Ok(items) => Ok(warp::reply::json(&items)),
+        Err(e) => {
+            error!("Failed to list budget scenario items for {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AddScenarioItemBody {
+    pub name: String,
+    pub kind: String,
+    pub amount: f64,
+    pub frequency: String,
+    #[serde(default)]
+    pub reference_date: Option<String>,
+    pub account: String,
+    /// When set, applying this item's scenario auto-excludes the
+    /// referenced real recurring item/transfer so it never stacks with
+    /// the payment this item stands in for.
+    #[serde(default)]
+    pub replaces_recurring_id: Option<String>,
+}
+
+/// POST /api/v1/finances/budget/scenarios/:id/items
+pub async fn add_scenario_item_handler(id: String, body: AddScenarioItemBody) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::add_scenario_item(
+        &id,
+        &body.name,
+        &body.kind,
+        body.amount,
+        &body.frequency,
+        body.reference_date,
+        &body.account,
+        body.replaces_recurring_id,
+    )
+    .await
+    {
+        Ok(item) => Ok(warp::reply::with_status(warp::reply::json(&item), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add budget scenario item to {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/finances/budget/scenarios/:id/items/:item_id
+pub async fn delete_scenario_item_handler(id: String, item_id: String) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::delete_scenario_item(&item_id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to delete budget scenario item {} from {}: {}", item_id, id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// PUT /api/v1/finances/budget/scenarios/:id/items/:item_id
+pub async fn update_scenario_item_handler(
+    id: String,
+    item_id: String,
+    body: AddScenarioItemBody,
+) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::update_scenario_item(
+        &item_id,
+        &id,
+        &body.name,
+        &body.kind,
+        body.amount,
+        &body.frequency,
+        body.reference_date,
+        &body.account,
+        body.replaces_recurring_id,
+    )
+    .await
+    {
+        Ok(item) => Ok(warp::reply::json(&item)),
+        Err(e) => {
+            error!("Failed to update budget scenario item {} in {}: {}", item_id, id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// GET /api/v1/finances/budget/cap-allocations
+pub async fn list_cap_allocations_handler() -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::list_cap_allocations().await {
+        Ok(allocations) => Ok(warp::reply::json(&allocations)),
+        Err(e) => {
+            error!("Failed to list budget cap allocations: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AddCapAllocationBody {
+    pub category: String,
+    pub account: String,
+    pub amount: f64,
+    #[serde(default)]
+    pub include_in_projection: bool,
+}
+
+/// POST /api/v1/finances/budget/cap-allocations
+pub async fn add_cap_allocation_handler(body: AddCapAllocationBody) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::add_cap_allocation(
+        &body.category,
+        &body.account,
+        body.amount,
+        body.include_in_projection,
+    )
+    .await
+    {
+        Ok(allocation) => Ok(warp::reply::with_status(warp::reply::json(&allocation), StatusCode::CREATED)),
+        Err(e) => {
+            error!("Failed to add budget cap allocation: {}", e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct UpdateCapAllocationBody {
+    pub category: String,
+    pub account: String,
+    pub amount: f64,
+    #[serde(default)]
+    pub include_in_projection: bool,
+}
+
+/// PUT /api/v1/finances/budget/cap-allocations/:id
+pub async fn update_cap_allocation_handler(
+    id: String,
+    body: UpdateCapAllocationBody,
+) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::update_cap_allocation(
+        &id,
+        &body.category,
+        &body.account,
+        body.amount,
+        body.include_in_projection,
+    )
+    .await
+    {
+        Ok(allocation) => Ok(warp::reply::json(&allocation)),
+        Err(e) => {
+            error!("Failed to update budget cap allocation {}: {}", id, e);
+            Err(warp::reject::custom(ApiError::FinancesOperationFailed))
+        }
+    }
+}
+
+/// DELETE /api/v1/finances/budget/cap-allocations/:id
+pub async fn delete_cap_allocation_handler(id: String) -> Result<impl Reply, Rejection> {
+    match crate::finances_budget::delete_cap_allocation(&id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            error!("Failed to delete budget cap allocation {}: {}", id, e);
             Err(warp::reject::custom(ApiError::FinancesOperationFailed))
         }
     }
@@ -2306,6 +2923,10 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
     let recurring = warp::path("recurring");
     let recurring_transfers = warp::path("recurring-transfers");
     let accounts = warp::path("accounts");
+    let budget = warp::path("budget");
+    let scenarios = warp::path("scenarios");
+    let items = warp::path("items");
+    let cap_allocations = warp::path("cap-allocations");
 
     // GET /api/v1/finances/spending?from=&to=
     let list_spending = finances
@@ -2330,6 +2951,15 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(warp::path::end())
         .and(warp::delete())
         .and_then(delete_spending_handler);
+
+    // PUT /api/v1/finances/spending/:id
+    let update_spending = finances
+        .and(spending)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and_then(update_spending_handler);
 
     // GET /api/v1/finances/spending/stats?from=&to=
     let spending_stats = finances
@@ -2387,6 +3017,15 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(warp::delete())
         .and_then(delete_recurring_handler);
 
+    // PUT /api/v1/finances/recurring/:id
+    let update_recurring = finances
+        .and(recurring)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and_then(update_recurring_handler);
+
     // GET /api/v1/finances/recurring-transfers
     let list_recurring_transfers = finances
         .and(recurring_transfers)
@@ -2409,6 +3048,45 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(warp::path::end())
         .and(warp::delete())
         .and_then(delete_recurring_transfer_handler);
+
+    // PUT /api/v1/finances/recurring-transfers/:id
+    let update_recurring_transfer = finances
+        .and(recurring_transfers)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and_then(update_recurring_transfer_handler);
+
+    // GET /api/v1/finances/recurring/occurrences?as_of=
+    let list_recurring_occurrences = finances
+        .and(recurring)
+        .and(warp::path("occurrences"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<OccurrencesQuery>())
+        .and_then(list_recurring_occurrences_handler);
+
+    // GET /api/v1/finances/recurring/:id/occurrences?kind=&as_of=
+    let get_recurring_occurrences = finances
+        .and(recurring)
+        .and(warp::path::param::<String>())
+        .and(warp::path("occurrences"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<OccurrenceIdQuery>())
+        .and_then(get_recurring_occurrences_handler);
+
+    // POST /api/v1/finances/recurring/:id/occurrences?kind=
+    let post_recurring_occurrences = finances
+        .and(recurring)
+        .and(warp::path::param::<String>())
+        .and(warp::path("occurrences"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(query::<OccurrenceIdQuery>())
+        .and(warp::body::json())
+        .and_then(post_recurring_occurrences_handler);
 
     // GET /api/v1/finances/projection?months=
     let projection = finances
@@ -2450,6 +3128,15 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(warp::delete())
         .and_then(delete_account_handler);
 
+    // PATCH /api/v1/finances/accounts/:id
+    let update_account = finances
+        .and(accounts)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::patch())
+        .and(warp::body::json())
+        .and_then(update_account_handler);
+
     // PATCH /api/v1/finances/accounts/:id/balance
     let set_account_balance = finances
         .and(accounts)
@@ -2460,25 +3147,205 @@ fn finances_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + C
         .and(warp::body::json())
         .and_then(set_account_balance_handler);
 
+    // GET /api/v1/finances/accounts/:id/payoff?months=
+    let account_payoff = finances
+        .and(accounts)
+        .and(warp::path::param::<String>())
+        .and(warp::path("payoff"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<ProjectionQuery>())
+        .and_then(account_payoff_handler);
+
+    // POST /api/v1/finances/accounts/:id/payoff/preview
+    let account_payoff_preview = finances
+        .and(accounts)
+        .and(warp::path::param::<String>())
+        .and(warp::path("payoff"))
+        .and(warp::path("preview"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(account_payoff_preview_handler);
+
+    // POST /api/v1/finances/accounts/:id/payoff/plan
+    let account_payoff_plan = finances
+        .and(accounts)
+        .and(warp::path::param::<String>())
+        .and(warp::path("payoff"))
+        .and(warp::path("plan"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(account_payoff_plan_handler);
+
+    // GET /api/v1/finances/accounts/:id/history?months=
+    let account_balance_history = finances
+        .and(accounts)
+        .and(warp::path::param::<String>())
+        .and(warp::path("history"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(query::<ProjectionQuery>())
+        .and_then(account_balance_history_handler);
+
+    // POST /api/v1/finances/accounts/:id/history/preview
+    let account_balance_history_preview = finances
+        .and(accounts)
+        .and(warp::path::param::<String>())
+        .and(warp::path("history"))
+        .and(warp::path("preview"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(account_balance_history_preview_handler);
+
+    // GET/POST /api/v1/finances/budget/scenarios
+    let list_scenarios = finances
+        .and(budget)
+        .and(scenarios)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_scenarios_handler);
+
+    let create_scenario = finances
+        .and(budget)
+        .and(scenarios)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(create_scenario_handler);
+
+    // DELETE /api/v1/finances/budget/scenarios/:id
+    let delete_scenario = finances
+        .and(budget)
+        .and(scenarios)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_scenario_handler);
+
+    // GET/POST /api/v1/finances/budget/scenarios/:id/items
+    let list_scenario_items = finances
+        .and(budget)
+        .and(scenarios)
+        .and(warp::path::param::<String>())
+        .and(items)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_scenario_items_handler);
+
+    let add_scenario_item = finances
+        .and(budget)
+        .and(scenarios)
+        .and(warp::path::param::<String>())
+        .and(items)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(add_scenario_item_handler);
+
+    // DELETE /api/v1/finances/budget/scenarios/:id/items/:item_id
+    let delete_scenario_item = finances
+        .and(budget)
+        .and(scenarios)
+        .and(warp::path::param::<String>())
+        .and(items)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_scenario_item_handler);
+
+    // PUT /api/v1/finances/budget/scenarios/:id/items/:item_id
+    let update_scenario_item = finances
+        .and(budget)
+        .and(scenarios)
+        .and(warp::path::param::<String>())
+        .and(items)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and_then(update_scenario_item_handler);
+
+    // GET /api/v1/finances/budget/cap-allocations
+    let list_cap_allocations = finances
+        .and(budget)
+        .and(cap_allocations)
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_cap_allocations_handler);
+
+    // POST /api/v1/finances/budget/cap-allocations
+    let add_cap_allocation = finances
+        .and(budget)
+        .and(cap_allocations)
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(add_cap_allocation_handler);
+
+    // PUT /api/v1/finances/budget/cap-allocations/:id
+    let update_cap_allocation = finances
+        .and(budget)
+        .and(cap_allocations)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and_then(update_cap_allocation_handler);
+
+    // DELETE /api/v1/finances/budget/cap-allocations/:id
+    let delete_cap_allocation = finances
+        .and(budget)
+        .and(cap_allocations)
+        .and(warp::path::param::<String>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_cap_allocation_handler);
+
     list_spending
         .or(add_spending)
         .or(spending_stats)
         .or(delete_spending)
+        .or(update_spending)
         .or(list_transfers)
         .or(add_transfer)
         .or(delete_transfer)
         .or(list_recurring)
         .or(add_recurring)
         .or(delete_recurring)
+        .or(update_recurring)
         .or(list_recurring_transfers)
         .or(add_recurring_transfer)
         .or(delete_recurring_transfer)
+        .or(update_recurring_transfer)
+        .or(list_recurring_occurrences)
+        .or(get_recurring_occurrences)
+        .or(post_recurring_occurrences)
         .or(projection)
         .or(preview_projection)
         .or(list_accounts)
         .or(add_account)
         .or(delete_account)
+        .or(update_account)
         .or(set_account_balance)
+        .or(account_payoff)
+        .or(account_payoff_preview)
+        .or(account_payoff_plan)
+        .or(account_balance_history)
+        .or(account_balance_history_preview)
+        .or(list_scenarios)
+        .or(create_scenario)
+        .or(delete_scenario)
+        .or(list_scenario_items)
+        .or(add_scenario_item)
+        .or(delete_scenario_item)
+        .or(update_scenario_item)
+        .or(list_cap_allocations)
+        .or(add_cap_allocation)
+        .or(update_cap_allocation)
+        .or(delete_cap_allocation)
 }
 
 /// Defines routes for the notes subsystem.

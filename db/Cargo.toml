@@ -1,6 +1,6 @@
 [package]
 name = "db"
-version = "0.6.0"
+version = "0.11.0"
 authors.workspace = true
 edition.workspace = true
 
@@ -14,3 +14,6 @@ tokio-rusqlite = "0.7.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 serde = { workspace = true, features = ["derive"] } # Added serde dependency for TodoItem models
 serde_json.workspace = true
+
+[dev-dependencies]
+uuid = { workspace = true }

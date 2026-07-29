@@ -3,10 +3,19 @@
 //! This application initializes all necessary subsystems (database, logging, printer, etc.),
 //! monitors their status, and starts the HTTP API server.
 
+// warp's `.or()`-chained route filters nest one generic type per route;
+// `finances_routes()` alone is now 30+ deep (spending/recurring/accounts/
+// budget/payoff-preview), which overflows rustc's default type-layout
+// query recursion depth (confirmed: `cargo test` failed with "queries
+// overflow the depth limit!" at the default 128 before this was added).
+#![recursion_limit = "512"]
+
 use nogo::{SystemsGoNogo, Status};
 
 pub mod config;
 pub mod error;
+pub mod finances_budget;
+pub mod finances_occurrences;
 pub mod macros;
 pub mod nogo;
 pub mod prelude;

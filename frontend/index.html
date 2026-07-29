@@ -868,6 +868,65 @@
     }
     #offline-banner.show { display: flex; }
 
+    /* ── Occurrence catch-up modal (recurring paid-tracking) ── */
+    /* First modal/dialog primitive in this file — everything else here is
+       either a native confirm()/prompt(), a full-screen .app-overlay
+       section, or a small anchored .cat-menu-dropdown popover. This one
+       needs an actual centered dialog with a per-row form, so it gets its
+       own backdrop; z-index sits above .cat-menu-dropdown (200) and
+       .app-overlay (100) but below #toast/#offline-banner (1000+) so a
+       toast fired while the modal is open still reads on top. */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 500;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-dialog {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      width: min(420px, 100%);
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      border-bottom: 1px dashed var(--border);
+      font-family: var(--font-mono);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 0.85rem;
+      color: var(--accent-cont);
+    }
+    .modal-body { padding: 12px 16px; overflow-y: auto; }
+    .modal-footer {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      border-top: 1px dashed var(--border);
+      flex-shrink: 0;
+    }
+    .occurrence-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px dashed var(--border);
+    }
+    .occurrence-row:last-child { border-bottom: none; }
+
     /* ═══════════════════════════════════════════
        MOBILE  (touch devices or ≤ 1024px)
     ═══════════════════════════════════════════ */
@@ -1730,6 +1789,22 @@
 <div id="toast"></div>
 <div id="offline-banner">&#9889; Offline — showing cached data</div>
 
+<!-- Recurring occurrence catch-up modal — lets a user resolve multiple
+     missed/overdue periods of one recurring item/transfer at once. -->
+<div id="occurrence-modal-backdrop" class="modal-backdrop" onclick="if(event.target===this) closeOccurrenceModal()">
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <span id="occurrence-modal-title">Catch Up</span>
+      <button class="btn-ghost btn-sm" onclick="closeOccurrenceModal()">&times;</button>
+    </div>
+    <div class="modal-body" id="occurrence-modal-body"></div>
+    <div class="modal-footer">
+      <button class="btn-primary" style="flex:1;padding:10px;" onclick="saveOccurrenceModal()">Save</button>
+      <button class="btn-ghost btn-sm" onclick="closeOccurrenceModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <!-- Home overlay: landing page with a big button per section -->
 <div id="home-overlay" class="app-overlay active">
   <div class="home-hero">
@@ -1769,11 +1844,14 @@
         </button>
         <button class="home-tile-add" onclick="quickAddTodo();" aria-label="Add todo" title="Add todo">+ Add</button>
       </div>
-      <button class="home-tile" onclick="showView('finances')">
-        <span class="home-tile-icon">&#128176;</span>
-        <span class="home-tile-label">Finances</span>
-        <span class="home-tile-version" id="ver-finances"></span>
-      </button>
+      <div class="home-tile-wrap">
+        <button class="home-tile" onclick="showView('finances')">
+          <span class="home-tile-icon">&#128176;</span>
+          <span class="home-tile-label">Finances</span>
+          <span class="home-tile-version" id="ver-finances"></span>
+        </button>
+        <button class="home-tile-add" onclick="quickAddSpending();" aria-label="Add spending entry" title="Add spending entry">+ Add</button>
+      </div>
       <!-- Favourited projects and the Projects button always come last. -->
       <div id="home-favourite-tiles" style="display:contents;"></div>
       <button class="home-tile" onclick="showView('projects')">
@@ -2076,6 +2154,7 @@
       <button class="finances-tab active" id="ftab-spending" onclick="financesShowTab('spending')">Spending</button>
       <button class="finances-tab" id="ftab-recurring" onclick="financesShowTab('recurring')">Recurring</button>
       <button class="finances-tab" id="ftab-accounts" onclick="financesShowTab('accounts')">Accounts</button>
+      <button class="finances-tab" id="ftab-overview" onclick="financesShowTab('overview')">Overview</button>
     </div>
   </div>
 
@@ -2144,17 +2223,22 @@
         </div>
       </div>
 
-      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitSpendingEntry()">Add Entry</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary" style="flex:1;padding:10px;" id="fin-spending-submit-btn" onclick="submitSpendingEntry()">Add Entry</button>
+        <button class="btn-ghost btn-sm" id="fin-spending-cancel-edit" style="display:none;" onclick="spendingResetForm()">Cancel</button>
+      </div>
     </div>
 
     <div class="cat-totals" id="fin-category-totals" style="display:flex;gap:12px;padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
       <div style="flex:1;text-align:center;">
         <div class="field-label">Stupid (this month)</div>
         <div style="font-family:var(--font-mono);font-weight:700;font-size:1.1rem;" id="fin-total-stupid">$0.00</div>
+        <div class="field-label" id="fin-total-stupid-recurring"></div>
       </div>
       <div style="flex:1;text-align:center;">
         <div class="field-label">Survival (this month)</div>
         <div style="font-family:var(--font-mono);font-weight:700;font-size:1.1rem;" id="fin-total-survival">$0.00</div>
+        <div class="field-label" id="fin-total-survival-recurring"></div>
       </div>
     </div>
 
@@ -2186,7 +2270,7 @@
       </div>
       <div style="display:flex;gap:12px;">
         <div style="flex:1;" id="fin-rec-label-wrap">
-          <div class="field-label">Label <span style="color:var(--text-dim)">(category)</span></div>
+          <div class="field-label">Label <span style="color:var(--text-dim)">(sub-account)</span></div>
           <input type="text" id="fin-rec-label" placeholder="e.g. salary, netflix, taxes" autocomplete="off" />
         </div>
         <div style="flex:1;display:none;" id="fin-rec-from-wrap">
@@ -2217,31 +2301,31 @@
           <input type="date" id="fin-rec-refdate" style="width:100%;" />
         </div>
       </div>
-      <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitRecurringItem()">Add Recurring Item</button>
+      <div style="display:flex;gap:12px;" id="fin-rec-category-wrap">
+        <div style="flex:1;">
+          <div class="field-label">Budget Category <span style="color:var(--text-dim)">(optional — folds into Budget Caps on Overview)</span></div>
+          <select id="fin-rec-category" style="width:100%;">
+            <option value="">&mdash; None &mdash;</option>
+            <option value="stupid">Stupid</option>
+            <option value="survival">Survival</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-primary" style="flex:1;padding:10px;" id="fin-rec-submit-btn" onclick="submitRecurringItem()">Add Recurring Item</button>
+        <button class="btn-ghost btn-sm" id="fin-rec-cancel-edit" style="display:none;" onclick="recurringResetForm()">Cancel</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;padding:10px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
+      <div style="flex:1;text-align:center;">
+        <div class="field-label">Monthly Net Income/Expense</div>
+        <div id="recurring-monthly-net" style="font-family:var(--font-mono);font-weight:700;font-size:1.1rem;">$0.00</div>
+      </div>
     </div>
 
     <div class="notes-list" id="fin-recurring-list">
       <div class="empty-state"><span class="icon">&#128257;</span><span>No recurring items yet</span></div>
-    </div>
-
-    <div style="padding:8px 16px;border-top:1px dashed var(--border);flex-shrink:0;">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
-        <div class="field-label">Preview test items <span style="color:var(--text-dim)">(not saved — shows their combined effect on the chart below)</span></div>
-        <button class="btn-ghost btn-sm" onclick="addPreviewRow()">+ Add</button>
-      </div>
-      <div id="fin-preview-rows" style="margin-top:6px;"></div>
-      <div style="display:flex;gap:8px;margin-top:4px;">
-        <button class="btn-primary" style="flex:1;padding:8px;" onclick="submitProjectionPreview()">Preview</button>
-        <button class="btn-ghost btn-sm" id="fin-preview-clear-btn" style="display:none;" onclick="clearProjectionPreview()">Clear</button>
-      </div>
-    </div>
-
-    <div style="padding:12px 16px;flex-shrink:0;">
-      <div class="field-label">Projected balance trend (<span id="fin-months-label">12 months</span>)</div>
-      <input type="range" id="fin-months-slider" min="1" max="36" value="12" style="width:100%;" oninput="onMonthsSliderInput(this.value)" />
-      <div style="width:100%;">
-        <canvas id="fin-projection-chart"></canvas>
-      </div>
     </div>
   </div>
 
@@ -2255,17 +2339,104 @@
         </div>
         <div style="width:130px;">
           <div class="field-label">Kind</div>
-          <select id="fin-acct-kind" style="width:100%;">
+          <select id="fin-acct-kind" style="width:100%;" onchange="updateAccountKindFields()">
             <option value="asset">Asset</option>
             <option value="liability">Liability</option>
           </select>
         </div>
+      </div>
+      <div style="display:none;" id="fin-acct-rate-wrap">
+        <div class="field-label">Interest Rate <span style="color:var(--text-dim)">(APR %, optional)</span></div>
+        <input type="number" id="fin-acct-rate" step="0.01" min="0" placeholder="e.g. 24.99" style="width:100%;" />
+      </div>
+      <div style="display:none;" id="fin-acct-limit-wrap">
+        <div class="field-label">Credit Limit <span style="color:var(--text-dim)">($, optional — display only, not enforced)</span></div>
+        <input type="number" id="fin-acct-limit" step="0.01" min="0" placeholder="e.g. 2000" style="width:100%;" />
       </div>
       <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitAccount()">Add Account</button>
     </div>
 
     <div class="notes-list" id="fin-accounts-list">
       <div class="empty-state"><span class="icon">&#127974;</span><span>No accounts yet</span></div>
+    </div>
+  </div>
+
+  <!-- Overview panel: consolidated projection + payoff + budget (scenarios,
+       caps) — the only place either kind of projection chart lives; the
+       Recurring/Accounts tabs above keep only their own item CRUD. -->
+  <div class="finances-panel" id="fpanel-overview" style="overflow-y:auto;">
+    <div style="padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;background:var(--surface2);">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="field-label" style="color:var(--accent-cont);font-weight:700;">How this tab works</div>
+        <button class="btn-ghost btn-sm" id="overview-help-toggle" onclick="toggleOverviewHelp()">? Help</button>
+      </div>
+      <div class="overview-help" style="display:none;font-size:0.82rem;color:var(--text-dim);line-height:1.5;margin-top:4px;">
+        Everything below reacts together to whatever you're currently "trying on": ad-hoc items you type in, and saved scenarios you check. A scenario item only ever excludes a real recurring payment if it's explicitly linked to one — via "Import Recurring" (auto-linked) or the "Replaces" dropdown when adding an item by hand — so real payments never silently stack with a scenario meant to change them, and a genuinely new scenario item never removes anything. The balance chart and every debt's payoff chart always reflect the same combined "what if" — nothing here changes your real accounts or journal until you actually add a real Spending/Recurring entry elsewhere in the app. Budget Caps at the bottom is normally just this month's actual spending vs. a limit you set, unrelated to the charts — unless you check "Include in projection" on one, in which case it joins the same combined "what if" as an ongoing monthly expense.
+      </div>
+    </div>
+
+    <div style="padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div class="field-label">Saved Scenarios <span style="color:var(--text-dim)">(check to apply to the charts below)</span></div>
+        <button class="btn-ghost btn-sm" onclick="createBudgetScenario()">+ New</button>
+      </div>
+      <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:4px;">
+        A scenario is a named, saved "what if" — e.g. a raise, a new subscription, an extra debt payment. Create one, open its <b>Items</b> list, and add income/expense lines by hand, or hit <b>Import Recurring</b> to copy every real recurring item in as a starting point you can then edit freely (editing a scenario item never touches the real one). Each item's "Replaces" field decides whether it stands in for a real payment (excluded automatically so it never stacks — set for you on import, or pick one by hand) or is a genuinely new payment (nothing excluded). Checking a scenario's box folds its items into both charts below; unchecking removes them again. You can check multiple scenarios at once to combine them.
+      </div>
+      <div id="budget-scenarios-list" style="margin-top:6px;"></div>
+    </div>
+
+    <div style="padding:8px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+        <div class="field-label">Ad-hoc preview items <span style="color:var(--text-dim)">(not saved — shows their combined effect on the charts below)</span></div>
+        <button class="btn-ghost btn-sm" onclick="addPreviewRow()">+ Add</button>
+      </div>
+      <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:4px;">
+        For a quick one-off check you don't want to keep — add a row and hit <b>Preview</b>. Unlike a saved scenario, these rows disappear the moment you leave this tab or the underlying recurring-item list changes; save it as a scenario instead if you want to come back to it later.
+      </div>
+      <div id="fin-preview-rows" style="margin-top:6px;"></div>
+      <div style="display:flex;gap:8px;margin-top:4px;">
+        <button class="btn-primary" style="flex:1;padding:8px;" onclick="submitProjectionPreview()">Preview</button>
+        <button class="btn-ghost btn-sm" id="fin-preview-clear-btn" style="display:none;" onclick="clearProjectionPreview()">Clear</button>
+      </div>
+    </div>
+
+    <div style="padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
+      <div class="field-label">Projected balance trend (<span id="fin-months-label">12 months</span>)</div>
+      <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:2px;margin-bottom:4px;">
+        Solid line is your real accounts, forecast forward with no changes. The dashed "Preview scenario" line (when present) is the same forecast with every checked scenario and ad-hoc row layered on top, so you can see the gap between "if nothing changes" and "if I do this."
+      </div>
+      <input type="range" id="fin-months-slider" min="1" max="36" value="12" style="width:100%;" oninput="onMonthsSliderInput(this.value)" />
+      <div style="width:100%;">
+        <canvas id="fin-projection-chart"></canvas>
+      </div>
+      <div class="field-label" id="overview-breakdown" style="margin-top:6px;"></div>
+      <div id="overview-checkpoint-summary" style="margin-top:6px;"></div>
+    </div>
+
+    <div style="padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
+      <div class="field-label">Debt Payoff Projections</div>
+      <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:2px;margin-bottom:4px;">
+        One chart per liability account. By default it uses that account's interest rate plus whatever real recurring items and <b>recurring transfers</b> already target it — a recurring transfer <i>into</i> this account already pays it down, and a transfer <i>out of</i> it already makes it worse, exactly like a scheduled expense/income item; each card lists what's currently counted below its chart so you can confirm it. Also affected by scenarios/ad-hoc items checked above. Turn on <b>Use payment plan</b> on a card to design payments from scratch instead — "Minimum (interest-only)" holds the balance flat by paying exactly each month's interest, and "Supplementary" adds a flat extra payment on top. A plan <b>replaces</b> that account's real payments for this chart (never both at once, including recurring transfers against it); its interest-only portion only shows up here, not in the combined balance chart above, since that chart can't model dynamic interest — only a plan's flat supplementary amount does.
+      </div>
+      <div id="overview-payoff-list" style="margin-top:6px;"></div>
+    </div>
+
+    <div style="padding:12px 16px;border-bottom:1px dashed var(--border);flex-shrink:0;">
+      <div class="field-label">Account Balances</div>
+      <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:2px;margin-bottom:4px;">
+        Check any account below to chart its own balance over time — same plain forecast math as the combined chart above (not the interest-aware payoff math Debt Payoff Projections uses), reacting to the same scenarios/ad-hoc items. Nothing is charted automatically; pick only the accounts you want to watch.
+      </div>
+      <div id="account-balance-checklist" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px;"></div>
+      <div id="account-balance-cards"></div>
+    </div>
+
+    <div style="padding:12px 16px;flex-shrink:0;">
+      <div class="field-label">Monthly Budget Caps</div>
+      <div class="overview-help" style="display:none;font-size:0.78rem;color:var(--text-dim);margin-top:2px;margin-bottom:4px;">
+A category's overall budget cap is the sum of its allocations — split it across as many accounts as you like (e.g. part of "Stupid" on a credit card, part on checking), compared against this month's actual Spending-tab totals <b>plus</b> any recurring expense items you've tagged with that category on the Recurring tab (their amounts normalized to a monthly equivalent and shown as "+ $X/mo recurring" — a subscription counts against your budget even before it's actually charged again). Each allocation has its own "Include in projection" checkbox to fold it into the charts above as an ongoing monthly expense — off by default, so adding an allocation alone never changes anything else.
+      </div>
+      <div id="budget-caps-list" style="margin-top:6px;"></div>
     </div>
   </div>
 
@@ -3876,8 +4047,31 @@
       <button class="home-tile" onclick="showView('project-detail', false, {projectId: ${p.id}})">
         <span class="home-tile-icon">${p.icon ? esc(p.icon) : '&#128193;'}</span>
         <span class="home-tile-label">${esc(p.name)}</span>
+        <span class="home-tile-version" id="fav-todo-count-${p.id}"></span>
       </button>`).join('');
     fitHomeTileLabels();
+    loadFavouriteTodoCounts(favourites);
+  }
+
+  // Outstanding-todo count under each favourited project's Home tile —
+  // same `.home-tile-version` styling/placement the per-crate version text
+  // under every other tile already uses. Fetched per project (favourites
+  // are typically few) rather than one bulk endpoint; `/todos` returns
+  // every todo including completed/archived ones (Project Detail already
+  // filters completed client-side the same way), so "outstanding" here is
+  // `!completed && !archived`.
+  async function loadFavouriteTodoCounts(favourites) {
+    await Promise.all(favourites.map(async p => {
+      const el = document.getElementById(`fav-todo-count-${p.id}`);
+      if (!el) return;
+      try {
+        const r = await fetch(`${PROJECT_API}/${p.id}/todos`);
+        if (!r.ok) throw 0;
+        const todos = await r.json();
+        const outstanding = todos.filter(t => !t.completed && !t.archived).length;
+        el.textContent = outstanding === 1 ? '1 todo' : `${outstanding} todos`;
+      } catch (_) { /* count is supplementary; leave blank on failure */ }
+    }));
   }
 
   // Home tile size/font is otherwise fixed (by design) — the only unbounded
@@ -5221,6 +5415,7 @@
   function quickAddTodo() { pendingQuickAdd = true; showView('todo'); }
   function quickAddNote() { pendingQuickAdd = true; showView('notes'); }
   function quickAddLog()  { pendingQuickAdd = true; showView('log'); }
+  function quickAddSpending() { pendingQuickAdd = true; showView('finances'); }
 
   // Edit button on a Project Detail todo card. Those cards come from the
   // project's own /detail fetch (currentProjectDetail), not the todoItems
@@ -5535,11 +5730,79 @@
 
   const FINANCES_API = '/api/v1/finances';
   let financesLoaded = false;
+
+  // Recurring-item next-occurrence math, mirroring
+  // `finances::models::Frequency::occurrences_between`/`add_months_clamped`
+  // in JS: same day-of-month clamping for monthly/yearly (Jan 31 + 1mo ->
+  // Feb 28, always from the original anchor day, never an already-clamped
+  // one), same "no reference date -> anchor at the window's own start"
+  // convention (so an item with no reference date always shows "today" as
+  // its next occurrence, matching how the backend's own payoff/projection
+  // math already treats that case). Used by the Recurring tab's next-
+  // payment badge and the Spending tab's recurring-expense list rows.
+  function addMonthsClampedJs(date, months) {
+    const totalMonths = date.getFullYear() * 12 + date.getMonth() + months;
+    const year = Math.floor(totalMonths / 12);
+    const month = ((totalMonths % 12) + 12) % 12;
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    return new Date(year, month, Math.min(date.getDate(), lastDay));
+  }
+
+  function nthOccurrenceJs(anchor, frequency, k) {
+    if (frequency === 'weekly') { const d = new Date(anchor); d.setDate(d.getDate() + 7 * k); return d; }
+    if (frequency === 'biweekly') { const d = new Date(anchor); d.setDate(d.getDate() + 14 * k); return d; }
+    if (frequency === 'yearly') return addMonthsClampedJs(anchor, 12 * k);
+    return addMonthsClampedJs(anchor, k); // monthly, and the fallback for any unrecognized value
+  }
+
+  // Formats a Date using its *local* calendar fields — deliberately not
+  // `.toISOString()`, which converts to UTC first and can land on the
+  // wrong calendar day for any timezone behind UTC (local midnight ->
+  // previous day in UTC).
+  function formatDateLocal(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  function nextOccurrenceDateStr(frequency, referenceDate) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const anchor = referenceDate ? new Date(referenceDate + 'T00:00:00') : today;
+    let k = 0;
+    if (anchor < today) {
+      // A rough starting point (refined below) so an item anchored years
+      // ago doesn't need thousands of loop iterations to catch up.
+      const diffDays = Math.round((today - anchor) / 86400000);
+      const stepDays = { weekly: 7, biweekly: 14, yearly: 365 }[frequency] || 30;
+      k = Math.max(0, Math.floor(diffDays / stepDays) - 1);
+    }
+    let date = nthOccurrenceJs(anchor, frequency, k);
+    while (date < today) { k += 1; date = nthOccurrenceJs(anchor, frequency, k); }
+    return formatDateLocal(date);
+  }
+
+  function daysUntil(dateStr) {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const target = new Date(dateStr + 'T00:00:00');
+    return Math.round((target - today) / 86400000);
+  }
+
+  function dueLabel(days) {
+    if (days < 0) return `${Math.abs(days)}d overdue`;
+    if (days === 0) return 'today';
+    if (days === 1) return 'tomorrow';
+    return `in ${days}d`;
+  }
   let financesChart = null;
   let accountsCache = [];
 
+  function accountHledgerPath(account) {
+    return `${account.kind === 'asset' ? 'assets' : 'liabilities'}:${account.slug}`;
+  }
+
   function accountDisplayName(hledgerAccount) {
-    const match = accountsCache.find(a => `${a.kind === 'asset' ? 'assets' : 'liabilities'}:${a.slug}` === hledgerAccount);
+    const match = accountsCache.find(a => accountHledgerPath(a) === hledgerAccount);
     return match ? match.name : hledgerAccount;
   }
 
@@ -5550,6 +5813,7 @@
     document.getElementById('fpanel-' + tab).classList.add('active');
     if (tab === 'recurring') loadRecurringItems();
     if (tab === 'accounts') loadAccounts();
+    if (tab === 'overview') financesOverviewOnOpen();
   }
 
   function financesOnOpen() {
@@ -5558,6 +5822,11 @@
     }
     if (!document.getElementById('fin-transfer-date').value) {
       document.getElementById('fin-transfer-date').value = new Date().toISOString().slice(0, 10);
+    }
+    if (pendingQuickAdd) {
+      pendingQuickAdd = false;
+      financesShowTab('spending');
+      setTimeout(() => document.getElementById('fin-amount').focus(), 80);
     }
     loadSpendingEntries();
     loadSpendingStats();
@@ -5568,7 +5837,39 @@
     if (document.getElementById('fpanel-accounts').classList.contains('active')) {
       loadAccounts();
     }
+    if (document.getElementById('fpanel-overview').classList.contains('active')) {
+      financesOverviewOnOpen();
+    }
     financesLoaded = true;
+  }
+
+  // Overview tab: combined projection chart + payoff charts + saved
+  // scenarios + budget caps. `loadRecurringItems()` populates
+  // `lastRecurringItems` (needed by the eye-icon exclude toggle on
+  // Recurring-tab cards) and, at the end of its own chain, calls
+  // `loadProjectionChart()` for the real baseline — so calling it here
+  // covers the combined chart even if the Recurring tab is never visited.
+  function financesOverviewOnOpen() {
+    loadRecurringItems();
+    loadBudgetScenarios();
+    loadBudgetCaps();
+    renderOverviewPayoffCards();
+    refreshOverviewCharts();
+  }
+
+  // Explanatory text on the Overview tab (`.overview-help` — the section
+  // intro plus one blurb under each section heading) is off by default;
+  // one button reveals/hides all of it at once, session-only (no
+  // persistence — every fresh load starts hidden again).
+  let overviewHelpVisible = false;
+
+  function toggleOverviewHelp() {
+    overviewHelpVisible = !overviewHelpVisible;
+    document.querySelectorAll('.overview-help').forEach(el => {
+      el.style.display = overviewHelpVisible ? '' : 'none';
+    });
+    const btn = document.getElementById('overview-help-toggle');
+    if (btn) btn.textContent = overviewHelpVisible ? '? Hide Help' : '? Help';
   }
 
   function monthRange() {
@@ -5588,6 +5889,9 @@
     document.getElementById('fin-transfer-fields').style.display = mode === 'transfer' ? '' : 'none';
   }
 
+  let lastSpendingEntries = [];
+  let spendingEditingId = null;
+
   async function loadSpendingEntries() {
     const list = document.getElementById('fin-spending-list');
     try {
@@ -5598,8 +5902,21 @@
       if (!spendingRes.ok || !transfersRes.ok) throw 0;
       const spending = (await spendingRes.json()).map(e => ({ ...e, _type: 'expense' }));
       const transfers = (await transfersRes.json()).map(e => ({ ...e, _type: 'transfer' }));
-      const entries = spending.concat(transfers);
+      let entries = spending.concat(transfers);
+      // Recurring expense items belong in this list too — a subscription
+      // due later this month is easy to forget when the list only shows
+      // what's already actually happened. Shown with their next
+      // occurrence as the sort/display date; supplementary to the real
+      // transaction history above, so a failure here doesn't blank it.
+      try {
+        await fetchRecurringItemsAndTransfers();
+        const recurring = lastRecurringItems
+          .filter(i => i._type === 'regular' && i.kind === 'expense')
+          .map(i => ({ ...i, _type: 'recurring', date: nextOccurrenceDateStr(i.frequency, i.reference_date) }));
+        entries = entries.concat(recurring);
+      } catch (_) { /* recurring rows are supplementary; real transactions still show */ }
       entries.sort((a, b) => b.date.localeCompare(a.date));
+      lastSpendingEntries = entries;
       if (!entries.length) {
         list.innerHTML = '<div class="empty-state"><span class="icon">&#128176;</span><span>No spending entries yet</span></div>';
         return;
@@ -5622,6 +5939,19 @@
           <button class="btn-ghost btn-sm" onclick="deleteSpendingEntry('${e.id}', 'transfer')">&times;</button>
         </div>`;
     }
+    if (e._type === 'recurring') {
+      const freqLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', yearly: 'Yearly' };
+      const catLabel = e.category ? (CATEGORY_LABELS[e.category] || e.category) : 'Uncategorized';
+      const days = daysUntil(e.date);
+      return `
+        <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-style:dashed;opacity:0.85;">
+          <div style="flex:1;">
+            <div style="font-weight:600;">${esc(e.name)} <span class="note-badge" style="margin-left:4px;">Recurring</span></div>
+            <div class="field-label">Next ${esc(e.date)} (${dueLabel(days)}) &middot; ${freqLabels[e.frequency] || e.frequency} &middot; ${catLabel} &middot; ${esc(accountDisplayName(e.account))}</div>
+          </div>
+          <div style="font-family:var(--font-mono);font-weight:700;">$${Number(e.amount).toFixed(2)}</div>
+        </div>`;
+    }
     const catLabel = e.category === 'stupid' ? 'Stupid' : 'Survival';
     const acctLabel = e.account ? ` &middot; ${esc(accountDisplayName(e.account))}` : '';
     return `
@@ -5631,8 +5961,32 @@
           <div class="field-label">${esc(e.date)} &middot; ${catLabel}${acctLabel}</div>
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(e.amount).toFixed(2)}</div>
+        <button class="btn-ghost btn-sm" title="Edit" onclick="spendingEditEntry('${e.id}')">&#9998;</button>
         <button class="btn-ghost btn-sm" onclick="deleteSpendingEntry('${e.id}', 'expense')">&times;</button>
       </div>`;
+  }
+
+  function spendingEditEntry(id) {
+    const entry = lastSpendingEntries.find(e => e.id === id && e._type === 'expense');
+    if (!entry) return;
+    spendingEditingId = id;
+    setSpendingMode('expense');
+    document.getElementById('fin-category').value = entry.category;
+    document.getElementById('fin-amount').value = entry.amount;
+    document.getElementById('fin-description').value = entry.description || '';
+    document.getElementById('fin-date').value = entry.date;
+    document.getElementById('fin-account').value = entry.account;
+    document.getElementById('fin-spending-submit-btn').textContent = 'Save Changes';
+    document.getElementById('fin-spending-cancel-edit').style.display = '';
+    document.getElementById('fpanel-spending').scrollTop = 0;
+  }
+
+  function spendingResetForm() {
+    spendingEditingId = null;
+    document.getElementById('fin-amount').value = '';
+    document.getElementById('fin-description').value = '';
+    document.getElementById('fin-spending-submit-btn').textContent = 'Add Entry';
+    document.getElementById('fin-spending-cancel-edit').style.display = 'none';
   }
 
   async function deleteSpendingEntry(id, type) {
@@ -5642,6 +5996,7 @@
     try {
       const r = await fetch(`${FINANCES_API}/${path}/${id}`, { method: 'DELETE' });
       if (!r.ok) throw 0;
+      if (spendingEditingId === id) spendingResetForm();
       loadSpendingEntries();
       loadSpendingStats();
     } catch (_) {
@@ -5649,15 +6004,33 @@
     }
   }
 
+  let lastSpendingTotals = { stupid: 0, survival: 0 };
+
   async function loadSpendingStats() {
     try {
       const { from, to } = monthRange();
       const r = await fetch(`${FINANCES_API}/spending/stats?from=${from}&to=${to}`);
       if (!r.ok) throw 0;
       const totals = await r.json();
+      lastSpendingTotals = totals;
       document.getElementById('fin-total-stupid').textContent = '$' + Number(totals.stupid || 0).toFixed(2);
       document.getElementById('fin-total-survival').textContent = '$' + Number(totals.survival || 0).toFixed(2);
+      renderBudgetCaps();
     } catch (_) { /* stats are supplementary; leave zeros on failure */ }
+    // Category-tagged recurring expense items don't show up in the real
+    // hledger stats above (they're periodic rules, not yet-posted
+    // transactions) — surfaced as a separate "+ $X/mo recurring" line
+    // rather than blended into the actual-spend number, same convention
+    // the Overview tab's Budget Caps section already uses.
+    try {
+      await fetchRecurringItemsAndTransfers();
+      const stupidRecurring = recurringMonthlyCommitment('stupid');
+      const survivalRecurring = recurringMonthlyCommitment('survival');
+      document.getElementById('fin-total-stupid-recurring').textContent =
+        stupidRecurring > 0 ? `+ $${stupidRecurring.toFixed(2)}/mo recurring` : '';
+      document.getElementById('fin-total-survival-recurring').textContent =
+        survivalRecurring > 0 ? `+ $${survivalRecurring.toFixed(2)}/mo recurring` : '';
+    } catch (_) { /* recurring commitment line is supplementary */ }
   }
 
   async function submitSpendingEntry() {
@@ -5673,20 +6046,22 @@
     if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
     if (!date) { toast('Pick a date', true); return; }
     if (!account) { toast('Add an account first (Accounts tab)', true); return; }
+    const editing = spendingEditingId !== null;
+    const body = { category, amount, description, date, account };
+    if (editing) body.id = spendingEditingId;
     try {
-      const r = await fetch(`${FINANCES_API}/spending`, {
-        method: 'POST',
+      const r = await fetch(`${FINANCES_API}/spending${editing ? '/' + spendingEditingId : ''}`, {
+        method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category, amount, description, date, account }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw 0;
-      document.getElementById('fin-amount').value = '';
-      document.getElementById('fin-description').value = '';
-      toast('Spending entry added');
+      toast(editing ? 'Spending entry updated' : 'Spending entry added');
+      spendingResetForm();
       loadSpendingEntries();
       loadSpendingStats();
     } catch (_) {
-      toast('Failed to add entry', true);
+      toast(editing ? 'Failed to update entry' : 'Failed to add entry', true);
     }
   }
 
@@ -5718,38 +6093,118 @@
   }
 
   let lastRecurringItems = [];
-  let previewExcludedIds = new Set();
+  let recurringEditingId = null;
+  let recurringEditingType = null; // 'regular' | 'transfer'
+
+  function recurringEditItem(id, type) {
+    const item = lastRecurringItems.find(i => i.id === id && i._type === type);
+    if (!item) return;
+    recurringEditingId = id;
+    recurringEditingType = type;
+    document.getElementById('fin-rec-name').value = item.name || '';
+    document.getElementById('fin-rec-amount').value = item.amount != null ? item.amount : '';
+    document.getElementById('fin-rec-frequency').value = item.frequency || 'monthly';
+    document.getElementById('fin-rec-refdate').value = item.reference_date || '';
+    if (type === 'transfer') {
+      document.getElementById('fin-rec-kind').value = 'transfer';
+      document.getElementById('fin-rec-from-account').value = item.from_account || '';
+      document.getElementById('fin-rec-to-account').value = item.to_account || '';
+    } else {
+      document.getElementById('fin-rec-kind').value = item.kind || 'expense';
+      document.getElementById('fin-rec-label').value = item.label || '';
+      document.getElementById('fin-rec-account').value = item.account || '';
+      document.getElementById('fin-rec-category').value = item.category || '';
+    }
+    updateRecurringKindFields();
+    document.getElementById('fin-rec-submit-btn').textContent = 'Save Changes';
+    document.getElementById('fin-rec-cancel-edit').style.display = '';
+    document.getElementById('fpanel-recurring').scrollTop = 0;
+  }
+
+  function recurringResetForm() {
+    recurringEditingId = null;
+    recurringEditingType = null;
+    document.getElementById('fin-rec-name').value = '';
+    document.getElementById('fin-rec-amount').value = '';
+    document.getElementById('fin-rec-label').value = '';
+    document.getElementById('fin-rec-refdate').value = '';
+    document.getElementById('fin-rec-kind').value = 'income';
+    document.getElementById('fin-rec-category').value = '';
+    updateRecurringKindFields();
+    document.getElementById('fin-rec-submit-btn').textContent = 'Add Recurring Item';
+    document.getElementById('fin-rec-cancel-edit').style.display = 'none';
+  }
 
   function updateRecurringKindFields() {
-    const isTransfer = document.getElementById('fin-rec-kind').value === 'transfer';
+    const kind = document.getElementById('fin-rec-kind').value;
+    const isTransfer = kind === 'transfer';
     document.getElementById('fin-rec-label-wrap').style.display = isTransfer ? 'none' : '';
     document.getElementById('fin-rec-account-wrap').style.display = isTransfer ? 'none' : '';
     document.getElementById('fin-rec-from-wrap').style.display = isTransfer ? '' : 'none';
     document.getElementById('fin-rec-to-wrap').style.display = isTransfer ? '' : 'none';
+    // Budget categories (stupid/survival) are a spending concept — only
+    // expense items post against one.
+    document.getElementById('fin-rec-category-wrap').style.display = kind === 'expense' ? '' : 'none';
+  }
+
+  // Shared by the Recurring tab (needs the full render) and the Spending
+  // tab (needs recurring expense items in its list/totals, but not the
+  // rest of `loadRecurringItems`'s side effects) — both just need
+  // `lastRecurringItems` freshly populated.
+  async function fetchRecurringItemsAndTransfers() {
+    const [itemsRes, transfersRes] = await Promise.all([
+      fetch(`${FINANCES_API}/recurring`),
+      fetch(`${FINANCES_API}/recurring-transfers`),
+    ]);
+    if (!itemsRes.ok || !transfersRes.ok) throw 0;
+    const items = (await itemsRes.json()).map(i => ({ ...i, _type: 'regular' }));
+    const transfers = (await transfersRes.json()).map(t => ({ ...t, _type: 'transfer' }));
+    lastRecurringItems = items.concat(transfers);
   }
 
   async function loadRecurringItems() {
     try {
-      const [itemsRes, transfersRes] = await Promise.all([
-        fetch(`${FINANCES_API}/recurring`),
-        fetch(`${FINANCES_API}/recurring-transfers`),
-      ]);
-      if (!itemsRes.ok || !transfersRes.ok) throw 0;
-      const items = (await itemsRes.json()).map(i => ({ ...i, _type: 'regular' }));
-      const transfers = (await transfersRes.json()).map(t => ({ ...t, _type: 'transfer' }));
-      lastRecurringItems = items.concat(transfers);
+      await fetchRecurringItemsAndTransfers();
       renderRecurringItemsList();
-      // The baseline changed — any previously previewed scenario is stale now.
-      previewExcludedIds = new Set();
+      // The baseline changed — any previously previewed ad-hoc rows are stale now.
       previewRowKeys = [];
       renderPreviewRows();
       previewProjectionPoints = null;
       document.getElementById('fin-preview-clear-btn').style.display = 'none';
       loadProjectionChart();
+      // Payoff cards' "counted toward this chart" breakdown and Budget
+      // Caps' recurring-commitment line both read `lastRecurringItems`,
+      // which this function just (re)populated — re-run the whole
+      // Overview refresh so charts/breakdowns never end up stuck on
+      // stale/empty data from before this load finished (e.g. Overview
+      // opened directly, racing this fetch). No-op cost when the Overview
+      // tab isn't even visible.
+      if (document.getElementById('fpanel-overview').classList.contains('active')) {
+        refreshOverviewCharts();
+        renderBudgetCaps();
+      }
     } catch (_) {
       document.getElementById('fin-recurring-list').innerHTML =
         '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load recurring items</span></div>';
     }
+    // Fire-and-forget: ticks/badges are supplementary, a failure here
+    // shouldn't blank the recurring list the try/catch above just rendered.
+    loadRecurringOccurrences();
+  }
+
+  let recurringOccurrenceStatus = {};
+
+  async function loadRecurringOccurrences() {
+    try {
+      const r = await fetch(`${FINANCES_API}/recurring/occurrences`);
+      if (!r.ok) throw 0;
+      const summaries = await r.json();
+      recurringOccurrenceStatus = {};
+      for (const s of summaries) {
+        recurringOccurrenceStatus[`${s.kind}:${s.recurring_id}`] = s;
+      }
+      renderRecurringItemsList();
+    } catch (_) { /* ticks/badges are supplementary; leave them blank on failure */ }
   }
 
   function renderRecurringItemsList() {
@@ -5759,38 +6214,158 @@
     } else {
       list.innerHTML = lastRecurringItems.map(renderRecurringItem).join('');
     }
+    renderRecurringMonthlyNet();
   }
+
+  // Monthly-equivalent factor per frequency (weeks/year and biweeks/year
+  // divided by 12, so a weekly $50 item and a monthly $217 item compare on
+  // the same footing) — standard personal-finance normalization, not
+  // anything hledger computes for us.
+  const MONTHLY_FACTOR = { weekly: 52 / 12, biweekly: 26 / 12, monthly: 1, yearly: 1 / 12 };
+
+  function renderRecurringMonthlyNet() {
+    const el = document.getElementById('recurring-monthly-net');
+    if (!el) return;
+    // Transfers move money between two of the user's own accounts — net
+    // zero, not income or expense — so only regular items count here.
+    let net = 0;
+    for (const item of lastRecurringItems) {
+      if (item._type === 'transfer') continue;
+      const factor = MONTHLY_FACTOR[item.frequency] || 1;
+      const monthlyAmount = Number(item.amount) * factor;
+      net += item.kind === 'income' ? monthlyAmount : -monthlyAmount;
+    }
+    el.textContent = `${net >= 0 ? '+' : '-'}$${Math.abs(net).toFixed(2)}`;
+    el.style.color = net >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+
+  function occurrenceKindFor(item) {
+    return item._type === 'transfer' ? 'transfer' : 'item';
+  }
+
+  // Is this real recurring item currently excluded from the Overview
+  // charts because an *applied* scenario has an item explicitly linked to
+  // it via `replaces_recurring_id`? Returns the scenario's name, or null.
+  // Purely a display lookup over data already fetched client-side — the
+  // actual exclusion itself happens in `collectPreviewItems()`.
+  function replacingScenarioName(itemId) {
+    for (const sid of appliedScenarioIds) {
+      const items = budgetScenarioItems[sid];
+      if (!items) continue;
+      if (items.some(it => it.replaces_recurring_id === itemId)) {
+        const scenario = budgetScenarios.find(s => s.id === sid);
+        return scenario ? scenario.name : null;
+      }
+    }
+    return null;
+  }
+
+  const CATEGORY_LABELS = { stupid: 'Stupid', survival: 'Survival' };
 
   function renderRecurringItem(item) {
     const freqLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', yearly: 'Yearly' };
     const refDateLine = item.reference_date ? ` &middot; from ${esc(item.reference_date)}` : '';
-    const excluded = previewExcludedIds.has(item.id);
+    const categoryLine = item.category ? ` &middot; ${CATEGORY_LABELS[item.category] || item.category} budget` : '';
+    const replacedBy = replacingScenarioName(item.id);
     const detailLine = item._type === 'transfer'
       ? `Transfer &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(accountDisplayName(item.from_account))} &rarr; ${esc(accountDisplayName(item.to_account))}${refDateLine}`
-      : `${item.kind === 'income' ? 'Income' : 'Expense'} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)} &middot; ${esc(accountDisplayName(item.account))}${refDateLine}`;
+      : `${item.kind === 'income' ? 'Income' : 'Expense'} &middot; ${freqLabels[item.frequency] || item.frequency} &middot; ${esc(item.label)} &middot; ${esc(accountDisplayName(item.account))}${refDateLine}${categoryLine}`;
+    const replacedLine = replacedBy
+      ? `<div class="field-label" style="color:var(--accent-cont);">Replaced by scenario "${esc(replacedBy)}" in Overview</div>` : '';
+    const summary = recurringOccurrenceStatus[`${occurrenceKindFor(item)}:${item.id}`];
+    const overdue = summary && summary.outstanding.some(o => o.overdue);
+    const overdueBadge = overdue ? `<span class="note-badge overdue" style="margin-left:6px;">Overdue</span>` : '';
+    const tickChecked = summary ? summary.current_period.paid : false;
+    const tickTitle = summary ? (summary.outstanding.length > 1 ? `${summary.outstanding.length} periods need attention` : 'Mark this period paid') : '';
+    const tick = summary ? `<input type="checkbox" title="${tickTitle}" ${tickChecked ? 'checked' : ''} onclick="recurringTickClicked('${item.id}', '${occurrenceKindFor(item)}'); return false;" style="width:18px;height:18px;" />` : '';
+    const nextDate = nextOccurrenceDateStr(item.frequency, item.reference_date);
+    const nextDays = daysUntil(nextDate);
+    const nextColor = nextDays <= 0 ? 'var(--red)' : (nextDays <= 3 ? 'var(--accent-cont)' : 'var(--text-dim)');
+    const nextLine = `<div style="font-family:var(--font-mono);font-weight:700;font-size:0.85rem;color:${nextColor};margin-top:3px;">Next: ${esc(nextDate)} &middot; ${dueLabel(nextDays)}</div>`;
     return `
-      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;${excluded ? 'opacity:0.55;' : ''}">
+      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;${replacedBy ? 'opacity:0.7;' : ''}">
+        ${tick}
         <div style="flex:1;">
-          <div style="font-weight:600;${excluded ? 'text-decoration:line-through;' : ''}">${esc(item.name)}</div>
+          <div style="font-weight:600;">${esc(item.name)}${overdueBadge}</div>
           <div class="field-label">${detailLine}</div>
+          ${nextLine}
+          ${replacedLine}
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(item.amount).toFixed(2)}</div>
-        <button class="btn-ghost btn-sm" title="${excluded ? 'Stop previewing removal' : 'Preview removing this item'}" onclick="toggleExcludeRecurring('${item.id}')">${excluded ? '&#8617;' : '&#128065;'}</button>
+        <button class="btn-ghost btn-sm" title="Edit" onclick="recurringEditItem('${item.id}', '${item._type}')">&#9998;</button>
         <button class="btn-ghost btn-sm" onclick="deleteRecurringItem('${item.id}')">&times;</button>
       </div>`;
   }
 
-  function toggleExcludeRecurring(id) {
-    if (previewExcludedIds.has(id)) {
-      previewExcludedIds.delete(id);
-    } else {
-      previewExcludedIds.add(id);
+  async function postOccurrenceUpdates(id, kind, updates) {
+    const r = await fetch(`${FINANCES_API}/recurring/${id}/occurrences?kind=${kind}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ updates }),
+    });
+    if (!r.ok) throw 0;
+    const summary = await r.json();
+    recurringOccurrenceStatus[`${kind}:${id}`] = summary;
+    return summary;
+  }
+
+  async function recurringTickClicked(id, kind) {
+    const summary = recurringOccurrenceStatus[`${kind}:${id}`];
+    if (!summary) return;
+    if (summary.outstanding.length <= 1) {
+      // Nothing missed (or only the current period) — a single tap just
+      // toggles the current period's paid state directly, no modal needed.
+      const period = summary.current_period;
+      try {
+        await postOccurrenceUpdates(id, kind, [{ period_start: period.period_start, paid: !period.paid }]);
+        renderRecurringItemsList();
+      } catch (_) {
+        toast('Failed to update payment status', true);
+      }
+      return;
     }
-    renderRecurringItemsList();
-    if (previewExcludedIds.size > 0 || previewRowKeys.length > 0) {
-      submitProjectionPreview();
-    } else {
-      clearProjectionPreview();
+    openOccurrenceModal(summary);
+  }
+
+  let occurrenceModalContext = null;
+
+  function openOccurrenceModal(summary) {
+    occurrenceModalContext = { recurring_id: summary.recurring_id, kind: summary.kind };
+    document.getElementById('occurrence-modal-title').textContent = `Catch Up — ${summary.name}`;
+    document.getElementById('occurrence-modal-body').innerHTML = summary.outstanding.map(o => `
+      <div class="occurrence-row" data-period="${esc(o.period_start)}">
+        <div style="flex:1;">${esc(o.period_start)}${o.overdue ? ' <span class="note-badge overdue">Overdue</span>' : ''}</div>
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;">
+          <input type="radio" name="occ-${esc(o.period_start)}" value="paid" checked /> Paid
+        </label>
+        <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;">
+          <input type="radio" name="occ-${esc(o.period_start)}" value="unpaid" /> Not paid
+        </label>
+      </div>`).join('');
+    document.getElementById('occurrence-modal-backdrop').classList.add('open');
+  }
+
+  function closeOccurrenceModal() {
+    document.getElementById('occurrence-modal-backdrop').classList.remove('open');
+    occurrenceModalContext = null;
+  }
+
+  async function saveOccurrenceModal() {
+    if (!occurrenceModalContext) return;
+    const rows = document.querySelectorAll('#occurrence-modal-body [data-period]');
+    const updates = [];
+    for (const row of rows) {
+      const period_start = row.getAttribute('data-period');
+      const checked = row.querySelector('input[type="radio"]:checked');
+      updates.push({ period_start, paid: !checked || checked.value === 'paid' });
+    }
+    try {
+      await postOccurrenceUpdates(occurrenceModalContext.recurring_id, occurrenceModalContext.kind, updates);
+      closeOccurrenceModal();
+      renderRecurringItemsList();
+      toast('Payment status updated');
+    } catch (_) {
+      toast('Failed to update payment status', true);
     }
   }
 
@@ -5799,12 +6374,12 @@
     const isTransfer = item && item._type === 'transfer';
     const kindWord = isTransfer ? 'transfer' : (item && item.kind === 'income' ? 'income' : 'expense');
     const detail = item ? `"${item.name}" ($${Number(item.amount).toFixed(2)} / ${item.frequency})` : 'this item';
-    if (!confirm(`Permanently delete the recurring ${kindWord} ${detail}?\n\nThis cannot be undone. Use the eye icon instead if you just want to preview removing it.`)) return;
+    if (!confirm(`Permanently delete the recurring ${kindWord} ${detail}?\n\nThis cannot be undone. In the Overview tab, import it into a saved scenario instead if you just want to try changing or removing it.`)) return;
     const path = isTransfer ? 'recurring-transfers' : 'recurring';
     try {
       const r = await fetch(`${FINANCES_API}/${path}/${id}`, { method: 'DELETE' });
       if (!r.ok) throw 0;
-      previewExcludedIds.delete(id);
+      delete recurringOccurrenceStatus[`${isTransfer ? 'transfer' : 'item'}:${id}`];
       loadRecurringItems();
     } catch (_) {
       toast('Failed to delete recurring item', true);
@@ -5817,35 +6392,44 @@
       await submitRecurringTransfer();
       return;
     }
+    if (recurringEditingId && recurringEditingType !== 'regular') {
+      toast('Cancel the edit before changing type', true);
+      return;
+    }
     const name = document.getElementById('fin-rec-name').value.trim();
     const amount = parseFloat(document.getElementById('fin-rec-amount').value);
     const label = document.getElementById('fin-rec-label').value.trim();
     const frequency = document.getElementById('fin-rec-frequency').value;
     const reference_date = document.getElementById('fin-rec-refdate').value || null;
     const account = document.getElementById('fin-rec-account').value;
+    const category = kind === 'expense' ? (document.getElementById('fin-rec-category').value || null) : null;
     if (!name) { toast('Enter a name', true); return; }
     if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
     if (!label) { toast('Enter a label', true); return; }
     if (!account) { toast('Add an account first (Accounts tab)', true); return; }
+    const editing = recurringEditingId !== null;
+    const body = { name, amount, kind, label, frequency, reference_date, account, category };
+    if (editing) body.id = recurringEditingId;
     try {
-      const r = await fetch(`${FINANCES_API}/recurring`, {
-        method: 'POST',
+      const r = await fetch(`${FINANCES_API}/recurring${editing ? '/' + recurringEditingId : ''}`, {
+        method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, amount, kind, label, frequency, reference_date, account }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw 0;
-      document.getElementById('fin-rec-name').value = '';
-      document.getElementById('fin-rec-amount').value = '';
-      document.getElementById('fin-rec-label').value = '';
-      document.getElementById('fin-rec-refdate').value = '';
-      toast('Recurring item added');
+      toast(editing ? 'Recurring item updated' : 'Recurring item added');
+      recurringResetForm();
       loadRecurringItems();
     } catch (_) {
-      toast('Failed to add recurring item', true);
+      toast(editing ? 'Failed to update recurring item' : 'Failed to add recurring item', true);
     }
   }
 
   async function submitRecurringTransfer() {
+    if (recurringEditingId && recurringEditingType !== 'transfer') {
+      toast('Cancel the edit before changing type', true);
+      return;
+    }
     const name = document.getElementById('fin-rec-name').value.trim();
     const amount = parseFloat(document.getElementById('fin-rec-amount').value);
     const frequency = document.getElementById('fin-rec-frequency').value;
@@ -5856,20 +6440,21 @@
     if (!amount || amount <= 0) { toast('Enter a valid amount', true); return; }
     if (!from_account || !to_account) { toast('Add at least two accounts first (Accounts tab)', true); return; }
     if (from_account === to_account) { toast('From and To must be different accounts', true); return; }
+    const editing = recurringEditingId !== null;
+    const body = { name, amount, frequency, reference_date, from_account, to_account };
+    if (editing) body.id = recurringEditingId;
     try {
-      const r = await fetch(`${FINANCES_API}/recurring-transfers`, {
-        method: 'POST',
+      const r = await fetch(`${FINANCES_API}/recurring-transfers${editing ? '/' + recurringEditingId : ''}`, {
+        method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, amount, frequency, reference_date, from_account, to_account }),
+        body: JSON.stringify(body),
       });
       if (!r.ok) throw 0;
-      document.getElementById('fin-rec-name').value = '';
-      document.getElementById('fin-rec-amount').value = '';
-      document.getElementById('fin-rec-refdate').value = '';
-      toast('Recurring transfer added');
+      toast(editing ? 'Recurring transfer updated' : 'Recurring transfer added');
+      recurringResetForm();
       loadRecurringItems();
     } catch (_) {
-      toast('Failed to add recurring transfer', true);
+      toast(editing ? 'Failed to update recurring transfer' : 'Failed to add recurring transfer', true);
     }
   }
 
@@ -5890,7 +6475,7 @@
     clearTimeout(monthsRefreshTimer);
     monthsRefreshTimer = setTimeout(() => {
       loadProjectionChart();
-      if (previewExcludedIds.size > 0 || previewRowKeys.length > 0) submitProjectionPreview();
+      refreshOverviewCharts();
     }, 300);
   }
 
@@ -5900,6 +6485,46 @@
     if (w < 768) return 1.7;
     if (w < 1200) return 2.4;
     return 3.2;
+  }
+
+  // Simple least-squares linear regression over a series' index (not its
+  // date — points aren't evenly spaced in calendar time once weekly
+  // buckets kick in past 12 months, but they're always evenly spaced by
+  // index, which is all a straight trendline needs) vs `valueField`.
+  // Returns an array the same length as `points`, or `null` for fewer than
+  // 2 points (a line needs two).
+  function linearTrendline(points, valueField) {
+    const n = points.length;
+    if (n < 2) return null;
+    const ys = points.map(p => Number(p[valueField]));
+    const xMean = (n - 1) / 2;
+    const yMean = ys.reduce((a, b) => a + b, 0) / n;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) {
+      num += (i - xMean) * (ys[i] - yMean);
+      den += (i - xMean) * (i - xMean);
+    }
+    const slope = den === 0 ? 0 : num / den;
+    const intercept = yMean - slope * xMean;
+    return ys.map((_, i) => slope * i + intercept);
+  }
+
+  // Shared trendline dataset styling — muted grey/dotted so it reads as a
+  // background reference, never competing with the blue-baseline/amber-
+  // preview convention every chart already uses.
+  function trendlineDataset(points, valueField) {
+    const trend = linearTrendline(points, valueField);
+    if (!trend) return null;
+    return {
+      label: 'Trend',
+      data: trend,
+      borderColor: 'rgba(168,155,134,0.7)',
+      borderDash: [2, 3],
+      borderWidth: 1.5,
+      pointRadius: 0,
+      tension: 0,
+      fill: false,
+    };
   }
 
   async function loadProjectionChart() {
@@ -5914,24 +6539,26 @@
   function renderProjectionChart() {
     const labels = lastProjectionPoints.map(p => p.period_start);
     const datasets = [{
-      label: 'Projected balance',
+      label: 'Real (no changes)',
       data: lastProjectionPoints.map(p => p.balance),
-      borderColor: '#e8a33d',
-      backgroundColor: 'rgba(232,163,61,0.15)',
+      borderColor: '#6ec1ff',
+      backgroundColor: 'rgba(110,193,255,0.12)',
       tension: 0.25,
       fill: true,
     }];
     if (previewProjectionPoints) {
       datasets.push({
-        label: 'Preview scenario',
+        label: 'Preview (with changes)',
         data: previewProjectionPoints.map(p => p.balance),
-        borderColor: '#6ec1ff',
-        backgroundColor: 'rgba(110,193,255,0.08)',
+        borderColor: '#e8a33d',
+        backgroundColor: 'rgba(232,163,61,0.10)',
         borderDash: [6, 4],
         tension: 0.25,
         fill: false,
       });
     }
+    const trend = trendlineDataset(lastProjectionPoints, 'balance');
+    if (trend) datasets.push(trend);
     const draw = () => {
       const ctx = document.getElementById('fin-projection-chart');
       if (!ctx) return;
@@ -5943,7 +6570,7 @@
           responsive: true,
           maintainAspectRatio: true,
           aspectRatio: chartAspectRatio(),
-          plugins: { legend: { display: !!previewProjectionPoints, labels: { color: '#a89b86' } } },
+          plugins: { legend: { display: true, labels: { color: '#a89b86' } } },
           scales: {
             x: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
             y: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
@@ -5951,6 +6578,7 @@
         },
       });
     };
+    renderOverviewBreakdown();
     if (window.Chart) {
       draw();
     } else {
@@ -5965,7 +6593,17 @@
   window.addEventListener('resize', () => {
     clearTimeout(chartResizeTimer);
     chartResizeTimer = setTimeout(() => {
-      if (document.getElementById('fpanel-recurring').classList.contains('active')) renderProjectionChart();
+      if (document.getElementById('fpanel-overview').classList.contains('active')) {
+        renderProjectionChart();
+        for (const id of Object.keys(payoffCharts)) {
+          const cached = lastPayoffPoints[id];
+          if (cached) renderPayoffChart(id, cached.baseline, cached.preview);
+        }
+        for (const id of Object.keys(accountBalanceCharts)) {
+          const cached = lastAccountBalancePoints[id];
+          if (cached) renderAccountBalanceChart(id, cached.baseline, cached.preview);
+        }
+      }
     }, 200);
   });
 
@@ -6009,7 +6647,19 @@
     document.getElementById('fin-preview-rows').innerHTML = previewRowKeys.map(previewRowHtml).join('');
   }
 
-  async function submitProjectionPreview() {
+  // Gathers every hypothetical item currently in play — the ad-hoc
+  // (never-saved) preview rows plus every item belonging to a checked
+  // saved scenario — into one flat array in the shape both
+  // `/projection/preview` and `/accounts/:id/payoff/preview` accept, plus
+  // the set of real recurring item/transfer ids to exclude. Exclusions are
+  // derived, never manual: only a checked scenario's items whose
+  // `replaces_recurring_id` is set contribute one — an ad-hoc row never
+  // excludes anything (it's always a genuinely new, additive item), and a
+  // scenario item with no link doesn't either. This is what keeps a
+  // scenario from *stacking* with the real payment it's meant to replace,
+  // while a scenario item with no such link (a real new expense) still
+  // adds normally.
+  function collectPreviewItems() {
     const items = [];
     for (const key of previewRowKeys) {
       const name = document.getElementById(`fin-preview-name-${key}`).value.trim();
@@ -6020,32 +6670,672 @@
       if (!name || !amount || amount <= 0 || !account) continue;
       items.push({ name, kind, amount, frequency, account, reference_date: null });
     }
-    const exclude_recurring_ids = [...previewExcludedIds];
-    if (!items.length && !exclude_recurring_ids.length) {
-      toast('Add a test item, or use the eye icon to preview removing one', true);
+    const excludeRecurringIds = new Set();
+    for (const sid of appliedScenarioIds) {
+      for (const it of (budgetScenarioItems[sid] || [])) {
+        items.push({
+          name: it.name, kind: it.kind, amount: it.amount, frequency: it.frequency,
+          account: it.account, reference_date: it.reference_date || null,
+        });
+        if (it.replaces_recurring_id) excludeRecurringIds.add(it.replaces_recurring_id);
+      }
+    }
+    const categoryLabels = { stupid: 'Stupid', survival: 'Survival' };
+    for (const alloc of budgetCapAllocations) {
+      if (alloc.include_in_projection && alloc.amount > 0) {
+        items.push({
+          name: `${categoryLabels[alloc.category] || alloc.category} budget (${accountDisplayName(alloc.account)})`,
+          kind: 'expense', amount: alloc.amount, frequency: 'monthly', account: alloc.account, reference_date: null,
+        });
+      }
+    }
+    // An active payment plan replaces that account's real recurring
+    // items/transfers for its own payoff chart — extend the same
+    // "replace, don't stack" semantics to the combined chart: exclude
+    // every real item/transfer targeting that account, and add the
+    // plan's flat supplementary payment (its interest-only minimum can't
+    // be represented here at all — hledger has no way to forecast "X% of
+    // the current balance" per period, same reason the payoff chart
+    // needed its own Rust math to begin with).
+    for (const [acctId, plan] of Object.entries(paymentPlans)) {
+      if (!plan.enabled) continue;
+      const account = accountsCache.find(a => a.id === acctId);
+      if (!account) continue;
+      const hledgerAccount = `${account.kind === 'asset' ? 'assets' : 'liabilities'}:${account.slug}`;
+      for (const item of lastRecurringItems) {
+        const targets = item._type === 'transfer'
+          ? (item.from_account === hledgerAccount || item.to_account === hledgerAccount)
+          : (item.account === hledgerAccount);
+        if (targets) excludeRecurringIds.add(item.id);
+      }
+      if (plan.supplementaryAmount > 0) {
+        items.push({
+          name: `${account.name} plan: supplementary`, kind: 'income', amount: plan.supplementaryAmount,
+          frequency: plan.supplementaryFrequency, account: hledgerAccount, reference_date: null,
+        });
+      }
+    }
+    return { items, excludeRecurringIds: [...excludeRecurringIds] };
+  }
+
+  // Always states what the solid baseline line is built from, then — only
+  // when something's actually checked/entered — what the dashed preview
+  // line adds on top of it. A fixed legend rather than a note that only
+  // appears when something unusual is active, so "what's contributing to
+  // this chart" never has to be guessed from the controls above it.
+  function renderOverviewBreakdown() {
+    const el = document.getElementById('overview-breakdown');
+    if (!el) return;
+    const baselineLine = 'Solid = baseline: your real transactions plus every recurring item/transfer hledger already forecasts, across all accounts (assets + liabilities).';
+    const parts = [];
+
+    const adHocCount = previewRowKeys.filter(key => {
+      const nameEl = document.getElementById(`fin-preview-name-${key}`);
+      return nameEl && nameEl.value.trim();
+    }).length;
+    if (adHocCount > 0) parts.push(`${adHocCount} ad-hoc item${adHocCount === 1 ? '' : 's'}`);
+
+    for (const sid of appliedScenarioIds) {
+      const scenario = budgetScenarios.find(s => s.id === sid);
+      if (scenario) parts.push(`scenario "${esc(scenario.name)}"`);
+    }
+
+    const categoryLabels = { stupid: 'Stupid', survival: 'Survival' };
+    for (const alloc of budgetCapAllocations) {
+      if (alloc.include_in_projection && alloc.amount > 0) {
+        parts.push(`${categoryLabels[alloc.category] || alloc.category} budget (${esc(accountDisplayName(alloc.account))}, $${alloc.amount.toFixed(2)}/mo)`);
+      }
+    }
+
+    let hasInterestOnlyPlan = false;
+    for (const [acctId, plan] of Object.entries(paymentPlans)) {
+      if (!plan.enabled) continue;
+      const account = accountsCache.find(a => a.id === acctId);
+      const name = account ? esc(account.name) : acctId;
+      const bits = [];
+      if (plan.minimumInterestOnly) { bits.push('interest-only minimum'); hasInterestOnlyPlan = true; }
+      if (plan.supplementaryAmount > 0) bits.push(`$${plan.supplementaryAmount.toFixed(2)}/${plan.supplementaryFrequency} supplementary`);
+      parts.push(`${name} payment plan (${bits.join(' + ') || 'no payments'})`);
+    }
+
+    if (!parts.length) {
+      el.innerHTML = baselineLine;
       return;
     }
+    let html = `${baselineLine}<br>Dashed = baseline plus: ${parts.join(', ')}.`;
+    if (hasInterestOnlyPlan) {
+      html += ' An interest-only minimum payment only affects that debt’s own payoff chart above — this combined chart can’t model dynamic interest.';
+    }
+    el.innerHTML = html;
+  }
+
+  // "So where am I in N months/years?" — a fixed-depth (120-month) fetch
+  // independent of the interactive chart's own `projectionMonths` slider
+  // (which stays capped at 36 for chart readability), read off at fixed
+  // checkpoints. `valueField` is `'balance'` for combined-chart points or
+  // `'ending_balance'` for payoff points. A payoff array can end early
+  // (paid off) — any checkpoint past its length shows the payoff date
+  // instead of a raw balance.
+  const SUMMARY_MONTHS = 120;
+  const SUMMARY_CHECKPOINTS = [12, 24, 36, 60, 120];
+
+  function renderCheckpointSummary(containerId, baselinePoints, previewPoints, valueField) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    if (!baselinePoints || !baselinePoints.length) {
+      el.innerHTML = '';
+      return;
+    }
+    // Points are daily now (see finances::balance_forecast/debt_payoff_
+    // projection — one row per day, not per month), so a checkpoint can no
+    // longer be picked by array index; find the last point at or before
+    // the target calendar date instead (points are date-ordered).
+    const cellHtml = (points, months) => {
+      if (!points || !points.length) return '&mdash;';
+      const target = new Date(points[0].period_start);
+      target.setMonth(target.getMonth() + months);
+      const targetStr = target.toISOString().slice(0, 10);
+      let match = points[0];
+      for (const p of points) {
+        if (p.period_end <= targetStr) match = p; else break;
+      }
+      const last = points[points.length - 1];
+      if (last.period_end < targetStr) {
+        // A payoff array can end early once the debt is paid off; the
+        // combined/account-balance charts' arrays never stop early on
+        // their own (they only ever return fewer points than requested
+        // when hledger has nothing periodic to forecast at all, an edge
+        // case worth just showing the last real value for rather than
+        // mislabeling as "paid off").
+        if (valueField === 'ending_balance' && last.ending_balance >= 0) {
+          return `Paid off ${esc(last.period_end)}`;
+        }
+        return `$${Number(last[valueField]).toFixed(2)}`;
+      }
+      return `$${Number(match[valueField]).toFixed(2)}`;
+    };
+    el.innerHTML = `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+        ${SUMMARY_CHECKPOINTS.map(m => {
+          const label = m === 60 ? '5yr' : m === 120 ? '10yr' : `${m}mo`;
+          const baseCell = cellHtml(baselinePoints, m);
+          const previewCell = previewPoints ? cellHtml(previewPoints, m) : null;
+          return `
+            <div style="flex:1;min-width:80px;text-align:center;padding:5px;border:1px dashed var(--border);border-radius:var(--radius-sm);">
+              <div class="field-label">${label}</div>
+              <div style="font-family:var(--font-mono);font-size:0.8rem;color:#6ec1ff;">${baseCell}</div>
+              ${previewCell ? `<div style="font-family:var(--font-mono);font-size:0.75rem;color:#e8a33d;">${previewCell}</div>` : ''}
+            </div>`;
+        }).join('')}
+      </div>`;
+  }
+
+  async function loadProjectionSummary() {
     try {
-      const r = await fetch(`${FINANCES_API}/projection/preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, exclude_recurring_ids, months: projectionMonths }),
-      });
+      const baselineRes = await fetch(`${FINANCES_API}/projection?months=${SUMMARY_MONTHS}`);
+      if (!baselineRes.ok) throw 0;
+      const baseline = await baselineRes.json();
+      const { items, excludeRecurringIds } = collectPreviewItems();
+      let preview = null;
+      if (items.length > 0 || excludeRecurringIds.length > 0) {
+        const r = await fetch(`${FINANCES_API}/projection/preview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items, exclude_recurring_ids: excludeRecurringIds, months: SUMMARY_MONTHS }),
+        });
+        if (r.ok) preview = await r.json();
+      }
+      renderCheckpointSummary('overview-checkpoint-summary', baseline, preview, 'balance');
+    } catch (_) { /* summary is supplementary; leave blank on failure */ }
+  }
+
+  // The single entry point that recomputes BOTH the combined projection
+  // chart and every liability account's payoff chart from the current
+  // ad-hoc rows + applied saved scenarios (and whatever real items those
+  // scenarios' items replace) — called whenever any of those inputs
+  // change, so the two chart types never drift out of sync with each other.
+  async function refreshOverviewCharts() {
+    const { items, excludeRecurringIds } = collectPreviewItems();
+    const hasOverrides = items.length > 0 || excludeRecurringIds.length > 0;
+
+    if (hasOverrides) {
+      try {
+        const r = await fetch(`${FINANCES_API}/projection/preview`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ items, exclude_recurring_ids: excludeRecurringIds, months: projectionMonths }),
+        });
+        if (!r.ok) throw 0;
+        previewProjectionPoints = await r.json();
+        document.getElementById('fin-preview-clear-btn').style.display = '';
+      } catch (_) {
+        toast('Failed to compute preview', true);
+      }
+    } else {
+      previewProjectionPoints = null;
+      document.getElementById('fin-preview-clear-btn').style.display = 'none';
+    }
+    renderProjectionChart();
+    renderRecurringItemsList();
+
+    for (const a of accountsCache.filter(acc => acc.kind === 'liability')) {
+      refreshPayoffPanel(a.id, items, excludeRecurringIds);
+    }
+    for (const id of chartedAccountIds) {
+      refreshAccountBalancePanel(id, items, excludeRecurringIds);
+    }
+    loadProjectionSummary();
+  }
+
+  async function submitProjectionPreview() {
+    const { items, excludeRecurringIds } = collectPreviewItems();
+    if (!items.length && !excludeRecurringIds.length) {
+      toast('Add a preview item, or apply a saved scenario', true);
+      return;
+    }
+    await refreshOverviewCharts();
+  }
+
+  // "Clear" only ever meant "stop previewing the ad-hoc rows" — any
+  // exclusions now come from applied scenarios, which have their own
+  // checkbox to turn off individually.
+  function clearProjectionPreview() {
+    previewRowKeys = [];
+    renderPreviewRows();
+    refreshOverviewCharts();
+  }
+
+  // ── Saved budget scenarios (Overview tab) ──
+  // A named, persisted set of hypothetical income/expense items — unlike
+  // the ad-hoc preview rows above (which live only in page state), these
+  // round-trip through `/budget/scenarios` so they survive a reload and can
+  // be checked on/off against both charts via `appliedScenarioIds`.
+  let budgetScenarios = [];
+  let budgetScenarioItems = {};
+  let appliedScenarioIds = new Set();
+  let expandedScenarioIds = new Set();
+
+  async function loadBudgetScenarios() {
+    const list = document.getElementById('budget-scenarios-list');
+    try {
+      const r = await fetch(`${FINANCES_API}/budget/scenarios`);
       if (!r.ok) throw 0;
-      previewProjectionPoints = await r.json();
-      document.getElementById('fin-preview-clear-btn').style.display = '';
-      renderProjectionChart();
+      budgetScenarios = await r.json();
+      renderBudgetScenariosList();
     } catch (_) {
-      toast('Failed to compute preview', true);
+      if (list) list.innerHTML = '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load scenarios</span></div>';
     }
   }
 
-  function clearProjectionPreview() {
-    previewProjectionPoints = null;
-    previewExcludedIds = new Set();
-    document.getElementById('fin-preview-clear-btn').style.display = 'none';
-    renderRecurringItemsList();
-    renderProjectionChart();
+  function renderBudgetScenariosList() {
+    const list = document.getElementById('budget-scenarios-list');
+    if (!list) return;
+    if (!budgetScenarios.length) {
+      list.innerHTML = '<div class="empty-state"><span class="icon">&#128202;</span><span>No saved scenarios yet</span></div>';
+      return;
+    }
+    list.innerHTML = budgetScenarios.map(renderScenarioCard).join('');
+  }
+
+  // Options for a "Replaces" dropdown: every real recurring item/transfer,
+  // labeled by name+amount, plus a default "genuinely new payment" option.
+  // Linking a scenario item to one of these is what makes applying the
+  // scenario exclude that real item instead of stacking on top of it.
+  function recurringReplacesOptionsHtml() {
+    const options = ['<option value="">&mdash; New payment &mdash;</option>'];
+    for (const item of lastRecurringItems) {
+      const label = `${item.name} ($${Number(item.amount).toFixed(2)}${item._type === 'transfer' ? ', transfer' : ''})`;
+      options.push(`<option value="${esc(item.id)}">${esc(label)}</option>`);
+    }
+    return options.join('');
+  }
+
+  function renderScenarioCard(s) {
+    const expanded = expandedScenarioIds.has(s.id);
+    const applied = appliedScenarioIds.has(s.id);
+    const items = budgetScenarioItems[s.id] || [];
+    const freqLabels = { weekly: 'Weekly', biweekly: 'Biweekly', monthly: 'Monthly', yearly: 'Yearly' };
+    const itemRows = items.map(it => {
+      const replaced = it.replaces_recurring_id && lastRecurringItems.find(r => r.id === it.replaces_recurring_id);
+      const replacesLine = replaced ? ` &middot; replaces "${esc(replaced.name)}"` : (it.replaces_recurring_id ? ' &middot; replaces a real item' : '');
+      return `
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+          <div style="flex:1;">${esc(it.name)} <span class="field-label">${it.kind === 'income' ? 'Income' : 'Expense'} &middot; ${freqLabels[it.frequency] || it.frequency} &middot; ${esc(accountDisplayName(it.account))}${replacesLine}</span></div>
+          <div style="font-family:var(--font-mono);">$${Number(it.amount).toFixed(2)}</div>
+          <button class="btn-ghost btn-sm" title="Edit" onclick="editScenarioItem('${s.id}', '${it.id}')">&#9998;</button>
+          <button class="btn-ghost btn-sm" onclick="deleteScenarioItem('${s.id}', '${it.id}')">&times;</button>
+        </div>`;
+    }).join('') || '<div class="field-label">No items yet</div>';
+    const itemsHtml = expanded ? `
+      <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <div class="field-label">Items <span style="color:var(--text-dim)">("Replaces" prevents double-counting a real payment)</span></div>
+          <button class="btn-ghost btn-sm" onclick="importRecurringToScenario('${s.id}')">Import Recurring</button>
+        </div>
+        ${itemRows}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+          <input type="text" id="sc-item-name-${s.id}" class="lc-first" placeholder="Name" style="flex:2;min-width:100px;" autocomplete="off" />
+          <select id="sc-item-kind-${s.id}" style="flex:1;min-width:80px;">
+            <option value="expense">Expense</option>
+            <option value="income">Income</option>
+          </select>
+          <input type="number" id="sc-item-amount-${s.id}" step="0.01" min="0" placeholder="Amt" style="flex:1;min-width:70px;" />
+          <select id="sc-item-frequency-${s.id}" style="flex:1;min-width:90px;">
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Biweekly</option>
+            <option value="monthly" selected>Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+          <select id="sc-item-account-${s.id}" style="flex:1;min-width:90px;">${accountOptionsHtml(accountsCache)}</select>
+          <select id="sc-item-replaces-${s.id}" style="flex:1;min-width:120px;">${recurringReplacesOptionsHtml()}</select>
+          <button class="btn-ghost btn-sm" id="sc-item-submit-${s.id}" onclick="addScenarioItem('${s.id}')">+ Add</button>
+          <button class="btn-ghost btn-sm" id="sc-item-cancel-${s.id}" style="display:none;" onclick="cancelScenarioItemEdit('${s.id}')">Cancel</button>
+        </div>
+      </div>` : '';
+    return `
+      <div class="card" style="display:flex;flex-direction:column;padding:10px 14px;margin-bottom:8px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input type="checkbox" ${applied ? 'checked' : ''} title="Apply to charts" onclick="toggleScenarioApplied('${s.id}')" />
+          <div style="flex:1;font-weight:600;">${esc(s.name)}</div>
+          <button class="btn-ghost btn-sm" onclick="toggleScenarioExpanded('${s.id}')">${expanded ? 'Hide' : 'Items'}</button>
+          <button class="btn-ghost btn-sm" onclick="deleteBudgetScenario('${s.id}')">&times;</button>
+        </div>
+        ${itemsHtml}
+      </div>`;
+  }
+
+  async function createBudgetScenario() {
+    const name = prompt('Scenario name:');
+    if (!name || !name.trim()) return;
+    try {
+      const r = await fetch(`${FINANCES_API}/budget/scenarios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (!r.ok) throw 0;
+      toast('Scenario created');
+      loadBudgetScenarios();
+    } catch (_) {
+      toast('Failed to create scenario', true);
+    }
+  }
+
+  async function deleteBudgetScenario(id) {
+    if (!confirm('Delete this saved scenario and all its items?')) return;
+    try {
+      const r = await fetch(`${FINANCES_API}/budget/scenarios/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw 0;
+      appliedScenarioIds.delete(id);
+      expandedScenarioIds.delete(id);
+      delete budgetScenarioItems[id];
+      loadBudgetScenarios();
+      refreshOverviewCharts();
+    } catch (_) {
+      toast('Failed to delete scenario', true);
+    }
+  }
+
+  async function toggleScenarioExpanded(id) {
+    if (expandedScenarioIds.has(id)) {
+      expandedScenarioIds.delete(id);
+      renderBudgetScenariosList();
+      return;
+    }
+    expandedScenarioIds.add(id);
+    if (!budgetScenarioItems[id]) {
+      try {
+        const r = await fetch(`${FINANCES_API}/budget/scenarios/${id}/items`);
+        budgetScenarioItems[id] = r.ok ? await r.json() : [];
+      } catch (_) {
+        budgetScenarioItems[id] = [];
+      }
+    }
+    renderBudgetScenariosList();
+  }
+
+  async function toggleScenarioApplied(id) {
+    if (appliedScenarioIds.has(id)) {
+      appliedScenarioIds.delete(id);
+      refreshOverviewCharts();
+      return;
+    }
+    appliedScenarioIds.add(id);
+    if (!budgetScenarioItems[id]) {
+      try {
+        const r = await fetch(`${FINANCES_API}/budget/scenarios/${id}/items`);
+        budgetScenarioItems[id] = r.ok ? await r.json() : [];
+      } catch (_) {
+        budgetScenarioItems[id] = [];
+      }
+    }
+    refreshOverviewCharts();
+  }
+
+  // Only one scenario item can be mid-edit at a time (mirrors
+  // `recurringEditingId`/`spendingEditingId`'s single-editor convention).
+  let scenarioItemEditingId = null;
+
+  function editScenarioItem(scenarioId, itemId) {
+    const item = (budgetScenarioItems[scenarioId] || []).find(i => i.id === itemId);
+    if (!item) return;
+    scenarioItemEditingId = itemId;
+    document.getElementById(`sc-item-name-${scenarioId}`).value = item.name;
+    document.getElementById(`sc-item-kind-${scenarioId}`).value = item.kind;
+    document.getElementById(`sc-item-amount-${scenarioId}`).value = item.amount;
+    document.getElementById(`sc-item-frequency-${scenarioId}`).value = item.frequency;
+    document.getElementById(`sc-item-account-${scenarioId}`).value = item.account;
+    document.getElementById(`sc-item-replaces-${scenarioId}`).value = item.replaces_recurring_id || '';
+    document.getElementById(`sc-item-submit-${scenarioId}`).textContent = 'Save';
+    document.getElementById(`sc-item-cancel-${scenarioId}`).style.display = '';
+  }
+
+  function cancelScenarioItemEdit(scenarioId) {
+    scenarioItemEditingId = null;
+    document.getElementById(`sc-item-name-${scenarioId}`).value = '';
+    document.getElementById(`sc-item-amount-${scenarioId}`).value = '';
+    document.getElementById(`sc-item-replaces-${scenarioId}`).value = '';
+    document.getElementById(`sc-item-submit-${scenarioId}`).textContent = '+ Add';
+    document.getElementById(`sc-item-cancel-${scenarioId}`).style.display = 'none';
+  }
+
+  async function addScenarioItem(scenarioId) {
+    const name = document.getElementById(`sc-item-name-${scenarioId}`).value.trim();
+    const kind = document.getElementById(`sc-item-kind-${scenarioId}`).value;
+    const amount = parseFloat(document.getElementById(`sc-item-amount-${scenarioId}`).value);
+    const frequency = document.getElementById(`sc-item-frequency-${scenarioId}`).value;
+    const account = document.getElementById(`sc-item-account-${scenarioId}`).value;
+    const replaces_recurring_id = document.getElementById(`sc-item-replaces-${scenarioId}`).value || null;
+    if (!name) { toast('Enter a name', true); return; }
+    if (Number.isNaN(amount) || amount < 0) { toast('Enter a valid amount', true); return; }
+    if (!account) { toast('Add an account first (Accounts tab)', true); return; }
+    const editing = scenarioItemEditingId !== null;
+    try {
+      const r = await fetch(
+        `${FINANCES_API}/budget/scenarios/${scenarioId}/items${editing ? '/' + scenarioItemEditingId : ''}`,
+        {
+          method: editing ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, kind, amount, frequency, account, reference_date: null, replaces_recurring_id }),
+        },
+      );
+      if (!r.ok) throw 0;
+      const item = await r.json();
+      if (!budgetScenarioItems[scenarioId]) budgetScenarioItems[scenarioId] = [];
+      if (editing) {
+        const idx = budgetScenarioItems[scenarioId].findIndex(i => i.id === item.id);
+        if (idx >= 0) budgetScenarioItems[scenarioId][idx] = item; else budgetScenarioItems[scenarioId].push(item);
+      } else {
+        budgetScenarioItems[scenarioId].push(item);
+      }
+      cancelScenarioItemEdit(scenarioId);
+      renderBudgetScenariosList();
+      if (appliedScenarioIds.has(scenarioId)) refreshOverviewCharts();
+    } catch (_) {
+      toast(editing ? 'Failed to update item' : 'Failed to add item', true);
+    }
+  }
+
+  async function deleteScenarioItem(scenarioId, itemId) {
+    try {
+      const r = await fetch(`${FINANCES_API}/budget/scenarios/${scenarioId}/items/${itemId}`, { method: 'DELETE' });
+      if (!r.ok) throw 0;
+      budgetScenarioItems[scenarioId] = (budgetScenarioItems[scenarioId] || []).filter(i => i.id !== itemId);
+      if (scenarioItemEditingId === itemId) cancelScenarioItemEdit(scenarioId);
+      renderBudgetScenariosList();
+      if (appliedScenarioIds.has(scenarioId)) refreshOverviewCharts();
+    } catch (_) {
+      toast('Failed to delete item', true);
+    }
+  }
+
+  // Copies every real recurring item (income/expense — recurring
+  // *transfers* can't be imported yet, same known limitation
+  // budget_scenario_items has everywhere else) into a scenario as editable
+  // copies, each stamped with `replaces_recurring_id` pointing back at its
+  // source — so applying the scenario always excludes the real item an
+  // import came from (even before it's edited), never stacking the two.
+  // Client-side only (loops the existing add-item endpoint) — no dedicated
+  // backend route needed. Re-running this on the same scenario adds
+  // duplicate *scenario* items (each still correctly excluding the same
+  // real item, just redundantly) rather than syncing; the confirm() warns
+  // about this.
+  async function importRecurringToScenario(scenarioId) {
+    const regularItems = lastRecurringItems.filter(i => i._type !== 'transfer');
+    if (!regularItems.length) { toast('No recurring items to import', true); return; }
+    const count = regularItems.length;
+    if (!confirm(
+      `Import ${count} real recurring item${count === 1 ? '' : 's'} into this scenario as editable copies?\n\n` +
+      `Each import is linked back to its real item, so applying this scenario will always exclude that real payment (never both at once). Recurring transfers can't be imported yet (income/expense items only). Running this again on the same scenario adds duplicate copies rather than syncing — delete the old ones first if you just want to refresh them.`
+    )) return;
+    try {
+      for (const item of regularItems) {
+        await fetch(`${FINANCES_API}/budget/scenarios/${scenarioId}/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: item.name, kind: item.kind, amount: item.amount, frequency: item.frequency,
+            account: item.account, reference_date: item.reference_date || null,
+            replaces_recurring_id: item.id,
+          }),
+        });
+      }
+      const r = await fetch(`${FINANCES_API}/budget/scenarios/${scenarioId}/items`);
+      budgetScenarioItems[scenarioId] = r.ok ? await r.json() : [];
+      expandedScenarioIds.add(scenarioId);
+      renderBudgetScenariosList();
+      toast(`Imported ${count} recurring item${count === 1 ? '' : 's'}`);
+      if (appliedScenarioIds.has(scenarioId)) refreshOverviewCharts();
+    } catch (_) {
+      toast('Failed to import recurring items', true);
+    }
+  }
+
+  // ── Budget cap allocations (Overview tab) ──
+  // A category's (stupid/survival) budget can be split across several
+  // accounts — e.g. part of "stupid" on a credit card, part on checking.
+  // The category's total cap is *derived* (sum of its allocations'
+  // amounts), compared against `lastSpendingTotals` (the same figures the
+  // Spending tab's totals bar already fetches via `loadSpendingStats()` —
+  // no separate fetch here). Each allocation has its own independent
+  // "include in projection" toggle.
+  let budgetCapAllocations = [];
+  const BUDGET_CATEGORIES = ['stupid', 'survival'];
+  let capAllocationEditingId = null;
+
+  async function loadBudgetCaps() {
+    try {
+      const r = await fetch(`${FINANCES_API}/budget/cap-allocations`);
+      if (!r.ok) throw 0;
+      budgetCapAllocations = await r.json();
+      renderBudgetCaps();
+    } catch (_) { /* caps are supplementary; leave blank on failure */ }
+  }
+
+  // A recurring expense item tagged with a budget category is a scheduled
+  // future commitment, not yet an "actual" transaction hledger has
+  // recorded — so it's kept as its own separate figure rather than folded
+  // into `lastSpendingTotals` (which only ever reflects real, already-
+  // posted spending in the current period). Normalized to a monthly
+  // equivalent via the same `MONTHLY_FACTOR` the Recurring tab's own
+  // "Monthly Net Income/Expense" tile already uses.
+  function recurringMonthlyCommitment(category) {
+    let total = 0;
+    for (const item of lastRecurringItems) {
+      if (item._type === 'transfer' || item.kind !== 'expense' || item.category !== category) continue;
+      total += Number(item.amount) * (MONTHLY_FACTOR[item.frequency] || 1);
+    }
+    return total;
+  }
+
+  function renderBudgetCaps() {
+    const list = document.getElementById('budget-caps-list');
+    if (!list) return;
+    const labels = { stupid: 'Stupid Spending', survival: 'Survival Spending' };
+    list.innerHTML = BUDGET_CATEGORIES.map(cat => {
+      const allocations = budgetCapAllocations.filter(a => a.category === cat);
+      const total = allocations.reduce((sum, a) => sum + a.amount, 0);
+      const hasCap = total > 0;
+      const actual = (lastSpendingTotals[cat] || 0);
+      const recurring = recurringMonthlyCommitment(cat);
+      const recurringLine = recurring > 0 ? ` + $${recurring.toFixed(2)}/mo recurring` : '';
+      const over = hasCap && (actual + recurring) > total;
+      const capLine = hasCap
+        ? `$${actual.toFixed(2)} spent${recurringLine} / $${total.toFixed(2)} cap`
+        : `$${actual.toFixed(2)} spent${recurringLine} (no cap set)`;
+      const allocRows = allocations.map(a => `
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 0;">
+          <div style="flex:1;">${esc(accountDisplayName(a.account))}${a.include_in_projection ? ' <span class="field-label">&middot; in projection</span>' : ''}</div>
+          <div style="font-family:var(--font-mono);">$${Number(a.amount).toFixed(2)}</div>
+          <button class="btn-ghost btn-sm" title="Edit" onclick="editCapAllocation('${cat}', '${a.id}')">&#9998;</button>
+          <button class="btn-ghost btn-sm" onclick="deleteCapAllocation('${cat}', '${a.id}')">&times;</button>
+        </div>`).join('') || '<div class="field-label">No allocations yet</div>';
+      return `
+        <div class="card" style="display:flex;flex-direction:column;padding:10px 14px;margin-bottom:6px;gap:6px;">
+          <div style="font-weight:600;">${labels[cat]}${over ? ' <span class="note-badge overdue">Over Budget</span>' : ''}</div>
+          <div class="field-label">${capLine}</div>
+          ${allocRows}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+            <select id="cap-alloc-account-${cat}" style="flex:1;min-width:120px;">${accountOptionsHtml(accountsCache)}</select>
+            <input type="number" id="cap-alloc-amount-${cat}" step="0.01" min="0" placeholder="Amount" style="flex:1;min-width:90px;" />
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;white-space:nowrap;" title="Fold this allocation into the projection charts as an ongoing monthly expense">
+              <input type="checkbox" id="cap-alloc-include-${cat}" /> Include in projection
+            </label>
+            <button class="btn-ghost btn-sm" id="cap-alloc-submit-${cat}" onclick="submitCapAllocation('${cat}')">+ Add</button>
+            <button class="btn-ghost btn-sm" id="cap-alloc-cancel-${cat}" style="display:none;" onclick="cancelCapAllocationEdit('${cat}')">Cancel</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function editCapAllocation(category, id) {
+    const alloc = budgetCapAllocations.find(a => a.id === id);
+    if (!alloc) return;
+    capAllocationEditingId = id;
+    document.getElementById(`cap-alloc-account-${category}`).value = alloc.account;
+    document.getElementById(`cap-alloc-amount-${category}`).value = alloc.amount;
+    document.getElementById(`cap-alloc-include-${category}`).checked = alloc.include_in_projection;
+    document.getElementById(`cap-alloc-submit-${category}`).textContent = 'Save';
+    document.getElementById(`cap-alloc-cancel-${category}`).style.display = '';
+  }
+
+  function cancelCapAllocationEdit(category) {
+    capAllocationEditingId = null;
+    const amountEl = document.getElementById(`cap-alloc-amount-${category}`);
+    const includeEl = document.getElementById(`cap-alloc-include-${category}`);
+    const submitEl = document.getElementById(`cap-alloc-submit-${category}`);
+    const cancelEl = document.getElementById(`cap-alloc-cancel-${category}`);
+    if (amountEl) amountEl.value = '';
+    if (includeEl) includeEl.checked = false;
+    if (submitEl) submitEl.textContent = '+ Add';
+    if (cancelEl) cancelEl.style.display = 'none';
+  }
+
+  async function submitCapAllocation(category) {
+    const account = document.getElementById(`cap-alloc-account-${category}`).value;
+    const amount = parseFloat(document.getElementById(`cap-alloc-amount-${category}`).value);
+    const include_in_projection = document.getElementById(`cap-alloc-include-${category}`).checked;
+    if (!account) { toast('Pick an account', true); return; }
+    if (Number.isNaN(amount) || amount < 0) { toast('Enter a valid amount', true); return; }
+    const editing = capAllocationEditingId !== null;
+    try {
+      const r = await fetch(
+        `${FINANCES_API}/budget/cap-allocations${editing ? '/' + capAllocationEditingId : ''}`,
+        {
+          method: editing ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ category, account, amount, include_in_projection }),
+        },
+      );
+      if (!r.ok) throw 0;
+      const allocation = await r.json();
+      if (editing) {
+        const idx = budgetCapAllocations.findIndex(a => a.id === allocation.id);
+        if (idx >= 0) budgetCapAllocations[idx] = allocation; else budgetCapAllocations.push(allocation);
+      } else {
+        budgetCapAllocations.push(allocation);
+      }
+      cancelCapAllocationEdit(category);
+      renderBudgetCaps();
+      toast(editing ? 'Allocation updated' : 'Allocation added');
+      refreshOverviewCharts();
+    } catch (_) {
+      toast(editing ? 'Failed to update allocation' : 'Failed to add allocation', true);
+    }
+  }
+
+  async function deleteCapAllocation(category, id) {
+    if (!confirm('Delete this budget allocation?')) return;
+    try {
+      const r = await fetch(`${FINANCES_API}/budget/cap-allocations/${id}`, { method: 'DELETE' });
+      if (!r.ok) throw 0;
+      budgetCapAllocations = budgetCapAllocations.filter(a => a.id !== id);
+      if (capAllocationEditingId === id) cancelCapAllocationEdit(category);
+      renderBudgetCaps();
+      refreshOverviewCharts();
+    } catch (_) {
+      toast('Failed to delete allocation', true);
+    }
   }
 
   async function fetchAccountsList() {
@@ -6078,23 +7368,48 @@
       populateAccountSelects(accounts);
       if (!accounts.length) {
         list.innerHTML = '<div class="empty-state"><span class="icon">&#127974;</span><span>No accounts yet</span></div>';
-        return;
+      } else {
+        list.innerHTML = accounts.map(renderAccountCard).join('');
       }
-      list.innerHTML = accounts.map(renderAccountCard).join('');
     } catch (_) {
       list.innerHTML = '<div class="empty-state"><span class="icon">&#9888;</span><span>Failed to load accounts</span></div>';
     }
+    // Liability accounts (and their names/rates) may have just changed —
+    // the Overview tab's payoff cards are keyed off this same accountsCache.
+    renderOverviewPayoffCards();
+    renderAccountBalanceChecklist();
+    refreshOverviewCharts();
   }
+
+  function updateAccountKindFields() {
+    const isLiability = document.getElementById('fin-acct-kind').value === 'liability';
+    document.getElementById('fin-acct-rate-wrap').style.display = isLiability ? '' : 'none';
+    document.getElementById('fin-acct-limit-wrap').style.display = isLiability ? '' : 'none';
+  }
+
+  let payoffCharts = {};
+  let lastPayoffPoints = {};
 
   function renderAccountCard(a) {
     const kindLabel = a.kind === 'asset' ? 'Asset' : 'Liability';
+    const rateLine = a.interest_rate != null ? ` &middot; ${Number(a.interest_rate).toFixed(2)}% APR` : '';
+    let limitLine = '';
+    if (a.credit_limit != null && a.credit_limit > 0) {
+      // Balance is negative-or-zero for a liability (owed amount); used
+      // credit is how far below zero it's gone.
+      const used = Math.max(0, -Number(a.balance));
+      const pct = (used / a.credit_limit) * 100;
+      const nearLimit = pct >= 90;
+      limitLine = ` &middot; $${used.toFixed(2)} / $${Number(a.credit_limit).toFixed(2)} limit (${pct.toFixed(0)}%)${nearLimit ? ' <span class="note-badge overdue">Near Limit</span>' : ''}`;
+    }
     return `
-      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;">
+      <div class="card" style="display:flex;align-items:center;gap:10px;padding:10px 14px;flex-wrap:wrap;">
         <div style="flex:1;">
           <div style="font-weight:600;">${esc(a.name)}</div>
-          <div class="field-label">${kindLabel}</div>
+          <div class="field-label">${kindLabel}${rateLine}${limitLine}</div>
         </div>
         <div style="font-family:var(--font-mono);font-weight:700;">$${Number(a.balance).toFixed(2)}</div>
+        <button class="btn-ghost btn-sm" onclick="editAccount('${a.id}')">Edit</button>
         <button class="btn-ghost btn-sm" onclick="updateAccountBalance('${a.id}', ${a.balance})">Update</button>
         <button class="btn-ghost btn-sm" onclick="deleteAccount('${a.id}')">&times;</button>
       </div>`;
@@ -6103,19 +7418,516 @@
   async function submitAccount() {
     const name = document.getElementById('fin-acct-name').value.trim();
     const kind = document.getElementById('fin-acct-kind').value;
+    const rateInput = document.getElementById('fin-acct-rate').value;
+    const limitInput = document.getElementById('fin-acct-limit').value;
+    const interest_rate = kind === 'liability' && rateInput !== '' ? parseFloat(rateInput) : null;
+    const credit_limit = kind === 'liability' && limitInput !== '' ? parseFloat(limitInput) : null;
     if (!name) { toast('Enter a name', true); return; }
     try {
       const r = await fetch(`${FINANCES_API}/accounts`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, kind }),
+        body: JSON.stringify({ name, kind, interest_rate, credit_limit }),
       });
       if (!r.ok) throw 0;
       document.getElementById('fin-acct-name').value = '';
+      document.getElementById('fin-acct-rate').value = '';
+      document.getElementById('fin-acct-limit').value = '';
       toast('Account added');
       loadAccounts();
     } catch (_) {
       toast('Failed to add account', true);
+    }
+  }
+
+  async function editAccount(id) {
+    const account = accountsCache.find(a => a.id === id);
+    if (!account) return;
+    const name = prompt('Account name:', account.name);
+    if (name === null) return;
+    let interest_rate = account.interest_rate;
+    let credit_limit = account.credit_limit;
+    if (account.kind === 'liability') {
+      const rateInput = prompt('Interest rate (APR %, blank for none):', account.interest_rate != null ? account.interest_rate : '');
+      if (rateInput === null) return;
+      interest_rate = rateInput.trim() === '' ? null : parseFloat(rateInput);
+      const limitInput = prompt('Credit limit ($, blank for none):', account.credit_limit != null ? account.credit_limit : '');
+      if (limitInput === null) return;
+      credit_limit = limitInput.trim() === '' ? null : parseFloat(limitInput);
+    }
+    try {
+      const r = await fetch(`${FINANCES_API}/accounts/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), interest_rate, credit_limit }),
+      });
+      if (!r.ok) throw 0;
+      toast('Account updated');
+      loadAccounts();
+    } catch (_) {
+      toast('Failed to update account', true);
+    }
+  }
+
+  // Overview tab: one always-visible payoff chart per liability account
+  // (no per-card expand/collapse toggle anymore — see CLAUDE.md's Overview
+  // paragraph) reacting to the same ad-hoc/scenario overrides as the
+  // combined projection chart.
+  // Per-liability-account payment plan — ephemeral, client-side only (like
+  // ad-hoc preview rows), never persisted. When enabled, it *replaces* real
+  // recurring items/transfers against that account for its payoff chart
+  // (never stacks with them) — mutually exclusive with scenario/ad-hoc
+  // overrides for that same account, plan always wins.
+  let paymentPlans = {};
+
+  function getPaymentPlan(id) {
+    if (!paymentPlans[id]) {
+      paymentPlans[id] = { enabled: false, minimumInterestOnly: true, supplementaryAmount: 0, supplementaryFrequency: 'monthly' };
+    }
+    return paymentPlans[id];
+  }
+
+  function togglePaymentPlan(id) {
+    const plan = getPaymentPlan(id);
+    plan.enabled = document.getElementById(`plan-enabled-${id}`).checked;
+    const controls = document.getElementById(`plan-controls-${id}`);
+    if (controls) controls.style.display = plan.enabled ? '' : 'none';
+    // A plan change affects both this account's own payoff chart *and*
+    // the combined chart (its supplementary amount + exclusions feed
+    // collectPreviewItems()), so go through the shared refresh entry point
+    // rather than just this one card.
+    refreshOverviewCharts();
+  }
+
+  function refreshPaymentPlan(id) {
+    const plan = getPaymentPlan(id);
+    plan.minimumInterestOnly = document.getElementById(`plan-min-${id}`).checked;
+    plan.supplementaryAmount = parseFloat(document.getElementById(`plan-supp-amount-${id}`).value) || 0;
+    plan.supplementaryFrequency = document.getElementById(`plan-supp-freq-${id}`).value;
+    refreshOverviewCharts();
+  }
+
+  function renderOverviewPayoffCards() {
+    const list = document.getElementById('overview-payoff-list');
+    if (!list) return;
+    const liabilities = accountsCache.filter(a => a.kind === 'liability');
+    if (!liabilities.length) {
+      list.innerHTML = '<div class="empty-state"><span class="icon">&#128179;</span><span>No liability accounts</span></div>';
+      return;
+    }
+    list.innerHTML = liabilities.map(a => {
+      const plan = getPaymentPlan(a.id);
+      return `
+      <div class="card" style="padding:10px 14px;margin-bottom:8px;">
+        <div style="font-weight:600;">${esc(a.name)}</div>
+        <div class="field-label" id="payoff-summary-${a.id}">Loading payoff projection&hellip;</div>
+        <canvas id="payoff-chart-${a.id}"></canvas>
+        <div class="field-label" id="payoff-breakdown-${a.id}" style="margin-top:2px;"></div>
+        <div id="payoff-checkpoint-${a.id}"></div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;">
+            <input type="checkbox" id="plan-enabled-${a.id}" ${plan.enabled ? 'checked' : ''} onchange="togglePaymentPlan('${a.id}')" />
+            Use payment plan <span style="color:var(--text-dim)">(replaces real recurring items for this chart)</span>
+          </label>
+          <div id="plan-controls-${a.id}" style="${plan.enabled ? '' : 'display:none;'}margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;white-space:nowrap;" title="Each month pays exactly that month's accrued interest, holding the balance flat">
+              <input type="checkbox" id="plan-min-${a.id}" ${plan.minimumInterestOnly ? 'checked' : ''} onchange="refreshPaymentPlan('${a.id}')" /> Minimum (interest-only)
+            </label>
+            <input type="number" id="plan-supp-amount-${a.id}" step="0.01" min="0" placeholder="Supplementary $" value="${plan.supplementaryAmount || ''}" style="flex:1;min-width:100px;" onchange="refreshPaymentPlan('${a.id}')" />
+            <select id="plan-supp-freq-${a.id}" style="flex:1;min-width:90px;" onchange="refreshPaymentPlan('${a.id}')">
+              <option value="weekly">Weekly</option>
+              <option value="biweekly">Biweekly</option>
+              <option value="monthly">Monthly</option>
+              <option value="yearly">Yearly</option>
+            </select>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+    for (const a of liabilities) {
+      const select = document.getElementById(`plan-supp-freq-${a.id}`);
+      if (select) select.value = getPaymentPlan(a.id).supplementaryFrequency;
+    }
+  }
+
+  // Always fetches the plain, unmodified baseline (real recurring
+  // items/interest, nothing toggled) *and*, when a payment plan is enabled
+  // or scenario/ad-hoc overrides are active for this account, a second
+  // "preview" series — plan and overrides are mutually exclusive per
+  // account (plan always wins), same two-line idea as the combined chart.
+  // Shared by the interactive-chart fetch and the fixed-120-month
+  // checkpoint-summary fetch below — same plan/override branching, just a
+  // different `months` depth each time.
+  async function fetchPayoffPair(id, months, plan, usingPlan, extraItems, excludeRecurringIds, hasOverrides) {
+    const baselineRes = await fetch(`${FINANCES_API}/accounts/${id}/payoff?months=${months}`);
+    if (!baselineRes.ok) throw 0;
+    const baseline = await baselineRes.json();
+
+    let preview = null;
+    if (usingPlan) {
+      const r = await fetch(`${FINANCES_API}/accounts/${id}/payoff/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          months,
+          minimum_interest_only: plan.minimumInterestOnly,
+          supplementary_amount: plan.supplementaryAmount,
+          supplementary_frequency: plan.supplementaryFrequency,
+          supplementary_reference_date: null,
+        }),
+      });
+      if (!r.ok) throw 0;
+      preview = await r.json();
+    } else if (hasOverrides) {
+      const r = await fetch(`${FINANCES_API}/accounts/${id}/payoff/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          months,
+          extra_items: extraItems || [],
+          exclude_recurring_ids: excludeRecurringIds || [],
+        }),
+      });
+      if (!r.ok) throw 0;
+      preview = await r.json();
+    }
+    return { baseline, preview };
+  }
+
+  async function refreshPayoffPanel(id, extraItems, excludeRecurringIds) {
+    const summary = document.getElementById(`payoff-summary-${id}`);
+    if (!summary) return;
+    summary.textContent = 'Loading payoff projection…';
+    const plan = paymentPlans[id];
+    const usingPlan = !!(plan && plan.enabled);
+    const hasOverrides = !usingPlan && ((extraItems && extraItems.length) || (excludeRecurringIds && excludeRecurringIds.length));
+    try {
+      const { baseline, preview } = await fetchPayoffPair(
+        id, projectionMonths, plan, usingPlan, extraItems, excludeRecurringIds, hasOverrides,
+      );
+      lastPayoffPoints[id] = { baseline, preview };
+      renderPayoffChart(id, baseline, preview);
+      renderPayoffBreakdown(id, usingPlan, hasOverrides);
+    } catch (_) {
+      summary.textContent = 'Failed to load payoff projection';
+    }
+
+    try {
+      const summaryPair = await fetchPayoffPair(
+        id, SUMMARY_MONTHS, plan, usingPlan, extraItems, excludeRecurringIds, hasOverrides,
+      );
+      renderCheckpointSummary(`payoff-checkpoint-${id}`, summaryPair.baseline, summaryPair.preview, 'ending_balance');
+    } catch (_) { /* checkpoint summary is supplementary; leave blank on failure */ }
+  }
+
+  // Every real recurring item/transfer currently scheduled against this
+  // hledger account path — items via their own `account`, transfers via
+  // either `to_account` (pays this account down/up) or `from_account`
+  // (the reverse). Used purely for display, so a user can see at a glance
+  // that a recurring transfer into a liability already counts toward its
+  // payoff, not just expense/income items.
+  const FREQ_ABBR = { weekly: 'wk', biweekly: 'biwk', monthly: 'mo', yearly: 'yr' };
+  function scheduledAgainstAccount(hledgerAccount) {
+    const matches = [];
+    for (const item of lastRecurringItems) {
+      if (item._type === 'transfer') {
+        if (item.to_account === hledgerAccount) matches.push({ name: item.name, amount: item.amount, frequency: item.frequency, direction: 'in' });
+        else if (item.from_account === hledgerAccount) matches.push({ name: item.name, amount: item.amount, frequency: item.frequency, direction: 'out' });
+      } else if (item.account === hledgerAccount) {
+        matches.push({ name: item.name, amount: item.amount, frequency: item.frequency, direction: item.kind === 'income' ? 'in' : 'out' });
+      }
+    }
+    return matches;
+  }
+
+  // Shared by the payoff and account-balance breakdowns below — both need
+  // the same "which real items/transfers post against this account"
+  // sentence, just wrapped in different surrounding text.
+  function scheduledSummaryText(hledgerAccount) {
+    const scheduled = scheduledAgainstAccount(hledgerAccount);
+    if (!scheduled.length) return 'nothing scheduled against it';
+    return scheduled
+      .map(s => `${esc(s.name)} (${s.direction === 'in' ? '+' : '-'}$${Number(s.amount).toFixed(2)}/${FREQ_ABBR[s.frequency] || s.frequency})`)
+      .join(', ');
+  }
+
+  // Always states, in plain text, exactly what each line on this card's
+  // chart is built from — a fixed legend, not just a note that appears
+  // when something unusual is active, so "what's contributing to this
+  // chart" never has to be guessed from the controls alone.
+  function renderPayoffBreakdown(id, usingPlan, hasOverrides) {
+    const el = document.getElementById(`payoff-breakdown-${id}`);
+    if (!el) return;
+    const account = accountsCache.find(a => a.id === id);
+    if (!account) { el.innerHTML = ''; return; }
+    const rateText = account.interest_rate != null ? `${Number(account.interest_rate).toFixed(2)}% APR` : 'no interest rate set';
+    const lines = [];
+    if (usingPlan) {
+      lines.push(`Solid = baseline: ${rateText}, real recurring items/transfers, no plan.`);
+      lines.push(`Dashed = payment plan below, which replaces (not stacks with) this account's real items/transfers: ${scheduledSummaryText(accountHledgerPath(account))}.`);
+    } else {
+      // Transfers count here too (into this account pays it down, out of
+      // it makes it worse), not just expense/income items — the reason
+      // this line spells out the schedule instead of just a count.
+      lines.push(`Solid = baseline: ${rateText} + real recurring items/transfers against this account: ${scheduledSummaryText(accountHledgerPath(account))}.`);
+      if (hasOverrides) {
+        lines.push('Dashed = baseline plus currently checked scenarios/ad-hoc items (see Saved Scenarios above).');
+      }
+    }
+    el.innerHTML = lines.join('<br>');
+  }
+
+  // Points are daily now, so `points.length` is a day count, not a month
+  // count — this turns a date span into a friendly "N months"/"N days"
+  // label (days for anything under ~2 months, whole months above that).
+  function friendlySpan(startStr, endStr) {
+    const days = Math.round((new Date(endStr) - new Date(startStr)) / 86400000);
+    if (days < 60) return `${days} day${days === 1 ? '' : 's'}`;
+    const months = Math.round(days / 30.44);
+    return `${months} month${months === 1 ? '' : 's'}`;
+  }
+
+  function renderPayoffChart(id, baseline, preview) {
+    const summary = document.getElementById(`payoff-summary-${id}`);
+    const summaryPoints = preview || baseline;
+    if (!summaryPoints.length) {
+      summary.textContent = 'No projection available';
+      return;
+    }
+    const last = summaryPoints[summaryPoints.length - 1];
+    const span = friendlySpan(summaryPoints[0].period_start, last.period_end);
+    const suffix = preview ? ' (preview)' : '';
+    summary.textContent = last.ending_balance >= 0
+      ? `Paid off by ${last.period_end} (${span})${suffix}`
+      : `Not paid off within ${span}${suffix} — balance would be $${last.ending_balance.toFixed(2)}`;
+
+    const labelSource = (preview && preview.length > baseline.length) ? preview : baseline;
+    const datasets = [{
+      label: 'Baseline (real payments)',
+      data: baseline.map(p => p.ending_balance),
+      borderColor: '#6ec1ff',
+      backgroundColor: 'rgba(110,193,255,0.12)',
+      tension: 0.25,
+      fill: true,
+    }];
+    if (preview) {
+      datasets.push({
+        label: 'Preview (plan/scenario)',
+        data: preview.map(p => p.ending_balance),
+        borderColor: '#e8a33d',
+        backgroundColor: 'rgba(232,163,61,0.10)',
+        borderDash: [6, 4],
+        tension: 0.25,
+        fill: false,
+      });
+    }
+    const trend = trendlineDataset(baseline, 'ending_balance');
+    if (trend) datasets.push(trend);
+    const draw = () => {
+      const ctx = document.getElementById(`payoff-chart-${id}`);
+      if (!ctx) return;
+      if (payoffCharts[id]) payoffCharts[id].destroy();
+      payoffCharts[id] = new window.Chart(ctx, {
+        type: 'line',
+        data: { labels: labelSource.map(p => p.period_start), datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: chartAspectRatio(),
+          plugins: { legend: { display: true, labels: { color: '#a89b86' } } },
+          scales: {
+            x: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          },
+        },
+      });
+    };
+    if (window.Chart) {
+      draw();
+    } else {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+      s.onload = draw;
+      document.head.appendChild(s);
+    }
+  }
+
+  // Which accounts get a balance-over-time chart on the Overview tab — an
+  // opt-in checklist (like saved scenarios), not automatic for every
+  // account. Ephemeral, client-side only — never persisted, reset on reload
+  // like `paymentPlans`/`previewRowKeys`.
+  let chartedAccountIds = new Set();
+  let accountBalanceCharts = {};
+  let lastAccountBalancePoints = {};
+
+  function renderAccountBalanceChecklist() {
+    const el = document.getElementById('account-balance-checklist');
+    if (!el) return;
+    if (!accountsCache.length) {
+      el.innerHTML = '<div class="field-label">No accounts yet</div>';
+      return;
+    }
+    // Drop any charted id for an account that no longer exists (deleted
+    // since it was checked).
+    chartedAccountIds = new Set([...chartedAccountIds].filter(id => accountsCache.some(a => a.id === id)));
+    el.innerHTML = accountsCache.map(a => `
+      <label style="display:flex;align-items:center;gap:5px;font-size:0.82rem;padding:4px 8px;border:1px dashed var(--border);border-radius:var(--radius-sm);cursor:pointer;">
+        <input type="checkbox" ${chartedAccountIds.has(a.id) ? 'checked' : ''} onchange="toggleChartedAccount('${a.id}')" />
+        ${esc(a.name)}
+      </label>`).join('');
+  }
+
+  function toggleChartedAccount(id) {
+    if (chartedAccountIds.has(id)) {
+      chartedAccountIds.delete(id);
+      if (accountBalanceCharts[id]) { accountBalanceCharts[id].destroy(); delete accountBalanceCharts[id]; }
+      delete lastAccountBalancePoints[id];
+      renderAccountBalanceCards();
+    } else {
+      chartedAccountIds.add(id);
+      renderAccountBalanceCards();
+      const { items, excludeRecurringIds } = collectPreviewItems();
+      refreshAccountBalancePanel(id, items, excludeRecurringIds);
+    }
+  }
+
+  function renderAccountBalanceCards() {
+    const container = document.getElementById('account-balance-cards');
+    if (!container) return;
+    if (!chartedAccountIds.size) {
+      container.innerHTML = '';
+      return;
+    }
+    container.innerHTML = [...chartedAccountIds].map(id => {
+      const a = accountsCache.find(acc => acc.id === id);
+      if (!a) return '';
+      return `
+      <div class="card" style="padding:10px 14px;margin-bottom:8px;">
+        <div style="font-weight:600;">${esc(a.name)}</div>
+        <div class="field-label" id="account-balance-summary-${id}">Loading balance history&hellip;</div>
+        <canvas id="account-balance-chart-${id}"></canvas>
+        <div class="field-label" id="account-balance-breakdown-${id}" style="margin-top:2px;"></div>
+        <div id="account-balance-checkpoint-${id}"></div>
+      </div>`;
+    }).join('');
+  }
+
+  // Mirrors `fetchPayoffPair` — a plain baseline fetch, plus an optional
+  // preview fetch when scenarios/ad-hoc items are active. No payment-plan
+  // concept here (that's payoff-specific); just the same additive overlay
+  // the combined chart uses.
+  async function fetchAccountBalancePair(id, months, extraItems, excludeRecurringIds, hasOverrides) {
+    const baselineRes = await fetch(`${FINANCES_API}/accounts/${id}/history?months=${months}`);
+    if (!baselineRes.ok) throw 0;
+    const baseline = await baselineRes.json();
+
+    let preview = null;
+    if (hasOverrides) {
+      const r = await fetch(`${FINANCES_API}/accounts/${id}/history/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          months,
+          extra_items: extraItems || [],
+          exclude_recurring_ids: excludeRecurringIds || [],
+        }),
+      });
+      if (!r.ok) throw 0;
+      preview = await r.json();
+    }
+    return { baseline, preview };
+  }
+
+  async function refreshAccountBalancePanel(id, extraItems, excludeRecurringIds) {
+    const summary = document.getElementById(`account-balance-summary-${id}`);
+    if (!summary) return;
+    summary.textContent = 'Loading balance history…';
+    const hasOverrides = !!((extraItems && extraItems.length) || (excludeRecurringIds && excludeRecurringIds.length));
+    try {
+      const { baseline, preview } = await fetchAccountBalancePair(id, projectionMonths, extraItems, excludeRecurringIds, hasOverrides);
+      lastAccountBalancePoints[id] = { baseline, preview };
+      renderAccountBalanceChart(id, baseline, preview);
+      const breakdown = document.getElementById(`account-balance-breakdown-${id}`);
+      if (breakdown) {
+        const account = accountsCache.find(a => a.id === id);
+        const lines = account
+          ? [`Solid = baseline: real transactions plus real recurring items/transfers against this account: ${scheduledSummaryText(accountHledgerPath(account))}.`]
+          : [];
+        if (hasOverrides) {
+          lines.push('Dashed = baseline plus currently checked scenarios/ad-hoc items (see Saved Scenarios above).');
+        }
+        breakdown.innerHTML = lines.join('<br>');
+      }
+    } catch (_) {
+      summary.textContent = 'Failed to load balance history';
+    }
+
+    try {
+      const summaryPair = await fetchAccountBalancePair(id, SUMMARY_MONTHS, extraItems, excludeRecurringIds, hasOverrides);
+      renderCheckpointSummary(`account-balance-checkpoint-${id}`, summaryPair.baseline, summaryPair.preview, 'balance');
+    } catch (_) { /* checkpoint summary is supplementary; leave blank on failure */ }
+  }
+
+  function renderAccountBalanceChart(id, baseline, preview) {
+    const summary = document.getElementById(`account-balance-summary-${id}`);
+    const summaryPoints = preview || baseline;
+    if (!summary) return;
+    if (!summaryPoints.length) {
+      summary.textContent = 'No projection available';
+      return;
+    }
+    const last = summaryPoints[summaryPoints.length - 1];
+    const suffix = preview ? ' (preview)' : '';
+    summary.textContent = `Projected balance by ${last.period_end}: $${last.balance.toFixed(2)}${suffix}`;
+
+    const labelSource = (preview && preview.length > baseline.length) ? preview : baseline;
+    const datasets = [{
+      label: 'Baseline (real accounts)',
+      data: baseline.map(p => p.balance),
+      borderColor: '#6ec1ff',
+      backgroundColor: 'rgba(110,193,255,0.12)',
+      tension: 0.25,
+      fill: true,
+    }];
+    if (preview) {
+      datasets.push({
+        label: 'Preview scenario',
+        data: preview.map(p => p.balance),
+        borderColor: '#e8a33d',
+        backgroundColor: 'rgba(232,163,61,0.10)',
+        borderDash: [6, 4],
+        tension: 0.25,
+        fill: false,
+      });
+    }
+    const trend = trendlineDataset(baseline, 'balance');
+    if (trend) datasets.push(trend);
+    const draw = () => {
+      const ctx = document.getElementById(`account-balance-chart-${id}`);
+      if (!ctx) return;
+      if (accountBalanceCharts[id]) accountBalanceCharts[id].destroy();
+      accountBalanceCharts[id] = new window.Chart(ctx, {
+        type: 'line',
+        data: { labels: labelSource.map(p => p.period_start), datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: chartAspectRatio(),
+          plugins: { legend: { display: true, labels: { color: '#a89b86' } } },
+          scales: {
+            x: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+            y: { ticks: { color: '#a89b86' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+          },
+        },
+      });
+    };
+    if (window.Chart) {
+      draw();
+    } else {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/chart.js';
+      s.onload = draw;
+      document.head.appendChild(s);
     }
   }
 
