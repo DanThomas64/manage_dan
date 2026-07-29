@@ -297,9 +297,23 @@ pub async fn read_items_by_project(project_title: &str) -> TodoLibResult<Vec<Tod
 /// edit would be far noisier than printing one on creation.
 pub async fn update_item(item: TodoItem, print: bool) -> TodoLibResult {
     let id = item.id;
+    let old_status = match id {
+        Some(id) => get_item(id).await.map(|i| i.status).unwrap_or(TodoStatus::NotStarted),
+        None => TodoStatus::NotStarted,
+    };
+    let new_status = item.status;
+
     backends::nb::update_item(notebook(), item).await?;
     if let Some(id) = id {
         if let Some(mut updated) = sync_one(id).await {
+            // The status-change ticket is independent of `print` — `print`
+            // only controls whether *this edit* reprints the regular
+            // ticket; a status change is its own distinct notification and
+            // should never be silenced by an unrelated "don't print this
+            // edit" choice.
+            if new_status != old_status {
+                print_status_change_ticket(&updated, new_status).await;
+            }
             print_ticket_if_requested(&mut updated, print).await?;
         }
     }
