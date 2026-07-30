@@ -868,6 +868,29 @@
     }
     #offline-banner.show { display: flex; }
 
+    /* ── Global uncaught-error banner ── */
+    #js-error-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 16px;
+      background: var(--red-cont);
+      border-bottom: 1px solid var(--red);
+      color: var(--red-on);
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+      z-index: 1002;
+      max-height: 40vh;
+      overflow-y: auto;
+    }
+    #js-error-banner.show { display: flex; }
+    #js-error-banner #js-error-text { white-space: pre-wrap; word-break: break-word; }
+    #js-error-banner button { align-self: flex-end; flex-shrink: 0; }
+
     /* ── Occurrence catch-up modal (recurring paid-tracking) ── */
     /* First modal/dialog primitive in this file — everything else here is
        either a native confirm()/prompt(), a full-screen .app-overlay
@@ -1849,6 +1872,16 @@
 
 <div id="toast"></div>
 <div id="offline-banner">&#9889; Offline — showing cached data</div>
+<!-- Global uncaught-error banner — this app has no other way to surface a
+     JS error to the user (only the browser's own DevTools console, which is
+     awkward to reach on mobile/PWA installs); wired up first thing in the
+     inline script below so it catches boot-time errors too. Persistent
+     (like #offline-banner, unlike the auto-dismissing #toast) since a stack
+     trace needs to stay readable long enough to copy down. -->
+<div id="js-error-banner">
+  <div id="js-error-text"></div>
+  <button class="btn-ghost btn-sm" onclick="document.getElementById('js-error-banner').classList.remove('show')">Dismiss</button>
+</div>
 
 <!-- Recurring occurrence catch-up modal — lets a user resolve multiple
      missed/overdue periods of one recurring item/transfer at once. -->
@@ -2561,6 +2594,36 @@ A category's overall budget cap is the sum of its allocations — split it acros
 </div>
 
 <script>
+  // ═══════════════════════════════════════════════════════════════════════════
+  // GLOBAL UNCAUGHT-ERROR BANNER — registered first, before anything else in
+  // this script runs, so it also catches errors thrown during the boot
+  // sequence itself (not just later interactive ones). The only other way
+  // to see a JS error in this app is the browser's own DevTools console,
+  // which is impractical to reach on a phone or an installed PWA — this
+  // surfaces the message/stack directly on screen instead. Persistent
+  // (like #offline-banner) rather than an auto-dismissing #toast, and
+  // appends rather than replaces so a second, unrelated error doesn't erase
+  // the first one before it's been read.
+  // ═══════════════════════════════════════════════════════════════════════════
+  function showJsErrorBanner(text) {
+    const el = document.getElementById('js-error-banner');
+    const textEl = document.getElementById('js-error-text');
+    if (!el || !textEl) return;
+    textEl.textContent = (textEl.textContent ? textEl.textContent + '\n\n---\n\n' : '') + text;
+    el.classList.add('show');
+  }
+  window.addEventListener('error', (e) => {
+    showJsErrorBanner(
+      `${e.message}\n${e.filename || ''}:${e.lineno || ''}:${e.colno || ''}` +
+      (e.error && e.error.stack ? `\n${e.error.stack}` : '')
+    );
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const reason = e.reason;
+    const detail = reason && (reason.stack || reason.message) ? (reason.stack || reason.message) : String(reason);
+    showJsErrorBanner(`Unhandled promise rejection: ${detail}`);
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // OFFLINE CACHE (IndexedDB) — Lists & Todo only, not Notes/Log/Projects.
   //
@@ -4375,6 +4438,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
     updateNotesProjectCheck();
     notesLoadNotebooks();
     notesUpdateTreeVisibility();
+    if (pendingProjectNotesEntry) {
+      pendingProjectNotesEntry = false;
+      return;
+    }
     if (pendingProjectContext !== null) {
       const pid = pendingProjectContext; pendingProjectContext = null;
       notesShowTab('add');
@@ -5936,10 +6003,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
   async function fetchProjects() {
     try {
       await refreshProjectsList();
-      renderProjectsList();
     } catch (_) {
       document.getElementById('projects-list').innerHTML = '<div class="empty-state"><span>Failed to load projects</span></div>';
+      return;
     }
+    // Deliberately outside the try/catch above — that one is scoped to the
+    // network fetch only. A bug in renderProjectsList() itself used to get
+    // silently swallowed here too, masquerading as a network failure
+    // ("Failed to load projects") with no trace in the console or the
+    // global error banner, since a *caught* exception never reaches either.
+    renderProjectsList();
   }
 
   function renderProjectsList() {
@@ -6155,26 +6228,34 @@ A category's overall budget cap is the sum of its allocations — split it acros
     pdTodoView = pdTodoDefaultView();
     const el = document.getElementById('project-detail-content');
     el.innerHTML = '<div class="empty-state"><span>Loading…</span></div>';
+    let detail;
     try {
       // /detail already returns the full project row (including
       // archived_at) alongside its todos/notes/logs/lists — no need for a
       // separate fetch just to check archive state first.
       const r = await fetch(PROJECT_API + '/' + id + '/detail');
       if (!r.ok) throw 0;
-      const detail = await r.json();
-      if (token !== projectDetailRequestToken) return; // superseded by a newer visit — discard
-      currentProjectMeta = detail.project;
-      updatePdFavouriteCheck();
-      updatePdTodoDefaultCheck();
-      if (detail.project.archived_at) {
-        renderArchivedProjectDetail(detail.project);
-        return;
-      }
-      renderProjectDetail(detail);
+      detail = await r.json();
     } catch (_) {
       if (token !== projectDetailRequestToken) return; // superseded — don't clobber a newer render with a stale failure
       el.innerHTML = '<div class="empty-state"><span>Failed to load project</span></div>';
+      return;
     }
+    if (token !== projectDetailRequestToken) return; // superseded by a newer visit — discard
+    currentProjectMeta = detail.project;
+    updatePdFavouriteCheck();
+    updatePdTodoDefaultCheck();
+    // Deliberately outside the try/catch above — that one is scoped to the
+    // network fetch only. A bug in renderProjectDetail()/
+    // renderArchivedProjectDetail() itself used to get silently swallowed
+    // here too, masquerading as a network failure ("Failed to load
+    // project") with no trace in the console or the global error banner,
+    // since a *caught* exception never reaches either.
+    if (detail.project.archived_at) {
+      renderArchivedProjectDetail(detail.project);
+      return;
+    }
+    renderProjectDetail(detail);
   }
 
   // Archived projects show static metadata only — no live re-fetch of moved
@@ -6237,21 +6318,34 @@ A category's overall budget cap is the sum of its allocations — split it acros
     initSwipeRevealAll(el.querySelectorAll('.todo-card'));
   }
 
+  // Set immediately before navigating into Notes from a project's "Notes
+  // (N) →" row — tells notesOnOpen() (run synchronously inside the showView
+  // call below) to skip its own default same-tab reload. Without this,
+  // notesOnOpen() would fire notesLoadBrowse() once using whatever
+  // notesFilterNotebook was already set (usually a *different*, previous
+  // notebook, or none), immediately followed by this function's own
+  // notesShowTab('browse') firing a second, correctly-filtered round —
+  // roughly double the notes-related requests of any other section's
+  // project-exit path (Todo/Log have no such double-fire), which measurably
+  // delays — and, on a slow connection, can starve — whatever fetch runs
+  // next, most visibly Project Detail's own re-fetch if the user navigates
+  // straight back out. Consumed (cleared) on read.
+  let pendingProjectNotesEntry = false;
+
   // The Notes row navigates straight to the Notes overlay filtered to this
   // project's own notebook, rather than previewing notes inline — mirrors
   // the "☰ → Archive" shortcut pattern. Project items are tag-filtered out
   // of Notes by default, so that has to be switched off here or the filter
   // would strip out every note in the very notebook being requested.
-  async function openProjectNotes(slug) {
+  function openProjectNotes(slug) {
     pendingProjectReturnId = currentProjectDetailId;
-    showView('notes', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined);
+    pendingProjectNotesEntry = true;
     notesHideProjectItems = false;
-    updateNotesProjectCheck();
-    await ensureProjectsLoaded();
     notesFilterNotebook = slug;
     notesCurrentFolder = '';
+    showView('notes', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined);
+    updateNotesProjectCheck();
     notesShowTab('browse');
-    notesLoadNotebooks();
   }
 
   async function archiveProject(id) {
@@ -6384,10 +6478,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   function financesOnOpen() {
     if (!document.getElementById('fin-date').value) {
-      document.getElementById('fin-date').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('fin-date').value = formatDateLocal(new Date());
     }
     if (!document.getElementById('fin-transfer-date').value) {
-      document.getElementById('fin-transfer-date').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('fin-transfer-date').value = formatDateLocal(new Date());
     }
     if (pendingQuickAdd) {
       pendingQuickAdd = false;
@@ -6438,8 +6532,8 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   function monthRange() {
     const now = new Date();
-    const from = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10);
+    const from = formatDateLocal(new Date(now.getFullYear(), now.getMonth(), 1));
+    const to = formatDateLocal(new Date(now.getFullYear(), now.getMonth() + 1, 0));
     return { from, to };
   }
 
