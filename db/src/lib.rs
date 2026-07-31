@@ -338,6 +338,13 @@ pub fn init() -> DbLibResult {
         )?;
     }
 
+    // Migration: add url (nb bookmark support) to existing databases — run
+    // after the folder-PK rebuild above so it applies regardless of whether
+    // this call also just rebuilt the table. Best-effort, no-op once the
+    // column exists; `NULL` for every pre-existing row, correct since none of
+    // them predate bookmarks.
+    let _ = conn.execute("ALTER TABLE note_cache ADD COLUMN url TEXT", []);
+
     Ok(())
 }
 
@@ -850,10 +857,12 @@ fn row_to_note_cache_row(row: &Row) -> RusqliteResult<NoteCacheRow> {
         updated_at: parse_dt(row.get(6)?)?,
         source_mtime: parse_opt_dt(row.get(7)?)?,
         synced_at: parse_dt(row.get(8)?)?,
+        url: row.get(9)?,
     })
 }
 
-const NOTE_CACHE_COLUMNS: &str = "notebook, folder, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at";
+const NOTE_CACHE_COLUMNS: &str =
+    "notebook, folder, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at, url";
 
 /// Batches in every row's tags with two queries total (one for the notes
 /// already fetched, one for all tags), rather than one extra query per note.
@@ -885,15 +894,16 @@ pub async fn note_cache_upsert(row: NoteCacheRow) -> DbLibResult {
     execute_async(move |conn| {
         conn.execute(
             "INSERT INTO note_cache (
-                notebook, folder, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at
-            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)
+                notebook, folder, nb_id, title, preview, created_at, updated_at, source_mtime, synced_at, url
+            ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
             ON CONFLICT(notebook, folder, nb_id) DO UPDATE SET
                 title = excluded.title,
                 preview = excluded.preview,
                 created_at = excluded.created_at,
                 updated_at = excluded.updated_at,
                 source_mtime = excluded.source_mtime,
-                synced_at = excluded.synced_at",
+                synced_at = excluded.synced_at,
+                url = excluded.url",
             params![
                 row.notebook,
                 row.folder,
@@ -904,6 +914,7 @@ pub async fn note_cache_upsert(row: NoteCacheRow) -> DbLibResult {
                 row.updated_at.to_rfc3339(),
                 row.source_mtime.map(|d| d.to_rfc3339()),
                 row.synced_at.to_rfc3339(),
+                row.url,
             ],
         )?;
 

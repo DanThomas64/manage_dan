@@ -74,6 +74,9 @@ pub struct NoteCacheRow {
     pub title: String,
     pub preview: String,
     pub tags: Vec<String>,
+    /// `Some(url)` for a bookmark, `None` for a regular note — see
+    /// `notes::models::Note.url`.
+    pub url: Option<String>,
     pub created_at: DateTime<Local>,
     pub updated_at: DateTime<Local>,
     pub source_mtime: Option<DateTime<Local>>,

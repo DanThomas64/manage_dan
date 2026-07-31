@@ -10,7 +10,8 @@ use crate::notes_prelude::*;
 use chrono::{DateTime, Local};
 
 pub use models::{
-    CreateFolderRequest, CreateLogRequest, CreateNoteRequest, LogEntry, MoveNoteRequest, Note, UpdateNoteRequest,
+    CreateBookmarkRequest, CreateFolderRequest, CreateLogRequest, CreateNoteRequest, LogEntry, MoveNoteRequest, Note,
+    UpdateNoteRequest,
 };
 
 /// Notebook all daily log entries are written to, via nb's `daily` plugin.
@@ -24,6 +25,15 @@ const TODO_NOTEBOOK: &str = "todo";
 /// from general note browsing — it's only ever browsed deliberately (a
 /// specific notebook filter), never mixed into an unscoped listing.
 const ARCHIVE_NOTEBOOK: &str = "archive";
+
+/// Every bookmark lands under this folder (optionally nested one level
+/// deeper, e.g. `Bookmarks/Reading`, via `CreateBookmarkRequest.folder`) in
+/// whichever notebook it's created in — "these would be considered notes in
+/// our system, but in a special folder," rather than a wholly separate
+/// storage layer. Works identically in `home` and in a project's own
+/// notebook, so a project's bookmarks live at `<slug>:Bookmarks/...` the same
+/// way a project's regular notes optionally land in the `<slug>` notebook.
+const BOOKMARKS_FOLDER: &str = "Bookmarks";
 
 /// Notebooks left out of an unscoped ("all notebooks") listing — applied
 /// before any note in them is read, not filtered out of the results
@@ -85,6 +95,31 @@ pub async fn create(req: CreateNoteRequest) -> NotesLibResult<Note> {
     };
     if let Err(e) = db::note_cache_upsert(to_cache_row(&note, None)).await {
         warn!("create: failed to sync cache for note {}:{}: {}", notebook, note.nb_id, e);
+    }
+    Ok(note)
+}
+
+/// Creates a bookmark (an nb `.bookmark.md` file) under `BOOKMARKS_FOLDER`
+/// (optionally one level deeper via `req.folder`) in `req.notebook` (default
+/// `"home"`) — same notebook/tag scoping a regular note uses, so a bookmark
+/// tagged `project-<slug>` shows up via `list_by_tag` in Project Detail
+/// exactly like any other project note, no separate aggregation needed.
+pub async fn create_bookmark(req: CreateBookmarkRequest) -> NotesLibResult<Note> {
+    let url = req.url.trim();
+    if url.is_empty() {
+        return Err(NotesLibError::InvalidInput("url is required".to_string()));
+    }
+    let notebook = req.notebook.as_deref().unwrap_or("home");
+    let tags = req.tags.unwrap_or_default();
+    let sub = req.folder.as_deref().unwrap_or("").trim().trim_matches('/');
+    let folder = if sub.is_empty() { BOOKMARKS_FOLDER.to_string() } else { format!("{}/{}", BOOKMARKS_FOLDER, sub) };
+
+    nb_client::nb_add_folder(notebook, &folder).await?;
+    let nb_id = nb_client::nb_bookmark(notebook, &folder, url, req.title.as_deref(), &tags, req.comment.as_deref())
+        .await?;
+    let note = nb_client::nb_show(notebook, &folder, nb_id).await?;
+    if let Err(e) = db::note_cache_upsert(to_cache_row(&note, None)).await {
+        warn!("create_bookmark: failed to sync cache for note {}:{}/{}: {}", notebook, folder, note.nb_id, e);
     }
     Ok(note)
 }
@@ -375,6 +410,7 @@ fn to_cache_row(note: &Note, source_mtime: Option<DateTime<Local>>) -> db::model
         title: note.title.clone(),
         preview: note.content.chars().take(300).collect(),
         tags: note.tags.clone(),
+        url: note.url.clone(),
         created_at: note.created_at,
         updated_at: note.updated_at,
         source_mtime,
@@ -394,6 +430,7 @@ fn from_cache_row(row: db::models::NoteCacheRow) -> Note {
         title: row.title,
         content: row.preview,
         tags: row.tags,
+        url: row.url,
         created_at: row.created_at,
         updated_at: row.updated_at,
     }

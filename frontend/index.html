@@ -426,41 +426,6 @@
       .cat-menu-btn  { min-width: 44px; min-height: 44px; font-size: 1.35rem; }
     }
 
-    /* ── Notebook autocomplete dropdown (custom — native <datalist> is unreliable on mobile) ── */
-    .suggestions-dropdown {
-      display: none;
-      position: absolute;
-      top: 100%;
-      left: 0;
-      right: 0;
-      max-height: 200px;
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      background: var(--surface2);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: 0 4px 16px rgba(0,0,0,0.35);
-      z-index: 200;
-      margin-top: 2px;
-    }
-    .suggestions-dropdown.open { display: block; }
-    .suggestion-item {
-      display: block;
-      width: 100%;
-      padding: 11px 14px;
-      min-height: 44px;
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: var(--text);
-      font-size: 0.9rem;
-      text-align: left;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .suggestion-item:hover { background: var(--surface3, #333); }
-
     .item-list {
       flex: 1;
       min-height: 0; /* allow flex shrink so the add-bar stays pinned at the bottom */
@@ -747,6 +712,7 @@
     input[type="date"],
     input[type="time"],
     input[type="number"],
+    input[type="url"],
     select {
       background: var(--surface2);
       border: none;
@@ -765,9 +731,12 @@
     input[type="date"]:focus,
     input[type="time"]:focus,
     input[type="number"]:focus,
+    input[type="url"]:focus,
     select:focus { border-bottom-color: var(--accent); }
     input[type="number"] { cursor: text; }
     input[type="number"]::placeholder { color: var(--text-muted); }
+    input[type="url"] { cursor: text; }
+    input[type="url"]::placeholder { color: var(--text-muted); }
 
     /* Recolor the native calendar/clock glyph to match the light-on-dark text */
     input[type="date"]::-webkit-calendar-picker-indicator,
@@ -1412,6 +1381,7 @@
       margin: 0 auto;
     }
     .quick-note-form input[type="text"],
+    .quick-note-form input[type="url"],
     .quick-note-form textarea {
       width: 100%;
     }
@@ -1994,36 +1964,45 @@
   <!-- Quick Add panel -->
   <div class="notes-panel" id="npanel-add">
     <div class="quick-note-form">
-      <div>
-        <div class="field-label">Title</div>
-        <input type="text" id="note-title" class="lc-first" placeholder="Note title" autocomplete="off" required />
+      <div class="filter-pill-row" style="margin-bottom:4px;">
+        <button class="filter-pill active" id="note-mode-note" onclick="setNoteMode('note')">Note</button>
+        <button class="filter-pill" id="note-mode-bookmark" onclick="setNoteMode('bookmark')">&#128278; Bookmark</button>
       </div>
-      <div style="position:relative;">
-        <div class="field-label">Notebook <span style="color:var(--text-dim)">(optional)</span></div>
-        <input type="text" id="note-notebook" class="lc-first" placeholder="e.g. work" autocomplete="off"
-               onfocus="notebookShowSuggestions()" oninput="notebookFilterSuggestions();clearTimeout(noteFolderRefreshTimer);noteFolderRefreshTimer=setTimeout(notesCreateRefreshFolders,300);" />
-        <div class="suggestions-dropdown" id="notebook-suggestions-list"></div>
+      <div>
+        <div class="field-label">Title <span style="color:var(--text-dim);display:none;" id="note-title-optional-hint">(optional for a bookmark)</span></div>
+        <input type="text" id="note-title" class="lc-first" placeholder="Note title" autocomplete="off" />
+      </div>
+      <div>
+        <div class="field-label">Notebook <span style="color:var(--text-dim)">(optional — notebooks tied to a project are labeled)</span></div>
+        <select id="note-notebook" style="width:100%;" onchange="noteNotebookChanged()">
+          <option value="">home (default)</option>
+          <option value="__new__">+ New notebook…</option>
+        </select>
       </div>
       <div>
         <div class="field-label">Tags <span style="color:var(--text-dim)">(comma-separated)</span></div>
         <input type="text" id="note-tags" placeholder="e.g. idea, work" autocomplete="off" />
       </div>
-      <div>
-        <div class="field-label">Project <span style="color:var(--text-dim)">(optional)</span></div>
-        <select id="note-project" style="width:100%;" onchange="noteProjectChanged()">
-          <option value="">No project</option>
-        </select>
-      </div>
-      <div>
+      <div id="note-folder-field">
         <div class="field-label">Folder <span style="color:var(--text-dim)">(optional)</span></div>
         <select id="note-folder" style="width:100%;" onchange="noteFolderChanged()">
           <option value="">(notebook root)</option>
           <option value="__new__">+ New folder…</option>
         </select>
       </div>
-      <div>
+      <div id="note-content-fields">
         <div class="field-label">Content</div>
         <textarea id="note-content" placeholder="Write your note here… (markdown supported)" autofocus></textarea>
+      </div>
+      <div id="note-bookmark-fields" style="display:none;">
+        <div>
+          <div class="field-label">URL</div>
+          <input type="url" id="note-url" placeholder="https://…" autocomplete="off" />
+        </div>
+        <div style="margin-top:8px;">
+          <div class="field-label">Comment <span style="color:var(--text-dim)">(optional)</span></div>
+          <textarea id="note-bookmark-comment" placeholder="Why you saved this…"></textarea>
+        </div>
       </div>
       <button class="btn-primary" style="width:100%;padding:10px;" onclick="submitQuickNote()">Save Note</button>
     </div>
@@ -4411,7 +4390,24 @@ A category's overall budget cap is the sum of its allocations — split it acros
   let notesCurrentNote = null;
   let notesViewerFromTab = 'browse';
   let notesSearchTimer = null;
-  let noteFolderRefreshTimer = null;
+  let noteMode = 'note';
+
+  // Bookmark mode swaps the free-text Content field for URL + Comment ones
+  // (a bookmark's body is nb's own bookmark layout, not freeform markdown —
+  // see notes::create_bookmark) — same pill-toggle convention as Finances'
+  // Expense/Transfer mode (setSpendingMode). Title becomes optional (nb
+  // falls back to "(domain)" when none is given).
+  function setNoteMode(mode) {
+    noteMode = mode;
+    document.getElementById('note-mode-note').classList.toggle('active', mode === 'note');
+    document.getElementById('note-mode-bookmark').classList.toggle('active', mode === 'bookmark');
+    document.getElementById('note-content-fields').style.display = mode === 'note' ? '' : 'none';
+    document.getElementById('note-bookmark-fields').style.display = mode === 'bookmark' ? '' : 'none';
+    document.getElementById('note-title-optional-hint').style.display = mode === 'bookmark' ? '' : 'none';
+    // A bookmark always lands in the notebook's fixed Bookmarks folder
+    // server-side (see notes::create_bookmark) — no folder pick needed.
+    document.getElementById('note-folder-field').style.display = mode === 'bookmark' ? 'none' : '';
+  }
   let markedLoaded = false;
   // Notes-tree state: which subfolder is being browsed within
   // notesFilterNotebook (empty = that notebook's root), and its full folder
@@ -4445,15 +4441,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (pendingProjectContext !== null) {
       const pid = pendingProjectContext; pendingProjectContext = null;
       notesShowTab('add');
-      ensureProjectsLoaded().then(() => {
-        populateProjectSelect('note-project');
+      notesLoadNotebooks().then(() => {
         const project = projectsList.find(p => p.id === pid);
-        if (project) {
-          document.getElementById('note-project').value = project.slug;
-          noteProjectChanged();
-        } else {
-          notesCreateRefreshFolders();
-        }
+        if (project) document.getElementById('note-notebook').value = project.slug;
+        notesCreateRefreshFolders();
       });
       return;
     }
@@ -4464,7 +4455,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
     if (notesCurrentTab === 'browse') notesLoadBrowse();
     if (notesCurrentTab === 'add') {
-      ensureProjectsLoaded().then(() => populateProjectSelect('note-project'));
+      notesLoadNotebooks();
       notesCreateRefreshFolders();
     }
   }
@@ -4479,8 +4470,9 @@ A category's overall budget cap is the sum of its allocations — split it acros
     notesUpdateTreeVisibility();
     if (tab === 'browse') notesLoadBrowse();
     if (tab === 'add') {
+      setNoteMode('note');
       setTimeout(() => document.getElementById('note-content').focus(), 80);
-      ensureProjectsLoaded().then(() => populateProjectSelect('note-project'));
+      notesLoadNotebooks();
       notesCreateRefreshFolders();
     }
   }
@@ -4596,6 +4588,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       const [, r] = await Promise.all([ensureProjectsLoaded(), fetch(NOTES_API + '/folders')]);
       notebookList = await r.json();
       renderNotebookFilters();
+      populateNotebookSelect();
     } catch (_) {}
   }
 
@@ -4644,41 +4637,45 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
   }
 
-  // Custom notebook-name autocomplete for the Quick Add form. Native
-  // <input list> + <datalist> doesn't reliably show suggestions on mobile
-  // browsers (notably iOS Safari), so this builds the dropdown by hand.
-  function renderNotebookSuggestions(list) {
-    const el = document.getElementById('notebook-suggestions-list');
-    if (!list.length) {
-      el.classList.remove('open');
-      el.innerHTML = '';
-      return;
+  // Notes/Bookmark Add form's Notebook select: one dropdown standing in for
+  // what used to be two separate fields (a free-text Notebook input plus a
+  // Project select) — a notebook matching a project's own slug is labeled
+  // with that project's name, and picking it both files the note there *and*
+  // tags it to the project (see submitQuickNote/submitQuickBookmark), rather
+  // than requiring both to be set independently.
+  function populateNotebookSelect() {
+    const sel = document.getElementById('note-notebook');
+    if (!sel) return;
+    const current = sel.value;
+    const projectSlugs = new Set(projectsList.filter(p => !p.archived_at).map(p => p.slug));
+    const options = notebookList
+      .filter(nb => nb !== 'home' && nb !== 'archive')
+      .map(nb => {
+        const label = projectSlugs.has(nb) ? `${nb} (Project)` : nb;
+        return `<option value="${esc(nb)}">${esc(label)}</option>`;
+      }).join('');
+    sel.innerHTML = `<option value="">home (default)</option>${options}<option value="__new__">+ New notebook…</option>`;
+    sel.value = notebookList.includes(current) ? current : (current === '__new__' ? '' : current);
+  }
+
+  // "+ New notebook…" is a sentinel, resolved immediately (mirroring the
+  // Folder select's own "+ New folder…" convention) rather than staying on
+  // the sentinel until Save — a brand-new notebook doesn't exist in
+  // `notebookList` yet, so it can't come from `nb`'s own list.
+  function noteNotebookChanged() {
+    const sel = document.getElementById('note-notebook');
+    if (sel.value === '__new__') {
+      const name = prompt('New notebook name:');
+      if (!name || !name.trim()) { sel.value = ''; return; }
+      const nb = name.trim();
+      const opt = document.createElement('option');
+      opt.value = nb;
+      opt.textContent = nb;
+      sel.insertBefore(opt, sel.lastElementChild);
+      sel.value = nb;
     }
-    el.innerHTML = list.map(nb => `<button type="button" class="suggestion-item" onclick="notebookPick('${esc(nb)}')">${esc(nb)}</button>`).join('');
-    el.classList.add('open');
-  }
-
-  function notebookShowSuggestions() {
-    renderNotebookSuggestions(notebookList);
-  }
-
-  function notebookFilterSuggestions() {
-    const q = document.getElementById('note-notebook').value.trim().toLowerCase();
-    const filtered = q ? notebookList.filter(nb => nb.toLowerCase().includes(q)) : notebookList;
-    renderNotebookSuggestions(filtered);
-  }
-
-  function notebookPick(nb) {
-    document.getElementById('note-notebook').value = nb;
-    document.getElementById('notebook-suggestions-list').classList.remove('open');
     notesCreateRefreshFolders();
   }
-
-  document.addEventListener('click', e => {
-    if (!e.target.closest('#note-notebook') && !e.target.closest('#notebook-suggestions-list')) {
-      document.getElementById('notebook-suggestions-list').classList.remove('open');
-    }
-  });
 
   // Project notes/notebooks are hidden by default — only shown once "Show
   // Project Items" is switched on from the view-options menu.
@@ -4946,10 +4943,19 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const nbHtml = `<span class="note-badge folder">&#128193; ${esc(nbLabel)}</span>`;
     const dateStr = new Date(n.updated_at).toLocaleDateString('en-GB', {day:'numeric',month:'short'});
     const folder = n.folder || '';
+    // A bookmark carries a `url` (see notes::models::Note.url) — shown as a
+    // badge plus its own clickable link, opened in a new tab and stopping
+    // propagation so tapping the link doesn't also open the note viewer.
+    const bookmarkHtml = n.url
+      ? `<div class="note-card-bookmark"><span class="note-badge">&#128278; Bookmark</span>
+           <a href="${esc(n.url)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()"
+              style="word-break:break-all;">${esc(n.url)}</a></div>`
+      : '';
     return `<div class="note-card" onclick="notesOpenNote(${n.nb_id},'${esc(n.notebook)}','${esc(folder)}','${fromTab}')">
       <button class="note-card-delete" title="Delete note"
               onclick="event.stopPropagation(); notesDeleteFromList(${n.nb_id}, '${esc(n.notebook)}', '${esc(folder)}')">&#215;</button>
       <div class="note-card-title">${esc(n.title || 'Untitled')}</div>
+      ${bookmarkHtml}
       ${preview ? `<div class="note-card-preview">${esc(preview)}</div>` : ''}
       <div class="note-card-meta">
         ${nbHtml}${tagsHtml}
@@ -5021,6 +5027,12 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const updDate = new Date(note.updated_at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'});
 
     renderNoteViewerBreadcrumb(note);
+    const bookmarkHtml = note.url
+      ? `<div style="margin-bottom:12px;">
+           <span class="note-badge">&#128278; Bookmark</span>
+           <a href="${esc(note.url)}" target="_blank" rel="noopener noreferrer" style="word-break:break-all;display:block;margin-top:4px;">${esc(note.url)}</a>
+         </div>`
+      : '';
     const viewer = document.getElementById('note-viewer-content');
     viewer.innerHTML = `
       <div class="note-viewer-header">
@@ -5030,6 +5042,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
           <span class="note-date">Updated ${updDate}</span>
         </div>
       </div>
+      ${bookmarkHtml}
       <div class="md-body" id="md-render"></div>`;
 
     const mdEl = document.getElementById('md-render');
@@ -5239,19 +5252,6 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
   }
 
-  // Auto-fills the notebook field with the project's dedicated notebook
-  // (created alongside the project, named by its slug) as a convenience
-  // default — left editable, since notebook isn't load-bearing for project
-  // association (only the tag is), so a note can legitimately be tagged to
-  // a project but filed elsewhere.
-  function noteProjectChanged() {
-    const projectSlug = document.getElementById('note-project').value;
-    if (!projectSlug) return;
-    const project = projectsList.find(p => p.slug === projectSlug);
-    if (project) document.getElementById('note-notebook').value = project.slug;
-    notesCreateRefreshFolders();
-  }
-
   // Populates the create form's Folder dropdown from whichever notebook is
   // currently typed into the Notebook field (defaulting to 'home', matching
   // the backend's own default) — called whenever that notebook value
@@ -5300,19 +5300,21 @@ A category's overall budget cap is the sum of its allocations — split it acros
   }
 
   async function submitQuickNote() {
+    if (noteMode === 'bookmark') {
+      await submitQuickBookmark();
+      return;
+    }
     const content = document.getElementById('note-content').value.trim();
     if (!content) { toast('Note content is required', true); return; }
     const title = document.getElementById('note-title').value.trim();
     if (!title) { toast('Note title is required', true); return; }
     const tagsRaw = document.getElementById('note-tags').value;
     const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
-    const notebook = document.getElementById('note-notebook').value.trim() || null;
+    const notebookVal = document.getElementById('note-notebook').value;
+    const notebook = notebookVal || null;
     const folder = document.getElementById('note-folder').value.trim() || null;
-    const projectSlug = document.getElementById('note-project').value;
-    if (projectSlug) {
-      const project = projectsList.find(p => p.slug === projectSlug);
-      if (project && !tags.includes(project.tag)) tags.push(project.tag);
-    }
+    const project = projectsList.find(p => p.slug === notebookVal);
+    if (project && !tags.includes(project.tag)) tags.push(project.tag);
     try {
       const r = await fetch(NOTES_API, {
         method: 'POST',
@@ -5335,6 +5337,47 @@ A category's overall budget cap is the sum of its allocations — split it acros
       }
     } catch (_) {
       toast('Failed to save note', true);
+    }
+  }
+
+  // A bookmark always lands in the notebook's fixed `Bookmarks` folder
+  // server-side (`notes::create_bookmark`) — there's no per-bookmark folder
+  // choice on this form, so `folder` is always sent as null (root of
+  // `Bookmarks`).
+  async function submitQuickBookmark() {
+    const url = document.getElementById('note-url').value.trim();
+    if (!url) { toast('URL is required', true); return; }
+    const title = document.getElementById('note-title').value.trim() || null;
+    const comment = document.getElementById('note-bookmark-comment').value.trim() || null;
+    const tagsRaw = document.getElementById('note-tags').value;
+    const tags = tagsRaw.split(',').map(s => s.trim()).filter(Boolean);
+    const notebookVal = document.getElementById('note-notebook').value;
+    const notebook = notebookVal || null;
+    const folder = null;
+    const project = projectsList.find(p => p.slug === notebookVal);
+    if (project && !tags.includes(project.tag)) tags.push(project.tag);
+    try {
+      const r = await fetch(NOTES_API + '/bookmarks', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url, title, comment, tags, notebook, folder}),
+      });
+      if (!r.ok) throw 0;
+      document.getElementById('note-url').value = '';
+      document.getElementById('note-bookmark-comment').value = '';
+      document.getElementById('note-title').value = '';
+      document.getElementById('note-tags').value = '';
+      clearFormState('npanel-add');
+      toast('Bookmark saved');
+      notesLoadNotebooks();
+      if (pendingProjectReturnId != null) {
+        const pid = pendingProjectReturnId; pendingProjectReturnId = null;
+        showView('project-detail', false, { projectId: pid });
+      } else {
+        notesShowTab('browse');
+      }
+    } catch (_) {
+      toast('Failed to save bookmark', true);
     }
   }
 
