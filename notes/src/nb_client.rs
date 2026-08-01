@@ -103,6 +103,114 @@ fn parse_body<'a>(lines: impl Iterator<Item = &'a str>) -> (String, Vec<String>,
     (title, tags, content)
 }
 
+// nb marks a bookmark file with a `.bookmark.md` extension (regular notes
+// are just `.md`) — confirmed against a real `nb` install. That's the only
+// structural signal available (there's no separate bookmark table/index),
+// so it's what routes a file to `parse_bookmark_body` instead of the plain
+// `parse_body` every other note uses.
+fn is_bookmark_path(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.ends_with(".bookmark.md"))
+        .unwrap_or(false)
+}
+
+// Appends a named section's collected body (if non-empty) to `content_lines`
+// as a `## Heading` block, mirroring nb's own bookmark body layout — used so
+// any section nb writes that this parser doesn't special-case (Quote,
+// Comment, Related, ...) still ends up visible in the note's `content`
+// rather than being silently dropped.
+fn flush_bookmark_section(name: &str, body: &[String], content_lines: &mut Vec<String>) {
+    let text = body.join("\n").trim().to_string();
+    if text.is_empty() {
+        return;
+    }
+    if !content_lines.is_empty() {
+        content_lines.push(String::new());
+    }
+    content_lines.push(format!("## {}", name));
+    content_lines.push(String::new());
+    content_lines.push(text);
+}
+
+// Parses nb's own bookmark body layout:
+//   # Title
+//
+//   <url>
+//
+//   ## Quote / ## Comment / ## Tags / ...
+//
+//   <section body>
+//
+// `## Tags`'s body is `#tag1 #tag2 ...` — extracted into structured `tags`
+// rather than left in `content` like every other section, so a bookmark's
+// tags flow into `note_cache_tags` (project scoping, tag filtering) exactly
+// like a regular note's. Every other section is kept, heading included, in
+// `content` — new section kinds nb might add later still show up instead of
+// vanishing.
+fn parse_bookmark_body(raw: &str) -> (String, Option<String>, Vec<String>, String) {
+    let mut lines = raw.lines().peekable();
+
+    let title = loop {
+        match lines.next() {
+            None => break String::new(),
+            Some(l) if l.trim().is_empty() => continue,
+            Some(l) => break l.strip_prefix("# ").unwrap_or(l).trim().to_string(),
+        }
+    };
+
+    while lines.peek().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.next();
+    }
+
+    let url = lines
+        .peek()
+        .and_then(|l| l.trim().strip_prefix('<'))
+        .and_then(|l| l.strip_suffix('>'))
+        .map(|s| s.to_string());
+    if url.is_some() {
+        lines.next();
+    }
+
+    let mut tags: Vec<String> = Vec::new();
+    let mut content_lines: Vec<String> = Vec::new();
+    let mut current_section: Option<String> = None;
+    let mut section_body: Vec<String> = Vec::new();
+
+    for line in lines {
+        if let Some(name) = line.trim().strip_prefix("## ") {
+            if let Some(prev) = &current_section {
+                if prev.eq_ignore_ascii_case("tags") {
+                    tags = section_body
+                        .join(" ")
+                        .split_whitespace()
+                        .filter_map(|t| t.strip_prefix('#').map(|s| s.to_string()))
+                        .collect();
+                } else {
+                    flush_bookmark_section(prev, &section_body, &mut content_lines);
+                }
+            }
+            current_section = Some(name.trim().to_string());
+            section_body.clear();
+            continue;
+        }
+        section_body.push(line.to_string());
+    }
+    if let Some(name) = &current_section {
+        if name.eq_ignore_ascii_case("tags") {
+            tags = section_body
+                .join(" ")
+                .split_whitespace()
+                .filter_map(|t| t.strip_prefix('#').map(|s| s.to_string()))
+                .collect();
+        } else {
+            flush_bookmark_section(name, &section_body, &mut content_lines);
+        }
+    }
+
+    (title, url, tags, content_lines.join("\n").trim_end().to_string())
+}
+
 pub(crate) fn parse_note_file(path: &Path, nb_id: u64, notebook: &str, folder: &str) -> NotesLibResult<Note> {
     let raw = std::fs::read_to_string(path)?;
     let meta = std::fs::metadata(path)?;
@@ -110,7 +218,12 @@ pub(crate) fn parse_note_file(path: &Path, nb_id: u64, notebook: &str, folder: &
     let created_at = system_time_to_local(meta.created());
     let updated_at = system_time_to_local(meta.modified());
 
-    let (title, tags, content) = parse_body(raw.lines());
+    let (title, url, tags, content) = if is_bookmark_path(path) {
+        parse_bookmark_body(&raw)
+    } else {
+        let (title, tags, content) = parse_body(raw.lines());
+        (title, None, tags, content)
+    };
 
     Ok(Note {
         nb_id,
@@ -119,6 +232,7 @@ pub(crate) fn parse_note_file(path: &Path, nb_id: u64, notebook: &str, folder: &
         title,
         content,
         tags,
+        url,
         created_at,
         updated_at,
     })
@@ -271,6 +385,62 @@ pub async fn nb_add(notebook: &str, title: &str, content: &str, tags: &[String])
     id_str.trim().parse::<u64>().map_err(|_| {
         NotesLibError::Nb(format!("cannot parse id from nb add output: {}", out.trim()))
     })
+}
+
+/// Creates an nb bookmark (`nb bookmark <notebook>:<folder>/ <url> ...`),
+/// stored as the `.bookmark.md` file `parse_note_file`/`is_bookmark_path`
+/// detects. `--no-request` is always passed — this runs on a headless
+/// server with no reason to fetch and store the target page's own HTML
+/// (slow, and an arbitrary-URL server-side fetch this app has no need to
+/// make); `title` is used as given rather than scraped from a live fetch.
+/// `folder` must already exist — confirmed against a real `nb` install that
+/// a nested destination folder can't be reliably created inline in the same
+/// call (it prints "Creating new folder:" but then fails); callers create it
+/// first via `nb_add_folder`, same as `notes::create`'s folder-at-create-time
+/// path already does.
+pub async fn nb_bookmark(
+    notebook: &str,
+    folder: &str,
+    url: &str,
+    title: Option<&str>,
+    tags: &[String],
+    comment: Option<&str>,
+) -> NotesLibResult<u64> {
+    let target = if folder.is_empty() { format!("{}:", notebook) } else { format!("{}:{}/", notebook, folder) };
+
+    let mut args: Vec<String> = vec!["bookmark".to_string(), target, url.to_string(), "--no-request".to_string()];
+    if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
+        args.push("--title".to_string());
+        args.push(t.to_string());
+    }
+    if !tags.is_empty() {
+        args.push("--tags".to_string());
+        args.push(tags.join(","));
+    }
+    if let Some(c) = comment.map(str::trim).filter(|c| !c.is_empty()) {
+        args.push("--comment".to_string());
+        args.push(c.to_string());
+    }
+
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = run(&arg_refs).await?;
+
+    // Output: `Added: [n] 🔖 filename "Title"`, `Added: [notebook:n] 🔖 ...`, or,
+    // once a folder is involved, `Added: [notebook:folder/n] 🔖 ...` — the
+    // same folder-scoped-id bracket shape `nb_move`'s "Moved to:" output uses
+    // (ids are per-folder, not global — see `nb_ref`), so this reuses
+    // `parse_bracket_folder_id` rather than `nb_add`'s plain `split(':')`,
+    // which would wrongly try to parse `"Bookmarks/1"` as a bare integer.
+    let bracket_content = out
+        .lines()
+        .find(|l| l.contains("Added:"))
+        .and_then(|l| l.find('[').map(|s| &l[s + 1..]))
+        .and_then(|s| s.find(']').map(|e| &s[..e]))
+        .ok_or_else(|| NotesLibError::Nb(format!("unexpected nb bookmark output: {}", out.trim())))?;
+
+    parse_bracket_folder_id(bracket_content)
+        .map(|(_folder, id)| id)
+        .ok_or_else(|| NotesLibError::Nb(format!("cannot parse id from nb bookmark output: {}", out.trim())))
 }
 
 // Appends a titled, tagged entry to today's daily log via nb's `daily`
@@ -526,10 +696,24 @@ pub async fn nb_move(src_notebook: &str, src_folder: &str, nb_id: u64, dest: &st
 
 /// Creates an empty folder inside `notebook` at `path` (which may itself be
 /// nested, e.g. `"Projects/Sub"` — `nb` creates intermediate folders as
-/// needed). Best-effort: ignores the error if the folder already exists.
+/// needed). Checks whether `path` already exists first (`nb <notebook>:list
+/// <path>/ --paths`, which errors "Not found" for a missing folder and
+/// succeeds, even with "0 items", for an existing one) and only creates it
+/// when that check fails — confirmed against a real `nb` install that `nb
+/// add folder` on an already-existing path does *not* error or no-op like
+/// callers here (e.g. `notes::create_bookmark`, called on every bookmark
+/// creation regardless of whether `BOOKMARKS_FOLDER` already exists) used to
+/// assume; it silently creates a second, numbered duplicate (`Bookmarks-1`,
+/// `Bookmarks-2`, ...) instead. Best-effort on the actual creation call
+/// itself: still ignores that error, for any other reason it might fail.
 pub async fn nb_add_folder(notebook: &str, path: &str) -> NotesLibResult<()> {
-    let cmd = nb_cmd(notebook, "add");
-    let _ = run(&[&cmd, "folder", path]).await;
+    let list_cmd = nb_cmd(notebook, "list");
+    let target = format!("{}/", path);
+    if run(&[&list_cmd, &target, "--paths"]).await.is_ok() {
+        return Ok(());
+    }
+    let add_cmd = nb_cmd(notebook, "add");
+    let _ = run(&[&add_cmd, "folder", path]).await;
     Ok(())
 }
 
@@ -603,4 +787,44 @@ pub async fn nb_tags(exclude: &[&str]) -> NotesLibResult<Vec<String>> {
     let mut result: Vec<String> = all_tags.into_iter().collect();
     result.sort();
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Real output captured from a live `nb bookmark` install (`nb 7.25.4`) —
+    // title/url only, no optional sections.
+    const MINIMAL: &str = "# Example Domain (example.com)\n\n<https://example.com>\n";
+
+    // Real output with every optional section present.
+    const FULL: &str = "# Tools (www.rust-lang.org)\n\n<https://www.rust-lang.org/tools>\n\n## Quote\n\n> some excerpt text\n\n## Comment\n\nnice tools\n\n## Tags\n\n#rust #lang\n";
+
+    #[test]
+    fn parses_minimal_bookmark() {
+        let (title, url, tags, content) = parse_bookmark_body(MINIMAL);
+        assert_eq!(title, "Example Domain (example.com)");
+        assert_eq!(url.as_deref(), Some("https://example.com"));
+        assert!(tags.is_empty());
+        assert!(content.is_empty());
+    }
+
+    #[test]
+    fn parses_full_bookmark() {
+        let (title, url, tags, content) = parse_bookmark_body(FULL);
+        assert_eq!(title, "Tools (www.rust-lang.org)");
+        assert_eq!(url.as_deref(), Some("https://www.rust-lang.org/tools"));
+        assert_eq!(tags, vec!["rust".to_string(), "lang".to_string()]);
+        assert!(content.contains("## Quote"));
+        assert!(content.contains("> some excerpt text"));
+        assert!(content.contains("## Comment"));
+        assert!(content.contains("nice tools"));
+        assert!(!content.contains("## Tags"));
+    }
+
+    #[test]
+    fn is_bookmark_path_checks_extension() {
+        assert!(is_bookmark_path(Path::new("/x/20260730.bookmark.md")));
+        assert!(!is_bookmark_path(Path::new("/x/20260730.md")));
+    }
 }

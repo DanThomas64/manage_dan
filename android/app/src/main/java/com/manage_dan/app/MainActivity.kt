@@ -258,6 +258,32 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
+            // Without this, WebView just navigates itself to any tapped link
+            // (a bookmark's URL, a link inside note/log content, etc.) —
+            // there's no separate browser "app" involved, so target="_blank"
+            // in the page's own HTML has no effect here. Any http(s) request
+            // whose host isn't the configured server is handed off to a real
+            // external browser via ACTION_VIEW instead; same-host navigation
+            // (the app's own pages) is left alone and loads in the WebView
+            // exactly as before.
+            override fun shouldOverrideUrlLoading(
+                view: WebView, request: WebResourceRequest
+            ): Boolean {
+                val url = request.url
+                if (!request.isForMainFrame) return false
+                if (url.scheme != "http" && url.scheme != "https") return false
+
+                val configuredHost = prefs.getString("server_url", null)?.let { Uri.parse(it).host }
+                if (url.host != null && url.host == configuredHost) return false
+
+                return try {
+                    startActivity(Intent(Intent.ACTION_VIEW, url))
+                    true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+
             override fun onReceivedError(
                 view: WebView, request: WebResourceRequest, error: WebResourceError
             ) {

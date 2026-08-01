@@ -11,6 +11,10 @@ pub struct Note {
     pub title: String,
     pub content: String,
     pub tags: Vec<String>,
+    /// `Some(url)` for a bookmark (an nb `.bookmark.md` file), `None` for a
+    /// regular note — see `nb_client::is_bookmark_path`/`parse_bookmark_body`.
+    #[serde(default)]
+    pub url: Option<String>,
     pub created_at: DateTime<Local>,
     pub updated_at: DateTime<Local>,
 }
@@ -55,6 +59,21 @@ pub struct UpdateNoteRequest {
 pub struct MoveNoteRequest {
     /// Destination subfolder path within the same notebook, empty for root.
     pub dest_folder: String,
+}
+
+/// A bookmark is a note with a URL, stored via `nb bookmark` rather than
+/// `nb add` — see `notes::create_bookmark`. `folder` here is a subfolder
+/// *within* the fixed `BOOKMARKS_FOLDER` every bookmark lands under, not a
+/// full path — `None`/empty puts it directly in `BOOKMARKS_FOLDER`.
+#[derive(Debug, Deserialize)]
+pub struct CreateBookmarkRequest {
+    pub url: String,
+    pub title: Option<String>,
+    pub comment: Option<String>,
+    pub tags: Option<Vec<String>>,
+    pub notebook: Option<String>,
+    #[serde(default)]
+    pub folder: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

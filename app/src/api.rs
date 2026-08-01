@@ -981,6 +981,20 @@ pub async fn create_note_handler(req: notes::CreateNoteRequest) -> Result<impl R
     }
 }
 
+/// POST /api/v1/notes/bookmarks
+pub async fn create_bookmark_handler(req: notes::CreateBookmarkRequest) -> Result<impl Reply, Rejection> {
+    match notes::create_bookmark(req).await {
+        Ok(note) => Ok(warp::reply::with_status(warp::reply::json(&note), StatusCode::CREATED)),
+        Err(notes::notes_error::NotesLibError::InvalidInput(msg)) => {
+            Err(warp::reject::custom(ApiError::NotesInvalidInput(msg)))
+        }
+        Err(e) => {
+            error!("Failed to create bookmark: {}", e);
+            Err(warp::reject::custom(ApiError::NotesOperationFailed))
+        }
+    }
+}
+
 /// POST /api/v1/notes/daily — appends a titled, tagged entry to today's
 /// daily log via nb's `daily` plugin, always in the "log" notebook.
 pub async fn create_log_handler(req: notes::CreateLogRequest) -> Result<impl Reply, Rejection> {
@@ -3516,6 +3530,14 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .and(warp::body::json())
         .and_then(create_note_handler);
 
+    // POST /api/v1/notes/bookmarks
+    let create_bookmark = notes_seg
+        .and(warp::path("bookmarks"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(create_bookmark_handler);
+
     // POST /api/v1/notes/daily
     let create_log = notes_seg
         .and(warp::path("daily"))
@@ -3631,6 +3653,7 @@ fn notes_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clon
         .or(resync)
         .or(list)
         .or(create)
+        .or(create_bookmark)
         .or(create_log)
         .or(list_log)
         .or(print)
