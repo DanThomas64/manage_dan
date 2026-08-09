@@ -15,6 +15,7 @@ pub mod daily_summary;
 pub mod completed_summary;
 pub mod recurring;
 pub mod reminders;
+pub mod reminder_monitor;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

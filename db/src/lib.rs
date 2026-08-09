@@ -13,7 +13,8 @@ use crate::db_error::{DbLibError, DbLibResult};
 use crate::db_prelude::*;
 use crate::models::{
     BudgetCapAllocationRow, BudgetScenario, BudgetScenarioItemRow, LogEntry, NoteCacheRow,
-    RecurringOccurrenceRow, TodoCacheRow,
+    RecurringOccurrenceRow, RecurringTaskOccurrenceRow, RecurringTaskRow, ReminderOccurrenceRow,
+    ReminderRow, TodoCacheRow,
 };
 use rusqlite::{params, OptionalExtension};
 use tokio_rusqlite::Connection;
@@ -121,6 +122,81 @@ pub fn init() -> DbLibResult {
             date       TEXT NOT NULL,
             task_title TEXT NOT NULL,
             PRIMARY KEY (date, task_title)
+        )",
+        [],
+    )?;
+
+    // DB-backed replacement for the old `config/recurring.toml` file —
+    // schedule syntax/validation stays in `todo::recurring` (this table is
+    // just the storage row); see `todo::recurring::migrate_from_toml_if_empty`
+    // for the one-time TOML-to-DB import.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS recurring_tasks (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            title          TEXT NOT NULL,
+            description    TEXT NOT NULL,
+            schedule       TEXT NOT NULL,
+            reference_date TEXT,
+            created_at     TEXT NOT NULL
+        )",
+        [],
+    )?;
+    // Migration: priority (0-5, same scale/convention as TodoItem.priority —
+    // both clients clamp/validate to this range) — best-effort, no-op once
+    // the column exists. Lets a recurring task's card sort/render alongside
+    // regular todo cards in the frontend's merged List-tab view.
+    let _ = conn.execute(
+        "ALTER TABLE recurring_tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+
+    // DB-backed replacement for the old `config/reminders.toml` file, plus
+    // new capability that file never had: `fire_time` lets a reminder fire
+    // (print a dedicated ticket) at an exact time of day rather than only
+    // ever being bundled into the daily/weekly summary — see
+    // `todo::reminder_monitor` and the `reminder_occurrences` table below.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS reminders (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            title          TEXT NOT NULL,
+            description    TEXT NOT NULL,
+            schedule       TEXT NOT NULL,
+            reference_date TEXT,
+            fire_time      TEXT,
+            created_at     TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    // Per-occurrence fired/acknowledged/snoozed state for one reminder on one
+    // calendar day — mirrors `recurring_occurrence_status`'s "row absence
+    // means unresolved" idiom below, scoped to reminders instead of finances
+    // recurring items.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS reminder_occurrences (
+            reminder_id      INTEGER NOT NULL,
+            occurrence_date  TEXT NOT NULL,
+            fired_at         TEXT,
+            acknowledged     INTEGER NOT NULL DEFAULT 0,
+            acknowledged_at  TEXT,
+            snoozed_until    TEXT,
+            PRIMARY KEY (reminder_id, occurrence_date)
+        )",
+        [],
+    )?;
+
+    // Per-occurrence "marked done" state for one recurring task on one
+    // calendar day — same "row absence means not done" idiom as
+    // `reminder_occurrences` above, its own table rather than reused since
+    // recurring tasks are a distinct concept (never printed-and-fired like a
+    // reminder, no snooze) with its own lifecycle.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS recurring_task_occurrences (
+            task_id          INTEGER NOT NULL,
+            occurrence_date  TEXT NOT NULL,
+            done             INTEGER NOT NULL DEFAULT 0,
+            done_at          TEXT,
+            PRIMARY KEY (task_id, occurrence_date)
         )",
         [],
     )?;
@@ -1316,6 +1392,295 @@ pub async fn budget_cap_allocation_list_all() -> DbLibResult<Vec<BudgetCapAlloca
     .map_err(|e| DbLibError::Internal(format!("DB error listing budget_cap_allocations: {}", e)))
 }
 
+// --- Recurring tasks (DB replacement for config/recurring.toml) ---
+
+fn row_to_recurring_task(row: &Row) -> RusqliteResult<RecurringTaskRow> {
+    Ok(RecurringTaskRow {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        description: row.get(2)?,
+        schedule: row.get(3)?,
+        reference_date: row.get(4)?,
+        created_at: row.get(5)?,
+        priority: row.get::<_, i64>(6)? as u8,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn recurring_task_create(
+    title: String,
+    description: String,
+    schedule: String,
+    reference_date: Option<String>,
+    created_at: String,
+    priority: u8,
+) -> DbLibResult<i64> {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO recurring_tasks (title, description, schedule, reference_date, created_at, priority)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![title, description, schedule, reference_date, created_at, priority as i64],
+        )?;
+        Ok(conn.last_insert_rowid())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error creating recurring_task: {}", e)))
+}
+
+pub async fn recurring_task_list() -> DbLibResult<Vec<RecurringTaskRow>> {
+    execute_async(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, title, description, schedule, reference_date, created_at, priority FROM recurring_tasks",
+        )?;
+        let rows = stmt.query_map([], row_to_recurring_task)?;
+        rows.collect()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error listing recurring_tasks: {}", e)))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn recurring_task_update(
+    id: i64,
+    title: String,
+    description: String,
+    schedule: String,
+    reference_date: Option<String>,
+    priority: u8,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "UPDATE recurring_tasks SET title = ?2, description = ?3, schedule = ?4, reference_date = ?5, priority = ?6
+             WHERE id = ?1",
+            params![id, title, description, schedule, reference_date, priority as i64],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error updating recurring_task: {}", e)))
+}
+
+/// Deletes a recurring task and every done-tracking occurrence row for it
+/// (no real FK constraint on this SQLite schema, so removed explicitly
+/// first) — same "delete children before parent" shape `reminder_delete`
+/// uses.
+pub async fn recurring_task_delete(id: i64) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute("DELETE FROM recurring_task_occurrences WHERE task_id = ?1", params![id])?;
+        conn.execute("DELETE FROM recurring_tasks WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting recurring_task: {}", e)))
+}
+
+// --- Recurring task occurrence tracking (marked done) ---
+
+fn row_to_recurring_task_occurrence(row: &Row) -> RusqliteResult<RecurringTaskOccurrenceRow> {
+    Ok(RecurringTaskOccurrenceRow {
+        task_id: row.get(0)?,
+        occurrence_date: row.get(1)?,
+        done: row.get::<_, i64>(2)? != 0,
+        done_at: row.get(3)?,
+    })
+}
+
+/// Marks (or unmarks) one recurring task's occurrence for one calendar day
+/// as done.
+pub async fn recurring_task_occurrence_upsert(
+    task_id: i64,
+    occurrence_date: String,
+    done: bool,
+    done_at: Option<String>,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO recurring_task_occurrences (task_id, occurrence_date, done, done_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(task_id, occurrence_date) DO UPDATE SET
+                done = excluded.done,
+                done_at = excluded.done_at",
+            params![task_id, occurrence_date, done as i64, done_at],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error upserting recurring_task_occurrences: {}", e)))
+}
+
+/// Every tracked recurring-task-occurrence row — the bulk read backing the
+/// frontend's per-card done checkbox in one call rather than one fetch per
+/// task.
+pub async fn recurring_task_occurrence_get_all() -> DbLibResult<Vec<RecurringTaskOccurrenceRow>> {
+    execute_async(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT task_id, occurrence_date, done, done_at FROM recurring_task_occurrences",
+        )?;
+        let rows = stmt.query_map([], row_to_recurring_task_occurrence)?;
+        rows.collect()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading recurring_task_occurrences: {}", e)))
+}
+
+// --- Reminders (DB replacement for config/reminders.toml) ---
+
+fn row_to_reminder(row: &Row) -> RusqliteResult<ReminderRow> {
+    Ok(ReminderRow {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        description: row.get(2)?,
+        schedule: row.get(3)?,
+        reference_date: row.get(4)?,
+        fire_time: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn reminder_create(
+    title: String,
+    description: String,
+    schedule: String,
+    reference_date: Option<String>,
+    fire_time: Option<String>,
+    created_at: String,
+) -> DbLibResult<i64> {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO reminders (title, description, schedule, reference_date, fire_time, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![title, description, schedule, reference_date, fire_time, created_at],
+        )?;
+        Ok(conn.last_insert_rowid())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error creating reminder: {}", e)))
+}
+
+pub async fn reminder_list() -> DbLibResult<Vec<ReminderRow>> {
+    execute_async(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, title, description, schedule, reference_date, fire_time, created_at FROM reminders",
+        )?;
+        let rows = stmt.query_map([], row_to_reminder)?;
+        rows.collect()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error listing reminders: {}", e)))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn reminder_update(
+    id: i64,
+    title: String,
+    description: String,
+    schedule: String,
+    reference_date: Option<String>,
+    fire_time: Option<String>,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "UPDATE reminders SET title = ?2, description = ?3, schedule = ?4, reference_date = ?5, fire_time = ?6
+             WHERE id = ?1",
+            params![id, title, description, schedule, reference_date, fire_time],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error updating reminder: {}", e)))
+}
+
+/// Deletes a reminder and every occurrence row tracked for it (no real FK
+/// constraint on this SQLite schema, so removed explicitly first) — same
+/// "delete children before parent" shape `budget_scenario_delete` uses.
+pub async fn reminder_delete(id: i64) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute("DELETE FROM reminder_occurrences WHERE reminder_id = ?1", params![id])?;
+        conn.execute("DELETE FROM reminders WHERE id = ?1", params![id])?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error deleting reminder: {}", e)))
+}
+
+// --- Reminder occurrence tracking (fired/acknowledged/snoozed) ---
+
+fn row_to_reminder_occurrence(row: &Row) -> RusqliteResult<ReminderOccurrenceRow> {
+    Ok(ReminderOccurrenceRow {
+        reminder_id: row.get(0)?,
+        occurrence_date: row.get(1)?,
+        fired_at: row.get(2)?,
+        acknowledged: row.get::<_, i64>(3)? != 0,
+        acknowledged_at: row.get(4)?,
+        snoozed_until: row.get(5)?,
+    })
+}
+
+/// Upserts one reminder's occurrence state for one calendar day — used both
+/// by `todo::reminder_monitor` (recording a fresh fire) and the
+/// acknowledge/snooze API route (updating an existing one).
+#[allow(clippy::too_many_arguments)]
+pub async fn reminder_occurrence_upsert(
+    reminder_id: i64,
+    occurrence_date: String,
+    fired_at: Option<String>,
+    acknowledged: bool,
+    acknowledged_at: Option<String>,
+    snoozed_until: Option<String>,
+) -> DbLibResult {
+    execute_async(move |conn| {
+        conn.execute(
+            "INSERT INTO reminder_occurrences
+                (reminder_id, occurrence_date, fired_at, acknowledged, acknowledged_at, snoozed_until)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(reminder_id, occurrence_date) DO UPDATE SET
+                fired_at = excluded.fired_at,
+                acknowledged = excluded.acknowledged,
+                acknowledged_at = excluded.acknowledged_at,
+                snoozed_until = excluded.snoozed_until",
+            params![reminder_id, occurrence_date, fired_at, acknowledged as i64, acknowledged_at, snoozed_until],
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error upserting reminder_occurrences: {}", e)))
+}
+
+/// Every tracked reminder-occurrence row — the bulk read powering the
+/// frontend's "Today's Reminders" panel and any overdue badge.
+pub async fn reminder_occurrence_get_all() -> DbLibResult<Vec<ReminderOccurrenceRow>> {
+    execute_async(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT reminder_id, occurrence_date, fired_at, acknowledged, acknowledged_at, snoozed_until
+             FROM reminder_occurrences",
+        )?;
+        let rows = stmt.query_map([], row_to_reminder_occurrence)?;
+        rows.collect()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading reminder_occurrences: {}", e)))
+}
+
+/// A single reminder's occurrence row for one calendar day, if it's fired
+/// (or been snoozed) at all — `None` means "not yet fired today".
+pub async fn reminder_occurrence_get_for(
+    reminder_id: i64,
+    occurrence_date: String,
+) -> DbLibResult<Option<ReminderOccurrenceRow>> {
+    execute_async(move |conn| {
+        conn.query_row(
+            "SELECT reminder_id, occurrence_date, fired_at, acknowledged, acknowledged_at, snoozed_until
+             FROM reminder_occurrences WHERE reminder_id = ?1 AND occurrence_date = ?2",
+            params![reminder_id, occurrence_date],
+            row_to_reminder_occurrence,
+        )
+        .optional()
+    })
+    .await
+    .map_err(|e| DbLibError::Internal(format!("DB error reading reminder_occurrence: {}", e)))
+}
+
 // --- Generic helper ---
 
 pub async fn execute_async<F, T>(f: F) -> DbLibResult<T>
@@ -1477,5 +1842,121 @@ mod tests {
         budget_cap_allocation_delete(id2.clone()).await.unwrap();
         let all = budget_cap_allocation_list_all().await.unwrap();
         assert!(!all.iter().any(|a| a.category == category));
+    }
+
+    #[tokio::test]
+    async fn recurring_task_crud_round_trips() {
+        init().unwrap();
+        let title = format!("zz_test: task {}", uuid::Uuid::new_v4());
+
+        let id = recurring_task_create(
+            title.clone(),
+            "desc".to_string(),
+            "weekly:sat".to_string(),
+            None,
+            Local::now().to_rfc3339(),
+            2,
+        )
+        .await
+        .unwrap();
+
+        let all = recurring_task_list().await.unwrap();
+        let row = all.iter().find(|t| t.id == id).expect("row present");
+        assert_eq!(row.title, title);
+        assert_eq!(row.schedule, "weekly:sat");
+        assert_eq!(row.priority, 2);
+
+        recurring_task_update(id, title.clone(), "desc2".to_string(), "daily".to_string(), Some("2026-01-01".to_string()), 4)
+            .await
+            .unwrap();
+        let all = recurring_task_list().await.unwrap();
+        let row = all.iter().find(|t| t.id == id).expect("row present after update");
+        assert_eq!(row.description, "desc2");
+        assert_eq!(row.schedule, "daily");
+        assert_eq!(row.reference_date.as_deref(), Some("2026-01-01"));
+        assert_eq!(row.priority, 4);
+
+        recurring_task_delete(id).await.unwrap();
+        let all = recurring_task_list().await.unwrap();
+        assert!(!all.iter().any(|t| t.id == id));
+    }
+
+    #[tokio::test]
+    async fn reminder_crud_and_occurrence_round_trips() {
+        init().unwrap();
+        let title = format!("zz_test: reminder {}", uuid::Uuid::new_v4());
+
+        let id = reminder_create(
+            title.clone(),
+            String::new(),
+            "daily".to_string(),
+            None,
+            Some("09:00".to_string()),
+            Local::now().to_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+        let all = reminder_list().await.unwrap();
+        let row = all.iter().find(|r| r.id == id).expect("row present");
+        assert_eq!(row.fire_time.as_deref(), Some("09:00"));
+
+        // Occurrence: absence means "not yet fired".
+        assert!(reminder_occurrence_get_for(id, "2026-01-01".to_string()).await.unwrap().is_none());
+
+        reminder_occurrence_upsert(id, "2026-01-01".to_string(), Some("2026-01-01T09:00:00-04:00".to_string()), false, None, None)
+            .await
+            .unwrap();
+        let occ = reminder_occurrence_get_for(id, "2026-01-01".to_string()).await.unwrap().expect("occurrence present");
+        assert!(!occ.acknowledged);
+        assert!(occ.fired_at.is_some());
+
+        // Upserting again (e.g. acknowledging) updates in place, not duplicated.
+        reminder_occurrence_upsert(id, "2026-01-01".to_string(), occ.fired_at.clone(), true, Some(Local::now().to_rfc3339()), None)
+            .await
+            .unwrap();
+        let occ = reminder_occurrence_get_for(id, "2026-01-01".to_string()).await.unwrap().expect("occurrence present");
+        assert!(occ.acknowledged);
+        let all_occ = reminder_occurrence_get_all().await.unwrap();
+        assert_eq!(all_occ.iter().filter(|o| o.reminder_id == id).count(), 1, "upsert must not duplicate the row");
+
+        // Deleting the reminder cascades to its occurrence rows.
+        reminder_delete(id).await.unwrap();
+        assert!(!reminder_list().await.unwrap().iter().any(|r| r.id == id));
+        assert!(reminder_occurrence_get_for(id, "2026-01-01".to_string()).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn recurring_task_occurrence_round_trips_and_cascades_on_delete() {
+        init().unwrap();
+        let title = format!("zz_test: task {}", uuid::Uuid::new_v4());
+        let id = recurring_task_create(title, String::new(), "daily".to_string(), None, Local::now().to_rfc3339(), 0)
+            .await
+            .unwrap();
+
+        // Absence means "not marked done".
+        let all = recurring_task_occurrence_get_all().await.unwrap();
+        assert!(!all.iter().any(|o| o.task_id == id));
+
+        recurring_task_occurrence_upsert(id, "2026-01-01".to_string(), true, Some(Local::now().to_rfc3339()))
+            .await
+            .unwrap();
+        let all = recurring_task_occurrence_get_all().await.unwrap();
+        let row = all.iter().find(|o| o.task_id == id).expect("occurrence present");
+        assert!(row.done);
+        assert!(row.done_at.is_some());
+
+        // Upserting again (unmarking) updates in place, not duplicated.
+        recurring_task_occurrence_upsert(id, "2026-01-01".to_string(), false, None).await.unwrap();
+        let all = recurring_task_occurrence_get_all().await.unwrap();
+        let matching: Vec<_> = all.iter().filter(|o| o.task_id == id).collect();
+        assert_eq!(matching.len(), 1, "upsert must not duplicate the row");
+        assert!(!matching[0].done);
+        assert_eq!(matching[0].done_at, None);
+
+        // Deleting the task cascades to its occurrence rows.
+        recurring_task_delete(id).await.unwrap();
+        assert!(!recurring_task_list().await.unwrap().iter().any(|t| t.id == id));
+        assert!(!recurring_task_occurrence_get_all().await.unwrap().iter().any(|o| o.task_id == id));
     }
 }

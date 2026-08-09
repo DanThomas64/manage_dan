@@ -1,9 +1,13 @@
-//! Recurring task support — loaded from `config/recurring.toml`.
+//! Recurring task support — DB-backed (`recurring_tasks` table), with CRUD
+//! exposed via `GET/POST/PUT/DELETE /api/v1/todo/recurring` and mirrored in
+//! the frontend/TUI. Previously loaded from `config/recurring.toml`; see
+//! [`migrate_from_toml_if_empty`] for the one-time import of any existing
+//! file into the DB, run once at startup.
 //!
-//! Recurring tasks are never stored as todo items or shown in the GUI/TUI.
-//! Each day that a task is due, a dedicated physical ticket is printed once
-//! (idempotent via the `recurring_printed` DB table) and the task appears in
-//! the daily summary.
+//! Recurring tasks are never stored as todo items or shown in the Todo
+//! list/board. Each day that a task is due, a dedicated physical ticket is
+//! printed once (idempotent via the `recurring_printed` DB table) and the
+//! task appears in the daily summary.
 //!
 //! ## Schedule syntax
 //!
@@ -18,36 +22,63 @@
 //! | `"2:weekly:monday"`   | Every second Monday                  |
 //! | `"monthly:15"`        | The 15th of each month               |
 //! | `"3:monthly:1"`       | The 1st of every third month         |
+//! | `"once:2026-08-20"`   | A single one-off occurrence, that date only |
 //!
 //! Multi-period schedules are anchored to 1970-01-01 for deterministic
 //! counting.  Use the examples in `config/recurring.toml` to verify which
-//! dates a given schedule lands on.
+//! dates a given schedule lands on. `once:<date>` ignores both the `N:`
+//! prefix and `reference_date` — a schedule that fires exactly once has
+//! nothing to anchor or multiply. Primarily meant for one-off reminders
+//! (see `todo::reminders`), though recurring tasks can use it too.
 
 use chrono::{Datelike, Duration, Local, NaiveDate, Weekday};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+use crate::todo_error::{TodoLibError, TodoLibResult};
 use printer::PrintJob;
 
 // ---------------------------------------------------------------------------
 // Data model
 // ---------------------------------------------------------------------------
 
-/// A single recurring task entry as read from `recurring.toml`.
-#[derive(Debug, Deserialize, Clone)]
+/// A single recurring task, DB-backed (`recurring_tasks` table).
+#[derive(Debug, Serialize, Clone)]
 pub struct RecurringTask {
+    pub id: i64,
     pub title: String,
-    #[serde(default)]
     pub description: String,
     /// Schedule string: `"[N:]daily"`, `"[N:]weekly:<day>"`, or `"[N:]monthly:<d>"`.
     pub schedule: String,
-    /// Optional anchor date for multi-period schedules (`"YYYY-MM-DD"`).
+    /// Optional anchor date for multi-period schedules.
     ///
     /// When set, period counting starts from this date instead of 1970-01-01.
     /// Ignored for N=1 schedules.  The date does not need to fall on the
     /// correct weekday — the first matching weekday on or after it is used.
-    #[serde(default)]
     pub reference_date: Option<NaiveDate>,
+    /// 0-5, same scale/convention as `TodoItem.priority` — lets a recurring
+    /// task's card sort/render alongside regular todo cards in the
+    /// frontend's merged List-tab view.
+    pub priority: u8,
+}
+
+impl RecurringTask {
+    fn from_row(row: db::models::RecurringTaskRow) -> TodoLibResult<Self> {
+        let reference_date = row
+            .reference_date
+            .as_deref()
+            .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
+            .transpose()
+            .map_err(|e| TodoLibError::Db(format!("bad reference_date in recurring_tasks: {}", e)))?;
+        Ok(RecurringTask {
+            id: row.id,
+            title: row.title,
+            description: row.description,
+            schedule: row.schedule,
+            reference_date,
+            priority: row.priority,
+        })
+    }
 }
 
 /// Parsed representation of a task's schedule.
@@ -62,6 +93,12 @@ pub enum Schedule {
     Weekly(u32, Weekday),
     /// Every `n` months on the given day-of-month (1–31).
     Monthly(u32, u32),
+    /// A single one-off occurrence on the given date — no `N:` multiplier,
+    /// no `reference_date` anchoring (both are meaningless for a schedule
+    /// that only ever fires once). Primarily for reminders (`"remind me on
+    /// this specific day"`), though nothing stops a recurring task from
+    /// using it too.
+    Once(NaiveDate),
 }
 
 impl RecurringTask {
@@ -91,6 +128,13 @@ impl RecurringTask {
 
         if rest == "daily" {
             return Some(Schedule::Daily(n));
+        }
+
+        if let Some(date_str) = rest.strip_prefix("once:") {
+            if let Ok(d) = NaiveDate::parse_from_str(date_str.trim(), "%Y-%m-%d") {
+                return Some(Schedule::Once(d));
+            }
+            return None;
         }
 
         if let Some(day_str) = rest.strip_prefix("weekly:") {
@@ -132,6 +176,7 @@ impl RecurringTask {
             Some(Schedule::Monthly(n, d))  => {
                 date.day() == d && months_since_ref(date, reference) % n as i64 == 0
             }
+            Some(Schedule::Once(d)) => date == d,
             None => false,
         }
     }
@@ -154,6 +199,7 @@ impl RecurringTask {
             Some(Schedule::Monthly(n, d))  => {
                 format!("Every {} months on the {}{}", n, d, ordinal_suffix(d))
             }
+            Some(Schedule::Once(d)) => format!("Once on {}", d.format("%d %b %Y")),
             None => format!("Unknown ({})", self.schedule),
         }
     }
@@ -188,18 +234,148 @@ fn months_since_ref(date: NaiveDate, reference: NaiveDate) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// Config loading
+// DB-backed CRUD
 // ---------------------------------------------------------------------------
+
+/// Lists every recurring task from the `recurring_tasks` DB table.
+pub async fn load_config() -> TodoLibResult<Vec<RecurringTask>> {
+    let rows = db::recurring_task_list()
+        .await
+        .map_err(|e| TodoLibError::Db(e.to_string()))?;
+    rows.into_iter().map(RecurringTask::from_row).collect()
+}
+
+/// Returns only the tasks that are due on today's local date.
+pub async fn due_today() -> TodoLibResult<Vec<RecurringTask>> {
+    Ok(load_config().await?.into_iter().filter(|t| t.is_due_today()).collect())
+}
+
+/// Creates a new recurring task. Rejects an unparseable `schedule` string
+/// before writing, so the DB never holds a task `is_due_on` can't evaluate.
+pub async fn create_task(
+    title: String,
+    description: String,
+    schedule: String,
+    reference_date: Option<NaiveDate>,
+    priority: u8,
+) -> TodoLibResult<i64> {
+    validate_schedule(&schedule)?;
+    let reference_date_str = reference_date.map(|d| d.format("%Y-%m-%d").to_string());
+    let created_at = Local::now().to_rfc3339();
+    db::recurring_task_create(title, description, schedule, reference_date_str, created_at, priority)
+        .await
+        .map_err(|e| TodoLibError::Db(e.to_string()))
+}
+
+pub async fn update_task(
+    id: i64,
+    title: String,
+    description: String,
+    schedule: String,
+    reference_date: Option<NaiveDate>,
+    priority: u8,
+) -> TodoLibResult {
+    validate_schedule(&schedule)?;
+    let reference_date_str = reference_date.map(|d| d.format("%Y-%m-%d").to_string());
+    db::recurring_task_update(id, title, description, schedule, reference_date_str, priority)
+        .await
+        .map_err(|e| TodoLibError::Db(e.to_string()))
+}
+
+pub async fn delete_task(id: i64) -> TodoLibResult {
+    db::recurring_task_delete(id).await.map_err(|e| TodoLibError::Db(e.to_string()))
+}
+
+pub(crate) fn validate_schedule(schedule: &str) -> TodoLibResult {
+    let probe = RecurringTask {
+        id: 0,
+        title: String::new(),
+        description: String::new(),
+        schedule: schedule.to_string(),
+        reference_date: None,
+        priority: 0,
+    };
+    if probe.parsed_schedule().is_none() {
+        return Err(TodoLibError::InvalidSchedule(schedule.to_string()));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Occurrence tracking (marked done) — powers the frontend's per-card done
+// checkbox on both the Recurring tab and the List tab's read-only echo.
+// Independent of ticket printing (`print_due_today_if_not_printed`): a task
+// still prints once per day it's due regardless of whether it's ever marked
+// done, and marking it done doesn't suppress or affect printing.
+// ---------------------------------------------------------------------------
+
+/// One recurring task's "done" state for a single calendar day.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecurringTaskOccurrence {
+    pub task_id: i64,
+    pub occurrence_date: NaiveDate,
+    pub done: bool,
+    pub done_at: Option<String>,
+}
+
+/// Every recurring-task-occurrence row for `date` — the bulk read backing
+/// the frontend's per-card done checkbox in one call.
+pub async fn occurrences_on(date: NaiveDate) -> TodoLibResult<Vec<RecurringTaskOccurrence>> {
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let rows = db::recurring_task_occurrence_get_all().await.map_err(|e| TodoLibError::Db(e.to_string()))?;
+    Ok(rows
+        .into_iter()
+        .filter(|r| r.occurrence_date == date_str)
+        .map(|r| RecurringTaskOccurrence {
+            task_id: r.task_id,
+            occurrence_date: date,
+            done: r.done,
+            done_at: r.done_at,
+        })
+        .collect())
+}
+
+/// Marks (or unmarks) `task_id`'s occurrence on `date` as done.
+pub async fn set_done(task_id: i64, date: NaiveDate, done: bool) -> TodoLibResult {
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let done_at = if done { Some(Local::now().to_rfc3339()) } else { None };
+    db::recurring_task_occurrence_upsert(task_id, date_str, done, done_at)
+        .await
+        .map_err(|e| TodoLibError::Db(e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// One-time TOML migration
+// ---------------------------------------------------------------------------
+
+/// Config-file shape `config/recurring.toml` used before this became
+/// DB-backed — kept only for [`migrate_from_toml_if_empty`] to parse.
+#[derive(Debug, Deserialize)]
+struct TomlRecurringTask {
+    title: String,
+    #[serde(default)]
+    description: String,
+    schedule: String,
+    #[serde(default)]
+    reference_date: Option<NaiveDate>,
+}
 
 #[derive(Debug, Deserialize)]
 struct RecurringConfig {
     #[serde(default)]
-    tasks: Vec<RecurringTask>,
+    tasks: Vec<TomlRecurringTask>,
 }
 
-/// Loads all tasks from `$APP_CONFIG_DIR/recurring.toml` (default: `config/recurring.toml`).
-/// Returns an empty list if the file does not exist.
-pub fn load_config() -> Vec<RecurringTask> {
+/// One-time import of `$APP_CONFIG_DIR/recurring.toml` into the
+/// `recurring_tasks` DB table — only runs if that table is currently empty,
+/// so it's safe to call unconditionally on every startup. Never writes to or
+/// deletes the TOML file itself; it's simply no longer read afterward.
+pub async fn migrate_from_toml_if_empty() -> TodoLibResult {
+    let existing = db::recurring_task_list().await.map_err(|e| TodoLibError::Db(e.to_string()))?;
+    if !existing.is_empty() {
+        return Ok(());
+    }
+
     let cfg_dir = std::env::var("APP_CONFIG_DIR").unwrap_or_else(|_| "config".to_string());
     let path = format!("{}/recurring.toml", cfg_dir);
 
@@ -209,22 +385,26 @@ pub fn load_config() -> Vec<RecurringTask> {
             if e.kind() != std::io::ErrorKind::NotFound {
                 warn!("Failed to read recurring.toml at {}: {}", path, e);
             }
-            return Vec::new();
+            return Ok(());
         }
     };
 
-    match toml::from_str::<RecurringConfig>(&content) {
+    let tasks = match toml::from_str::<RecurringConfig>(&content) {
         Ok(cfg) => cfg.tasks,
         Err(e) => {
-            warn!("Failed to parse recurring.toml: {}", e);
-            Vec::new()
+            warn!("Failed to parse recurring.toml during migration: {}", e);
+            return Ok(());
         }
-    }
-}
+    };
 
-/// Returns only the tasks that are due on today's local date.
-pub fn due_today() -> Vec<RecurringTask> {
-    load_config().into_iter().filter(|t| t.is_due_today()).collect()
+    let count = tasks.len();
+    for task in tasks {
+        create_task(task.title, task.description, task.schedule, task.reference_date, 0).await?;
+    }
+    if count > 0 {
+        info!("Imported {} recurring task(s) from recurring.toml — safe to delete the file now", count);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +467,13 @@ pub async fn print_ticket(task: &RecurringTask) {
 /// once per calendar day.
 pub async fn print_due_today_if_not_printed() {
     let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
-    let tasks = due_today();
+    let tasks = match due_today().await {
+        Ok(t) => t,
+        Err(e) => {
+            warn!("Failed to load recurring tasks: {}", e);
+            return;
+        }
+    };
 
     if tasks.is_empty() {
         return;
@@ -346,7 +532,7 @@ mod tests {
     use super::*;
 
     fn task(schedule: &str) -> RecurringTask {
-        RecurringTask { title: "test".into(), description: String::new(), schedule: schedule.into(), reference_date: None }
+        RecurringTask { id: 0, title: "test".into(), description: String::new(), schedule: schedule.into(), reference_date: None, priority: 0 }
     }
 
     // --- parsing ---
@@ -386,6 +572,31 @@ mod tests {
     fn parse_invalid() {
         assert_eq!(task("fortnightly").parsed_schedule(), None);
         assert_eq!(task("0:daily").parsed_schedule(), None);
+    }
+
+    #[test]
+    fn parse_once() {
+        let d = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        assert_eq!(task("once:2026-08-20").parsed_schedule(), Some(Schedule::Once(d)));
+    }
+
+    #[test]
+    fn parse_once_invalid_date() {
+        assert_eq!(task("once:not-a-date").parsed_schedule(), None);
+    }
+
+    #[test]
+    fn once_is_due_only_on_that_date() {
+        let d = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let t = task("once:2026-08-20");
+        assert!(t.is_due_on(d));
+        assert!(!t.is_due_on(d - Duration::days(1)));
+        assert!(!t.is_due_on(d + Duration::days(1)));
+    }
+
+    #[test]
+    fn once_display() {
+        assert_eq!(task("once:2026-08-20").schedule_display(), "Once on 20 Aug 2026");
     }
 
     // --- period helpers ---

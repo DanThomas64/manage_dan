@@ -278,6 +278,43 @@ pub struct RecurringItem {
     pub account: String,
 }
 
+/// A DB-backed recurring task (`GET /api/v1/todo/recurring`) — see
+/// CLAUDE.md's "recurring tasks & reminders" note. `schedule` uses the
+/// `"[N:]daily|weekly:<day>|monthly:<d>"` syntax documented there.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTask {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub schedule: String,
+    pub reference_date: Option<chrono::NaiveDate>,
+    /// 0-5, same scale/convention as a todo's own priority field.
+    #[serde(default)]
+    pub priority: u8,
+}
+
+/// One recurring task's "marked done" state for a single day
+/// (`GET /api/v1/todo/recurring/occurrences`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTaskOccurrence {
+    pub task_id: i64,
+    pub occurrence_date: chrono::NaiveDate,
+    pub done: bool,
+    pub done_at: Option<String>,
+}
+
+/// A DB-backed reminder (`GET /api/v1/todo/reminders`) — same shape as
+/// `RecurringTask` plus an optional exact `fire_time` ("HH:MM" local).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Reminder {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub schedule: String,
+    pub reference_date: Option<chrono::NaiveDate>,
+    pub fire_time: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectionPoint {
     pub period_start: chrono::NaiveDate,
@@ -659,6 +696,107 @@ impl ApiClient {
 
     pub async fn delete_recurring_item(&self, id: &str) -> Result<()> {
         let url = format!("{}/api/v1/finances/recurring/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn fetch_recurring_tasks(&self) -> Result<Vec<RecurringTask>> {
+        let url = format!("{}/api/v1/todo/recurring", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_recurring_task(
+        &self,
+        title: &str,
+        description: &str,
+        schedule: &str,
+        reference_date: Option<chrono::NaiveDate>,
+        priority: u8,
+    ) -> Result<()> {
+        let url = format!("{}/api/v1/todo/recurring", self.base_url);
+        self.client.post(&url)
+            .json(&serde_json::json!({ "title": title, "description": description, "schedule": schedule, "reference_date": reference_date, "priority": priority }))
+            .send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_recurring_task(
+        &self,
+        id: i64,
+        title: &str,
+        description: &str,
+        schedule: &str,
+        reference_date: Option<chrono::NaiveDate>,
+        priority: u8,
+    ) -> Result<()> {
+        let url = format!("{}/api/v1/todo/recurring/{}", self.base_url, id);
+        self.client.put(&url)
+            .json(&serde_json::json!({ "title": title, "description": description, "schedule": schedule, "reference_date": reference_date, "priority": priority }))
+            .send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn delete_recurring_task(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/todo/recurring/{}", self.base_url, id);
+        self.client.delete(&url).send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn fetch_recurring_task_occurrences(&self) -> Result<Vec<RecurringTaskOccurrence>> {
+        let url = format!("{}/api/v1/todo/recurring/occurrences", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    pub async fn set_recurring_task_done(&self, id: i64, date: chrono::NaiveDate, done: bool) -> Result<()> {
+        let url = format!("{}/api/v1/todo/recurring/{}/done", self.base_url, id);
+        self.client.post(&url)
+            .json(&serde_json::json!({ "date": date, "done": done }))
+            .send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn fetch_reminders(&self) -> Result<Vec<Reminder>> {
+        let url = format!("{}/api/v1/todo/reminders", self.base_url);
+        Ok(self.client.get(&url).send().await?.error_for_status()?.json().await?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_reminder(
+        &self,
+        title: &str,
+        description: &str,
+        schedule: &str,
+        reference_date: Option<chrono::NaiveDate>,
+        fire_time: Option<&str>,
+    ) -> Result<()> {
+        let url = format!("{}/api/v1/todo/reminders", self.base_url);
+        self.client.post(&url)
+            .json(&serde_json::json!({ "title": title, "description": description, "schedule": schedule, "reference_date": reference_date, "fire_time": fire_time }))
+            .send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_reminder(
+        &self,
+        id: i64,
+        title: &str,
+        description: &str,
+        schedule: &str,
+        reference_date: Option<chrono::NaiveDate>,
+        fire_time: Option<&str>,
+    ) -> Result<()> {
+        let url = format!("{}/api/v1/todo/reminders/{}", self.base_url, id);
+        self.client.put(&url)
+            .json(&serde_json::json!({ "title": title, "description": description, "schedule": schedule, "reference_date": reference_date, "fire_time": fire_time }))
+            .send().await?.error_for_status()?;
+        Ok(())
+    }
+
+    pub async fn delete_reminder(&self, id: i64) -> Result<()> {
+        let url = format!("{}/api/v1/todo/reminders/{}", self.base_url, id);
         self.client.delete(&url).send().await?.error_for_status()?;
         Ok(())
     }
