@@ -2683,12 +2683,191 @@ pub async fn delete_cap_allocation_handler(id: String) -> Result<impl Reply, Rej
     }
 }
 
+// --- Recurring tasks (DB replacement for config/recurring.toml) ---
+
+#[derive(Deserialize)]
+pub struct RecurringTaskBody {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub schedule: String,
+    #[serde(default)]
+    pub reference_date: Option<NaiveDate>,
+    /// 0-5, same scale/convention as a todo's own priority field.
+    #[serde(default)]
+    pub priority: u8,
+}
+
+fn map_todo_lib_err(e: todo::todo_error::TodoLibError) -> Rejection {
+    match e {
+        todo::todo_error::TodoLibError::InvalidSchedule(msg) => {
+            warp::reject::custom(ApiError::TodoInvalidInput(msg))
+        }
+        e => {
+            error!("Todo operation failed: {}", e);
+            warp::reject::custom(ApiError::TodoOperationFailed)
+        }
+    }
+}
+
+/// GET /api/v1/todo/recurring
+pub async fn list_recurring_tasks_handler() -> Result<impl Reply, Rejection> {
+    let tasks = todo::recurring::load_config().await.map_err(map_todo_lib_err)?;
+    Ok(warp::reply::json(&tasks))
+}
+
+/// POST /api/v1/todo/recurring
+pub async fn create_recurring_task_handler(body: RecurringTaskBody) -> Result<impl Reply, Rejection> {
+    let id = todo::recurring::create_task(body.title, body.description, body.schedule, body.reference_date, body.priority)
+        .await
+        .map_err(map_todo_lib_err)?;
+    Ok(warp::reply::with_status(warp::reply::json(&serde_json::json!({ "id": id })), StatusCode::CREATED))
+}
+
+/// PUT /api/v1/todo/recurring/:id
+pub async fn update_recurring_task_handler(id: i64, body: RecurringTaskBody) -> Result<impl Reply, Rejection> {
+    todo::recurring::update_task(id, body.title, body.description, body.schedule, body.reference_date, body.priority)
+        .await
+        .map_err(map_todo_lib_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// DELETE /api/v1/todo/recurring/:id
+pub async fn delete_recurring_task_handler(id: i64) -> Result<impl Reply, Rejection> {
+    todo::recurring::delete_task(id).await.map_err(map_todo_lib_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct RecurringTaskOccurrencesQuery {
+    pub as_of: Option<String>,
+}
+
+/// GET /api/v1/todo/recurring/occurrences?as_of= — every recurring task's
+/// "marked done" state for `as_of` (default today), powering the per-card
+/// done checkbox on both the Recurring tab and the List tab's read-only echo.
+pub async fn list_recurring_task_occurrences_handler(
+    query: RecurringTaskOccurrencesQuery,
+) -> Result<impl Reply, Rejection> {
+    let as_of = parse_date_or(&query.as_of, Local::now().date_naive());
+    let occurrences = todo::recurring::occurrences_on(as_of).await.map_err(map_todo_lib_err)?;
+    Ok(warp::reply::json(&occurrences))
+}
+
+#[derive(Deserialize)]
+pub struct SetRecurringTaskDoneBody {
+    pub date: NaiveDate,
+    pub done: bool,
+}
+
+/// POST /api/v1/todo/recurring/:id/done — marks (or unmarks) a recurring
+/// task's occurrence for a given day as done.
+pub async fn set_recurring_task_done_handler(
+    id: i64,
+    body: SetRecurringTaskDoneBody,
+) -> Result<impl Reply, Rejection> {
+    todo::recurring::set_done(id, body.date, body.done).await.map_err(map_todo_lib_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- Reminders (DB replacement for config/reminders.toml) ---
+
+#[derive(Deserialize)]
+pub struct ReminderBody {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    pub schedule: String,
+    #[serde(default)]
+    pub reference_date: Option<NaiveDate>,
+    /// `"HH:MM"` local time. Absent/`null` = summary-only, no individual fire.
+    #[serde(default)]
+    pub fire_time: Option<String>,
+}
+
+/// GET /api/v1/todo/reminders
+pub async fn list_reminders_handler() -> Result<impl Reply, Rejection> {
+    let reminders = todo::reminders::load_reminders().await.map_err(map_todo_lib_err)?;
+    Ok(warp::reply::json(&reminders))
+}
+
+/// POST /api/v1/todo/reminders
+pub async fn create_reminder_handler(body: ReminderBody) -> Result<impl Reply, Rejection> {
+    let id = todo::reminders::create_reminder(
+        body.title,
+        body.description,
+        body.schedule,
+        body.reference_date,
+        body.fire_time,
+    )
+    .await
+    .map_err(map_todo_lib_err)?;
+    Ok(warp::reply::with_status(warp::reply::json(&serde_json::json!({ "id": id })), StatusCode::CREATED))
+}
+
+/// PUT /api/v1/todo/reminders/:id
+pub async fn update_reminder_handler(id: i64, body: ReminderBody) -> Result<impl Reply, Rejection> {
+    todo::reminders::update_reminder(
+        id,
+        body.title,
+        body.description,
+        body.schedule,
+        body.reference_date,
+        body.fire_time,
+    )
+    .await
+    .map_err(map_todo_lib_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// DELETE /api/v1/todo/reminders/:id
+pub async fn delete_reminder_handler(id: i64) -> Result<impl Reply, Rejection> {
+    todo::reminders::delete_reminder(id).await.map_err(map_todo_lib_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub struct ReminderOccurrencesQuery {
+    pub as_of: Option<String>,
+}
+
+/// GET /api/v1/todo/reminders/occurrences?as_of= — every reminder-occurrence
+/// fired on `as_of` (default today), powering the frontend's "Today's
+/// Reminders" panel.
+pub async fn list_reminder_occurrences_handler(query: ReminderOccurrencesQuery) -> Result<impl Reply, Rejection> {
+    let as_of = parse_date_or(&query.as_of, Local::now().date_naive());
+    let summaries = todo::reminders::occurrences_on(as_of).await.map_err(map_todo_lib_err)?;
+    Ok(warp::reply::json(&summaries))
+}
+
+#[derive(Deserialize)]
+pub struct ReminderOccurrenceUpdateBody {
+    pub date: NaiveDate,
+    pub acknowledged: bool,
+    /// RFC 3339 datetime, or absent/`null` to clear any existing snooze.
+    #[serde(default)]
+    pub snoozed_until: Option<chrono::DateTime<Local>>,
+}
+
+/// POST /api/v1/todo/reminders/:id/occurrences — acknowledge (dismiss) or
+/// snooze a fired reminder occurrence.
+pub async fn set_reminder_occurrence_handler(
+    id: i64,
+    body: ReminderOccurrenceUpdateBody,
+) -> Result<impl Reply, Rejection> {
+    todo::reminders::set_occurrence_state(id, body.date, body.acknowledged, body.snoozed_until)
+        .await
+        .map_err(map_todo_lib_err)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 // --- Error Handling ---
 
 /// Custom API errors used for rejection handling.
 #[derive(Debug)]
 enum ApiError {
     TodoOperationFailed,
+    TodoInvalidInput(String),
     MismatchedId,
     LogOperationFailed,
     ListsOperationFailed,
@@ -2705,6 +2884,8 @@ impl warp::reject::Reject for ApiError {}
 async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
     if let Some(ApiError::TodoOperationFailed) = err.find() {
         Ok(warp::reply::with_status("Todo operation failed".to_string(), StatusCode::INTERNAL_SERVER_ERROR))
+    } else if let Some(ApiError::TodoInvalidInput(msg)) = err.find() {
+        Ok(warp::reply::with_status(msg.clone(), StatusCode::BAD_REQUEST))
     } else if let Some(ApiError::MismatchedId) = err.find() {
         Ok(warp::reply::with_status("ID in path does not match ID in body".to_string(), StatusCode::BAD_REQUEST))
     } else if let Some(ApiError::LogOperationFailed) = err.find() {
@@ -2746,6 +2927,7 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
 
     // POST /api/v1/todo
     let create = todo_base
+        .and(warp::path::end())
         .and(warp::post())
         .and(warp::body::json())
         .and_then(create_todo_handler);
@@ -2815,7 +2997,108 @@ fn todo_routes() -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone
         .and(warp::get())
         .and_then(get_single_todo_handler);
 
+    // --- Recurring tasks (DB replacement for config/recurring.toml) ---
+    let recurring_base = todo_base.and(warp::path("recurring"));
+
+    // GET /api/v1/todo/recurring
+    let list_recurring = recurring_base
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_recurring_tasks_handler);
+
+    // POST /api/v1/todo/recurring
+    let create_recurring = recurring_base
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(create_recurring_task_handler);
+
+    // PUT /api/v1/todo/recurring/:id
+    let update_recurring = recurring_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and_then(update_recurring_task_handler);
+
+    // DELETE /api/v1/todo/recurring/:id
+    let delete_recurring = recurring_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_recurring_task_handler);
+
+    // GET /api/v1/todo/recurring/occurrences?as_of=
+    let list_recurring_occurrences = recurring_base
+        .and(warp::path("occurrences"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(warp::query::<RecurringTaskOccurrencesQuery>())
+        .and_then(list_recurring_task_occurrences_handler);
+
+    // POST /api/v1/todo/recurring/:id/done
+    let set_recurring_done = recurring_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path("done"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(set_recurring_task_done_handler);
+
+    // --- Reminders (DB replacement for config/reminders.toml) ---
+    let reminders_base = todo_base.and(warp::path("reminders"));
+
+    // GET /api/v1/todo/reminders/occurrences?as_of= — must be registered
+    // ahead of the bare `:id` routes below since "occurrences" would
+    // otherwise fail to parse as an i64 anyway, but kept adjacent for clarity.
+    let list_reminder_occurrences = reminders_base
+        .and(warp::path("occurrences"))
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(warp::query::<ReminderOccurrencesQuery>())
+        .and_then(list_reminder_occurrences_handler);
+
+    // GET /api/v1/todo/reminders
+    let list_reminders = reminders_base
+        .and(warp::path::end())
+        .and(warp::get())
+        .and_then(list_reminders_handler);
+
+    // POST /api/v1/todo/reminders
+    let create_reminder = reminders_base
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(create_reminder_handler);
+
+    // PUT /api/v1/todo/reminders/:id
+    let update_reminder = reminders_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and_then(update_reminder_handler);
+
+    // DELETE /api/v1/todo/reminders/:id
+    let delete_reminder = reminders_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path::end())
+        .and(warp::delete())
+        .and_then(delete_reminder_handler);
+
+    // POST /api/v1/todo/reminders/:id/occurrences
+    let set_reminder_occurrence = reminders_base
+        .and(warp::path::param::<i64>())
+        .and(warp::path("occurrences"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::body::json())
+        .and_then(set_reminder_occurrence_handler);
+
     summary.or(resync).or(read_all).or(get_one).or(create).or(update).or(set_done).or(set_status).or(set_subtask).or(print).or(archive).or(delete)
+        .or(list_recurring).or(create_recurring).or(update_recurring).or(delete_recurring)
+        .or(list_recurring_occurrences).or(set_recurring_done)
+        .or(list_reminder_occurrences).or(list_reminders).or(create_reminder).or(update_reminder).or(delete_reminder).or(set_reminder_occurrence)
 }
 
 /// Defines routes related to system status.

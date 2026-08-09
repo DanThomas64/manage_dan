@@ -152,3 +152,65 @@ pub struct BudgetCapAllocationRow {
     pub include_in_projection: bool,
     pub updated_at: String,
 }
+
+/// A DB-backed recurring task — see the `recurring_tasks` table comment in
+/// `db::init`. Replaces the old `config/recurring.toml`-file source; schedule
+/// syntax/validation stays owned by `todo::recurring::RecurringTask` (this is
+/// deliberately just the storage row, not a duplicate of that parsing logic).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTaskRow {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub schedule: String,
+    /// ISO (`YYYY-MM-DD`) date string, anchor for multi-period schedules.
+    pub reference_date: Option<String>,
+    pub created_at: String,
+    /// 0-5, same scale/convention as `TodoItem.priority`.
+    pub priority: u8,
+}
+
+/// A DB-backed reminder — see the `reminders` table comment in `db::init`.
+/// Replaces the old `config/reminders.toml`-file source. `fire_time` is a
+/// `"HH:MM"` local time string; `None` means summary-only (today's/weekly
+/// bundled behavior), `Some` means `todo::reminder_monitor` fires it (prints
+/// a dedicated ticket, records a `ReminderOccurrenceRow`) at that time on
+/// each day its schedule is due.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReminderRow {
+    pub id: i64,
+    pub title: String,
+    pub description: String,
+    pub schedule: String,
+    pub reference_date: Option<String>,
+    pub fire_time: Option<String>,
+    pub created_at: String,
+}
+
+/// A per-occurrence fired/acknowledged/snoozed state row for one reminder on
+/// one calendar day — see the `reminder_occurrences` table comment in
+/// `db::init`. A missing row means "not yet fired today"; mirrors the
+/// `RecurringOccurrenceRow` "row absence means unresolved" idiom above.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReminderOccurrenceRow {
+    pub reminder_id: i64,
+    /// ISO (`YYYY-MM-DD`) date string — the calendar day this occurrence is for.
+    pub occurrence_date: String,
+    pub fired_at: Option<String>,
+    pub acknowledged: bool,
+    pub acknowledged_at: Option<String>,
+    /// When set and in the past, `todo::reminder_monitor` treats this
+    /// occurrence as due to re-fire (a snooze that has elapsed).
+    pub snoozed_until: Option<String>,
+}
+
+/// A per-occurrence "marked done" state row for one recurring task on one
+/// calendar day — see the `recurring_task_occurrences` table comment in
+/// `db::init`. A missing row means "not marked done today".
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecurringTaskOccurrenceRow {
+    pub task_id: i64,
+    pub occurrence_date: String,
+    pub done: bool,
+    pub done_at: Option<String>,
+}

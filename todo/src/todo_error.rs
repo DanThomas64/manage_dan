@@ -16,6 +16,9 @@ pub enum TodoLibError {
     #[error("database error: {0}")]
     Db(String),
 
+    #[error("invalid schedule: {0}")]
+    InvalidSchedule(String),
+
     #[error("unknown todo error")]
     Unknown,
 }

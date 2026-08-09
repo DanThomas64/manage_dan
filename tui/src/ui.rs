@@ -29,6 +29,7 @@ pub enum Screen {
     Lists,
     Log,
     Finances,
+    Recurring,
     Quit,
 }
 
@@ -107,6 +108,35 @@ pub enum LogCreateFocus {
     Title,
     Tags,
     Content,
+    Submit,
+}
+
+/// Which of the Recurring screen's two sub-tabs (Tasks vs Reminders) is
+/// active — same "Tab to switch lists" convention as `FinancesFocus`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurringScreenFocus {
+    Tasks,
+    Reminders,
+}
+
+/// Which sub-mode the Recurring screen is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurringScreenMode {
+    List,
+    Create,
+}
+
+/// Which field is focused in the Recurring screen's add/edit form. `FireTime`
+/// is only reachable (and only shown) when `recurring_screen_focus` is
+/// `Reminders` — a recurring task has no fire time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecurringCreateFocus {
+    Title,
+    Description,
+    Schedule,
+    Priority,
+    ReferenceDate,
+    FireTime,
     Submit,
 }
 
@@ -304,6 +334,33 @@ pub struct App {
     pub fin_acct_name_buffer: String,
     pub fin_acct_kind_buffer: String,
     pub fin_balance_buffer: String,
+
+    // Recurring tasks & Reminders state (DB-backed replacements for
+    // config/recurring.toml / config/reminders.toml — see CLAUDE.md)
+    pub recurring_tasks: Vec<crate::api::RecurringTask>,
+    pub recurring_tasks_state: ListState,
+    /// task_id -> done, today's occurrence state (see
+    /// `todo::recurring::occurrences_on`) — absence means not done.
+    pub recurring_task_done_today: std::collections::HashMap<i64, bool>,
+    pub reminders: Vec<crate::api::Reminder>,
+    pub reminders_state: ListState,
+    pub recurring_screen_focus: RecurringScreenFocus,
+    pub recurring_screen_mode: RecurringScreenMode,
+    pub recurring_create_focus: RecurringCreateFocus,
+    /// `Some(id)` while editing an existing task/reminder, `None` while
+    /// adding a new one — same convention `finances_recurring`'s edit-via-
+    /// add-form flow would use if it had one; this reuses the same buffers
+    /// for both add and edit.
+    pub recurring_editing_id: Option<i64>,
+    pub recurring_create_title: String,
+    pub recurring_create_description: String,
+    pub recurring_create_schedule: String,
+    /// "0"-"5", same scale/convention as `priority_buffer` on the Todo
+    /// add-form. Reminders don't have a priority concept — this is only
+    /// ever sent when `recurring_screen_focus == Tasks`.
+    pub recurring_create_priority: String,
+    pub recurring_create_reference_date: String,
+    pub recurring_create_fire_time: String,
 }
 
 /// Parses the multiline subtasks input buffer into a `Vec<Subtask>`.
@@ -445,6 +502,22 @@ impl App {
             fin_acct_name_buffer: String::new(),
             fin_acct_kind_buffer: String::from("asset"),
             fin_balance_buffer: String::new(),
+
+            recurring_tasks: Vec::new(),
+            recurring_tasks_state: ListState::default(),
+            recurring_task_done_today: std::collections::HashMap::new(),
+            reminders: Vec::new(),
+            reminders_state: ListState::default(),
+            recurring_screen_focus: RecurringScreenFocus::Tasks,
+            recurring_screen_mode: RecurringScreenMode::List,
+            recurring_create_focus: RecurringCreateFocus::Title,
+            recurring_editing_id: None,
+            recurring_create_title: String::new(),
+            recurring_create_description: String::new(),
+            recurring_create_schedule: String::from("daily"),
+            recurring_create_priority: String::from("0"),
+            recurring_create_reference_date: String::new(),
+            recurring_create_fire_time: String::new(),
         }
     }
 
@@ -1117,6 +1190,191 @@ impl App {
                 self.fetch_daily_logs().await;
             }
             Err(e) => self.last_error = Some(format!("Create failed: {}", e)),
+        }
+    }
+
+    // --- Recurring tasks & Reminders helpers ---
+
+    pub async fn fetch_recurring_tasks(&mut self) {
+        match self.api_client.fetch_recurring_tasks().await {
+            Ok(tasks) => {
+                let len = tasks.len();
+                self.recurring_tasks = tasks;
+                if len == 0 {
+                    self.recurring_tasks_state.select(None);
+                } else {
+                    let sel = self.recurring_tasks_state.selected().unwrap_or(0).min(len - 1);
+                    self.recurring_tasks_state.select(Some(sel));
+                }
+            }
+            Err(e) => self.last_error = Some(format!("Failed to fetch recurring tasks: {}", e)),
+        }
+        // Done ticks are supplementary — a failure here shouldn't blank the
+        // task list `fetch_recurring_tasks` just populated above.
+        if let Ok(occurrences) = self.api_client.fetch_recurring_task_occurrences().await {
+            self.recurring_task_done_today = occurrences.into_iter().map(|o| (o.task_id, o.done)).collect();
+        }
+    }
+
+    /// Toggles the selected recurring task's done state for today. No-op
+    /// (and no fetch) when the Reminders sub-tab is focused — that concept
+    /// only applies to recurring tasks.
+    async fn recurring_toggle_selected_task_done(&mut self) {
+        if self.recurring_screen_focus != RecurringScreenFocus::Tasks {
+            return;
+        }
+        let Some(task) = self.recurring_tasks_state.selected()
+            .and_then(|i| self.recurring_tasks.get(i)).cloned() else { return; };
+        let currently_done = self.recurring_task_done_today.get(&task.id).copied().unwrap_or(false);
+        let today = Local::now().date_naive();
+        match self.api_client.set_recurring_task_done(task.id, today, !currently_done).await {
+            Ok(()) => { self.recurring_task_done_today.insert(task.id, !currently_done); }
+            Err(e) => self.last_error = Some(format!("Failed to update recurring task: {}", e)),
+        }
+    }
+
+    pub async fn fetch_reminders(&mut self) {
+        match self.api_client.fetch_reminders().await {
+            Ok(reminders) => {
+                let len = reminders.len();
+                self.reminders = reminders;
+                if len == 0 {
+                    self.reminders_state.select(None);
+                } else {
+                    let sel = self.reminders_state.selected().unwrap_or(0).min(len - 1);
+                    self.reminders_state.select(Some(sel));
+                }
+            }
+            Err(e) => self.last_error = Some(format!("Failed to fetch reminders: {}", e)),
+        }
+    }
+
+    fn recurring_move(&mut self, delta: i32) {
+        match self.recurring_screen_focus {
+            RecurringScreenFocus::Tasks => {
+                let len = self.recurring_tasks.len();
+                if len == 0 { return; }
+                let cur = self.recurring_tasks_state.selected().unwrap_or(0) as i32;
+                let next = (cur + delta).rem_euclid(len as i32) as usize;
+                self.recurring_tasks_state.select(Some(next));
+            }
+            RecurringScreenFocus::Reminders => {
+                let len = self.reminders.len();
+                if len == 0 { return; }
+                let cur = self.reminders_state.selected().unwrap_or(0) as i32;
+                let next = (cur + delta).rem_euclid(len as i32) as usize;
+                self.reminders_state.select(Some(next));
+            }
+        }
+    }
+
+    fn recurring_reset_form(&mut self) {
+        self.recurring_editing_id = None;
+        self.recurring_create_title.clear();
+        self.recurring_create_description.clear();
+        self.recurring_create_schedule = String::from("daily");
+        self.recurring_create_priority = String::from("0");
+        self.recurring_create_reference_date.clear();
+        self.recurring_create_fire_time.clear();
+        self.recurring_create_focus = RecurringCreateFocus::Title;
+    }
+
+    fn recurring_start_create(&mut self) {
+        self.recurring_reset_form();
+        self.recurring_screen_mode = RecurringScreenMode::Create;
+    }
+
+    /// Populates the add/edit form from the currently selected task/reminder
+    /// (whichever sub-tab is focused) and enters Create mode in edit mode.
+    fn recurring_start_edit(&mut self) {
+        match self.recurring_screen_focus {
+            RecurringScreenFocus::Tasks => {
+                let Some(task) = self.recurring_tasks_state.selected()
+                    .and_then(|i| self.recurring_tasks.get(i)).cloned() else { return; };
+                self.recurring_editing_id = Some(task.id);
+                self.recurring_create_title = task.title;
+                self.recurring_create_description = task.description;
+                self.recurring_create_schedule = task.schedule;
+                self.recurring_create_priority = task.priority.to_string();
+                self.recurring_create_reference_date = task.reference_date.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default();
+                self.recurring_create_fire_time.clear();
+            }
+            RecurringScreenFocus::Reminders => {
+                let Some(reminder) = self.reminders_state.selected()
+                    .and_then(|i| self.reminders.get(i)).cloned() else { return; };
+                self.recurring_editing_id = Some(reminder.id);
+                self.recurring_create_title = reminder.title;
+                self.recurring_create_description = reminder.description;
+                self.recurring_create_schedule = reminder.schedule;
+                self.recurring_create_priority = String::from("0");
+                self.recurring_create_reference_date = reminder.reference_date.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default();
+                self.recurring_create_fire_time = reminder.fire_time.unwrap_or_default();
+            }
+        }
+        self.recurring_create_focus = RecurringCreateFocus::Title;
+        self.recurring_screen_mode = RecurringScreenMode::Create;
+    }
+
+    pub async fn recurring_submit_create(&mut self) {
+        let title = self.recurring_create_title.trim().to_string();
+        if title.is_empty() {
+            return;
+        }
+        let description = self.recurring_create_description.trim().to_string();
+        let schedule = self.recurring_create_schedule.trim().to_string();
+        let priority: u8 = self.recurring_create_priority.trim().parse().unwrap_or(0).min(5);
+        let reference_date = NaiveDate::parse_from_str(self.recurring_create_reference_date.trim(), "%Y-%m-%d").ok();
+
+        let result = match (self.recurring_screen_focus, self.recurring_editing_id) {
+            (RecurringScreenFocus::Tasks, None) => {
+                self.api_client.add_recurring_task(&title, &description, &schedule, reference_date, priority).await
+            }
+            (RecurringScreenFocus::Tasks, Some(id)) => {
+                self.api_client.update_recurring_task(id, &title, &description, &schedule, reference_date, priority).await
+            }
+            (RecurringScreenFocus::Reminders, editing) => {
+                let fire_time = self.recurring_create_fire_time.trim();
+                let fire_time = if fire_time.is_empty() { None } else { Some(fire_time) };
+                match editing {
+                    None => self.api_client.add_reminder(&title, &description, &schedule, reference_date, fire_time).await,
+                    Some(id) => self.api_client.update_reminder(id, &title, &description, &schedule, reference_date, fire_time).await,
+                }
+            }
+        };
+
+        match result {
+            Ok(()) => {
+                self.recurring_reset_form();
+                self.recurring_screen_mode = RecurringScreenMode::List;
+                match self.recurring_screen_focus {
+                    RecurringScreenFocus::Tasks => self.fetch_recurring_tasks().await,
+                    RecurringScreenFocus::Reminders => self.fetch_reminders().await,
+                }
+            }
+            Err(e) => self.last_error = Some(format!("Save failed: {}", e)),
+        }
+    }
+
+    pub async fn recurring_delete_selected(&mut self) {
+        match self.recurring_screen_focus {
+            RecurringScreenFocus::Tasks => {
+                let Some(id) = self.recurring_tasks_state.selected()
+                    .and_then(|i| self.recurring_tasks.get(i)).map(|t| t.id) else { return; };
+                if let Err(e) = self.api_client.delete_recurring_task(id).await {
+                    self.last_error = Some(format!("Delete failed: {}", e));
+                    return;
+                }
+                self.fetch_recurring_tasks().await;
+            }
+            RecurringScreenFocus::Reminders => {
+                let Some(id) = self.reminders_state.selected()
+                    .and_then(|i| self.reminders.get(i)).map(|r| r.id) else { return; };
+                if let Err(e) = self.api_client.delete_reminder(id).await {
+                    self.last_error = Some(format!("Delete failed: {}", e));
+                    return;
+                }
+                self.fetch_reminders().await;
+            }
         }
     }
 
@@ -2411,6 +2669,115 @@ impl App {
                     }
                 }
             }
+            Screen::Recurring => {
+                if let CEvent::Key(key) = event {
+                    match self.recurring_screen_mode {
+                        RecurringScreenMode::List => match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                self.current_screen = Screen::Dashboard;
+                            }
+                            KeyCode::Tab => {
+                                self.recurring_screen_focus = match self.recurring_screen_focus {
+                                    RecurringScreenFocus::Tasks => RecurringScreenFocus::Reminders,
+                                    RecurringScreenFocus::Reminders => RecurringScreenFocus::Tasks,
+                                };
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => self.recurring_move(-1),
+                            KeyCode::Down | KeyCode::Char('j') => self.recurring_move(1),
+                            KeyCode::Char('a') => self.recurring_start_create(),
+                            KeyCode::Char('e') => self.recurring_start_edit(),
+                            KeyCode::Char('x') => {
+                                self.recurring_toggle_selected_task_done().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('d') => {
+                                self.recurring_delete_selected().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('r') => {
+                                self.fetch_recurring_tasks().await;
+                                self.fetch_reminders().await;
+                                action_taken = true;
+                            }
+                            KeyCode::Char('?') => { self.show_help = true; }
+                            _ => { self.handle_nav_key(key.code); }
+                        },
+                        RecurringScreenMode::Create => {
+                            let is_reminder = self.recurring_screen_focus == RecurringScreenFocus::Reminders;
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.recurring_screen_mode = RecurringScreenMode::List;
+                                }
+                                KeyCode::Tab => {
+                                    self.recurring_create_focus = match self.recurring_create_focus {
+                                        RecurringCreateFocus::Title => RecurringCreateFocus::Description,
+                                        RecurringCreateFocus::Description => RecurringCreateFocus::Schedule,
+                                        RecurringCreateFocus::Schedule if !is_reminder => RecurringCreateFocus::Priority,
+                                        RecurringCreateFocus::Schedule => RecurringCreateFocus::ReferenceDate,
+                                        RecurringCreateFocus::Priority => RecurringCreateFocus::ReferenceDate,
+                                        RecurringCreateFocus::ReferenceDate if is_reminder => RecurringCreateFocus::FireTime,
+                                        RecurringCreateFocus::ReferenceDate => RecurringCreateFocus::Submit,
+                                        RecurringCreateFocus::FireTime => RecurringCreateFocus::Submit,
+                                        RecurringCreateFocus::Submit => RecurringCreateFocus::Title,
+                                    };
+                                }
+                                KeyCode::BackTab => {
+                                    self.recurring_create_focus = match self.recurring_create_focus {
+                                        RecurringCreateFocus::Title => RecurringCreateFocus::Submit,
+                                        RecurringCreateFocus::Description => RecurringCreateFocus::Title,
+                                        RecurringCreateFocus::Schedule => RecurringCreateFocus::Description,
+                                        RecurringCreateFocus::Priority => RecurringCreateFocus::Schedule,
+                                        RecurringCreateFocus::ReferenceDate if !is_reminder => RecurringCreateFocus::Priority,
+                                        RecurringCreateFocus::ReferenceDate => RecurringCreateFocus::Schedule,
+                                        RecurringCreateFocus::FireTime => RecurringCreateFocus::ReferenceDate,
+                                        RecurringCreateFocus::Submit if is_reminder => RecurringCreateFocus::FireTime,
+                                        RecurringCreateFocus::Submit => RecurringCreateFocus::ReferenceDate,
+                                    };
+                                }
+                                KeyCode::Enter => {
+                                    if self.recurring_create_focus == RecurringCreateFocus::Submit {
+                                        self.recurring_submit_create().await;
+                                        action_taken = true;
+                                    }
+                                }
+                                KeyCode::Backspace => {
+                                    let buf = match self.recurring_create_focus {
+                                        RecurringCreateFocus::Title => Some(&mut self.recurring_create_title),
+                                        RecurringCreateFocus::Description => Some(&mut self.recurring_create_description),
+                                        RecurringCreateFocus::Schedule => Some(&mut self.recurring_create_schedule),
+                                        RecurringCreateFocus::Priority => Some(&mut self.recurring_create_priority),
+                                        RecurringCreateFocus::ReferenceDate => Some(&mut self.recurring_create_reference_date),
+                                        RecurringCreateFocus::FireTime => Some(&mut self.recurring_create_fire_time),
+                                        RecurringCreateFocus::Submit => None,
+                                    };
+                                    if let Some(buf) = buf { buf.pop(); }
+                                }
+                                KeyCode::Char(c) => {
+                                    // Priority is a single digit 0-5, same convention as the
+                                    // Todo add-form's own priority_buffer — replace rather
+                                    // than append, so typing never produces multi-digit junk.
+                                    if self.recurring_create_focus == RecurringCreateFocus::Priority {
+                                        if c.is_ascii_digit() && ('0'..='5').contains(&c) {
+                                            self.recurring_create_priority = c.to_string();
+                                        }
+                                    } else {
+                                        let buf = match self.recurring_create_focus {
+                                            RecurringCreateFocus::Title => Some(&mut self.recurring_create_title),
+                                            RecurringCreateFocus::Description => Some(&mut self.recurring_create_description),
+                                            RecurringCreateFocus::Schedule => Some(&mut self.recurring_create_schedule),
+                                            RecurringCreateFocus::ReferenceDate => Some(&mut self.recurring_create_reference_date),
+                                            RecurringCreateFocus::FireTime => Some(&mut self.recurring_create_fire_time),
+                                            RecurringCreateFocus::Priority | RecurringCreateFocus::Submit => None,
+                                        };
+                                        if let Some(buf) = buf { buf.push(c); }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -2441,6 +2808,10 @@ impl App {
                 Screen::Finances => {
                     self.fetch_finances_all().await;
                 }
+                Screen::Recurring => {
+                    self.fetch_recurring_tasks().await;
+                    self.fetch_reminders().await;
+                }
                 _ => {}
             }
         }
@@ -2469,6 +2840,7 @@ impl App {
             KeyCode::Char('4') => { self.current_screen = Screen::Lists; true }
             KeyCode::Char('5') => { self.current_screen = Screen::Log; true }
             KeyCode::Char('6') => { self.current_screen = Screen::Finances; true }
+            KeyCode::Char('7') => { self.current_screen = Screen::Recurring; true }
             _ => false,
         }
     }
@@ -2942,6 +3314,7 @@ impl Tui {
                 Screen::Lists => draw_lists_screen(frame, app, area),
                 Screen::Log => draw_log_screen(frame, app, area),
                 Screen::Finances => draw_finances_screen(frame, app, area),
+                Screen::Recurring => draw_recurring_screen(frame, app, area),
                 _ => {}
             }
             if app.show_help {
@@ -2987,7 +3360,7 @@ fn draw_too_small(frame: &mut ratatui::Frame, area: Rect) {
 /// fallback), so it's listed on every screen rather than repeated in every
 /// footer.
 fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>) {
-    const SWITCH_SCREEN: (&str, &str) = ("1-6", "Switch screen (Tasks/Notes/Project/Lists/Log/Finances)");
+    const SWITCH_SCREEN: (&str, &str) = ("1-7", "Switch screen (Tasks/Notes/Project/Lists/Log/Finances/Recurring)");
     const TOGGLE_HELP: (&str, &str) = ("?", "Toggle this help");
 
     match app.current_screen {
@@ -3226,6 +3599,33 @@ fn help_lines_for(app: &App) -> (&'static str, Vec<(&'static str, &'static str)>
                 vec![
                     ("Esc", "Cancel"),
                     ("Enter", "Post an adjustment transaction for the difference and save"),
+                ],
+            ),
+        },
+        Screen::Recurring => match app.recurring_screen_mode {
+            RecurringScreenMode::List => (
+                "Recurring Tasks & Reminders",
+                vec![
+                    ("q", "Back to Dashboard"),
+                    ("Tab", "Switch list: Tasks ↔ Reminders"),
+                    ("j/k", "Move selection"),
+                    ("a", "Add"),
+                    ("e", "Edit selected"),
+                    ("x", "Toggle done for today (Tasks only)"),
+                    ("d", "Delete selected"),
+                    ("r", "Refetch"),
+                    SWITCH_SCREEN,
+                    TOGGLE_HELP,
+                ],
+            ),
+            RecurringScreenMode::Create => (
+                "Recurring Tasks & Reminders — Add/Edit",
+                vec![
+                    ("Esc", "Cancel"),
+                    ("Tab / Shift+Tab", "Move between fields"),
+                    ("Schedule syntax", "daily | N:daily | weekly:<day> | N:weekly:<day> | monthly:<d> | N:monthly:<d> | once:<YYYY-MM-DD>"),
+                    ("Fire Time", "Reminders only — HH:MM, blank = summary-only (no individual ticket)"),
+                    ("Enter", "Next field (or save, on Submit)"),
                 ],
             ),
         },
@@ -4733,6 +5133,150 @@ fn draw_log_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
     };
     frame.render_widget(
         Paragraph::new(footer_text).style(Style::default().fg(Color::Cyan)),
+        footer_area,
+    );
+}
+
+fn draw_recurring_create(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    let is_reminder = app.recurring_screen_focus == RecurringScreenFocus::Reminders;
+    let mut constraints = vec![
+        Constraint::Length(3), // title
+        Constraint::Length(3), // description
+        Constraint::Length(3), // schedule
+    ];
+    if !is_reminder {
+        constraints.push(Constraint::Length(3)); // priority (Tasks only)
+    }
+    constraints.push(Constraint::Length(3)); // reference date
+    if is_reminder {
+        constraints.push(Constraint::Length(3)); // fire time
+    }
+    constraints.push(Constraint::Length(1)); // submit
+    constraints.push(Constraint::Length(1)); // footer
+
+    let chunks = Layout::default().direction(Direction::Vertical).constraints(constraints).split(area);
+
+    let focused_style = Style::default().fg(Color::Cyan);
+    let normal_style = Style::default().fg(Color::Rgb(110, 110, 110));
+    let field_style = |f: RecurringCreateFocus| {
+        if app.recurring_create_focus == f { focused_style } else { normal_style }
+    };
+
+    frame.render_widget(
+        Paragraph::new(format!("{}_", app.recurring_create_title))
+            .block(Block::default().borders(Borders::ALL).title(" Title * ").border_style(field_style(RecurringCreateFocus::Title))),
+        chunks[0],
+    );
+    frame.render_widget(
+        Paragraph::new(format!("{}_", app.recurring_create_description))
+            .block(Block::default().borders(Borders::ALL).title(" Description (optional) ").border_style(field_style(RecurringCreateFocus::Description))),
+        chunks[1],
+    );
+    frame.render_widget(
+        Paragraph::new(format!("{}_", app.recurring_create_schedule))
+            .block(Block::default().borders(Borders::ALL)
+                .title(" Schedule (daily | weekly:<day> | monthly:<d> | once:<YYYY-MM-DD>, optional N: prefix) ")
+                .border_style(field_style(RecurringCreateFocus::Schedule))),
+        chunks[2],
+    );
+
+    let mut idx = 3;
+    if !is_reminder {
+        frame.render_widget(
+            Paragraph::new(app.recurring_create_priority.as_str())
+                .block(Block::default().borders(Borders::ALL).title(" Priority 0-5 ").border_style(field_style(RecurringCreateFocus::Priority))),
+            chunks[idx],
+        );
+        idx += 1;
+    }
+    frame.render_widget(
+        Paragraph::new(format!("{}_", app.recurring_create_reference_date))
+            .block(Block::default().borders(Borders::ALL).title(" Reference Date YYYY-MM-DD (optional) ").border_style(field_style(RecurringCreateFocus::ReferenceDate))),
+        chunks[idx],
+    );
+    idx += 1;
+
+    if is_reminder {
+        frame.render_widget(
+            Paragraph::new(format!("{}_", app.recurring_create_fire_time))
+                .block(Block::default().borders(Borders::ALL).title(" Fire Time HH:MM (optional — blank = summary-only) ").border_style(field_style(RecurringCreateFocus::FireTime))),
+            chunks[idx],
+        );
+        idx += 1;
+    }
+
+    let submit_style = if app.recurring_create_focus == RecurringCreateFocus::Submit {
+        Style::default().fg(Color::Black).bg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
+    frame.render_widget(
+        Paragraph::new(" [ SUBMIT ] ").style(submit_style).alignment(ratatui::layout::Alignment::Center),
+        chunks[idx],
+    );
+    idx += 1;
+
+    frame.render_widget(
+        Paragraph::new("Tab: next field  Enter on Submit: save  Esc: cancel")
+            .style(Style::default().fg(Color::Rgb(160, 160, 160))),
+        chunks[idx],
+    );
+}
+
+fn draw_recurring_screen(frame: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    if app.recurring_screen_mode == RecurringScreenMode::Create {
+        return draw_recurring_create(frame, app, area);
+    }
+
+    let summary = format!("{} tasks, {} reminders", app.recurring_tasks.len(), app.reminders.len());
+
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+    let (header_area, body, footer_area) = (outer[0], outer[1], outer[2]);
+    draw_section_header(frame, header_area, "RECURRING", &summary, Color::Cyan, app.connected);
+
+    match app.recurring_screen_focus {
+        RecurringScreenFocus::Tasks => {
+            let items: Vec<ListItem> = app.recurring_tasks.iter().map(|t| {
+                let done = app.recurring_task_done_today.get(&t.id).copied().unwrap_or(false);
+                let mark = if done { "[x] " } else { "[ ] " };
+                let filled = t.priority.min(5) as usize;
+                let bar = format!("[{}{}] ", "#".repeat(filled), ".".repeat(5 - filled));
+                ListItem::new(Line::from(vec![
+                    ratatui::text::Span::styled(mark, Style::default().fg(if done { Color::Green } else { Color::Rgb(110, 110, 110) })),
+                    ratatui::text::Span::styled(bar, Style::default().fg(Color::Yellow)),
+                    ratatui::text::Span::styled(format!("{:<24}", t.title), Style::default().fg(if done { Color::Rgb(140, 140, 140) } else { Color::White })),
+                    ratatui::text::Span::styled(format!("  {}", t.schedule), Style::default().fg(Color::Rgb(160, 160, 160))),
+                ]))
+            }).collect();
+            let title = format!(" Recurring Tasks ({}) — Tab: Reminders, x: toggle done ", app.recurring_tasks.len());
+            let widget = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title(title).border_style(Style::default().fg(Color::Cyan)))
+                .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+            frame.render_stateful_widget(widget, body, &mut app.recurring_tasks_state);
+        }
+        RecurringScreenFocus::Reminders => {
+            let items: Vec<ListItem> = app.reminders.iter().map(|r| {
+                let fire = r.fire_time.as_deref().map(|t| format!("  at {}", t)).unwrap_or_else(|| "  summary only".to_string());
+                ListItem::new(Line::from(vec![
+                    ratatui::text::Span::styled(format!("{:<24}", r.title), Style::default().fg(Color::White)),
+                    ratatui::text::Span::styled(format!("  {}", r.schedule), Style::default().fg(Color::Rgb(160, 160, 160))),
+                    ratatui::text::Span::styled(fire, Style::default().fg(Color::Yellow)),
+                ]))
+            }).collect();
+            let title = format!(" Reminders ({}) — Tab: Tasks ", app.reminders.len());
+            let widget = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title(title).border_style(Style::default().fg(Color::Cyan)))
+                .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black));
+            frame.render_stateful_widget(widget, body, &mut app.reminders_state);
+        }
+    }
+
+    frame.render_widget(
+        Paragraph::new("j/k: move  Tab: switch list  a: add  e: edit  d: delete  q: back  ?: help")
+            .style(Style::default().fg(Color::Cyan)),
         footer_area,
     );
 }

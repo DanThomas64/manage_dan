@@ -58,8 +58,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         todo::get_summary(),
         lists::stats(),
     );
-    let recurring_total = todo::recurring::load_config().len();
-    let recurring_today = todo::recurring::due_today().len();
+    // One-time import of the old TOML-file recurring tasks/reminders into
+    // the DB — no-ops once either table already has rows.
+    if let Err(e) = todo::recurring::migrate_from_toml_if_empty().await {
+        error!("Failed to migrate recurring.toml into the DB: {}", e);
+    }
+    if let Err(e) = todo::reminders::migrate_from_toml_if_empty().await {
+        error!("Failed to migrate reminders.toml into the DB: {}", e);
+    }
+
+    let recurring_total = todo::recurring::load_config().await.map(|v| v.len()).unwrap_or(0);
+    let recurring_today = todo::recurring::due_today().await.map(|v| v.len()).unwrap_or(0);
 
     let version = env!("CARGO_PKG_VERSION");
     let now = chrono::Local::now();
@@ -140,6 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interval = AppConfig::get().monitor_interval_secs;
     tokio::spawn(todo::monitor::run(interval));
     tokio::spawn(notes::monitor::run(interval));
+    tokio::spawn(todo::reminder_monitor::run(interval));
 
     // 5c. Print recurring task tickets and the daily summary at startup
     //     (each skipped if already printed today), then schedule the daily run.

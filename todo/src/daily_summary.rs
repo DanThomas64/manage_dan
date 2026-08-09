@@ -174,7 +174,10 @@ pub async fn print_summary(level: SummaryLevel) {
     }
 
     // --- Recurring tasks due today ---
-    let recurring = crate::recurring::due_today();
+    let recurring = crate::recurring::due_today().await.unwrap_or_else(|e| {
+        warn!("Failed to load recurring tasks for daily summary: {}", e);
+        Vec::new()
+    });
     lines.push(String::new());
     lines.push(format!("RECURRING TODAY ({}):", recurring.len()));
     if recurring.is_empty() {
@@ -186,7 +189,10 @@ pub async fn print_summary(level: SummaryLevel) {
     }
 
     // --- Reminders today ---
-    let cfg_reminders = crate::reminders::config_due_today();
+    let cfg_reminders = crate::reminders::config_due_today().await.unwrap_or_else(|e| {
+        warn!("Failed to load reminders for daily summary: {}", e);
+        Vec::new()
+    });
     let todo_reminders = crate::reminders::todo_due_today(&items);
     let total_reminders = cfg_reminders.len() + todo_reminders.len();
     lines.push(String::new());
