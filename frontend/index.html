@@ -4852,7 +4852,28 @@ A category's overall budget cap is the sum of its allocations — split it acros
   });
 
   // ── Start ──────────────────────────────────────────────────────────────────
-  init();
+  // Best-effort: asks the browser/WebView not to evict this origin's
+  // IndexedDB cache under storage pressure (a Chromium-only, non-guaranteed
+  // hint — no persist() support, or the browser declining, both leave the
+  // cache exactly as evictable as it already was, so this is pure upside).
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (_) {}
+  // Boot-time offline resilience: every async call below is fire-and-forget
+  // (not awaited, since this section runs synchronously at script parse
+  // time) and already internally try/caught to render cached data or a
+  // graceful empty state rather than throwing — verified true for each one
+  // of these specifically (init() -> loadProjectListGroupIds/loadGroups,
+  // both cachedFetch-backed with their own try/catch; loadAppVersions/
+  // renderHomeFavourites/loadHomeReminders likewise). A resumed view (via
+  // restoreLastView() -> showView() -> that view's own *OnOpen()) reaches
+  // the same already-hardened load functions Notes/Log/Todo/Projects use
+  // everywhere else, not a separate boot-only path — so a reload while
+  // offline, resuming into any of those views, shows cached data instead of
+  // the blank-container symptom this was meant to fix. The `.catch()`s
+  // below are defense-in-depth on top of that, not the actual fix — belt
+  // and suspenders against a future internal catch being removed by
+  // accident, so a genuinely unforeseen boot error still can't cascade into
+  // an unhandled rejection that aborts the rest of this section.
+  init().catch((e) => console.error('init() failed', e));
   restoreFormState();
   const restoredViewExtra = restoreLastView();
   // Reflects the Reminders form's default kind ("once", set via the
@@ -4860,7 +4881,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // the wrap divs' own hardcoded inline `display` styles only match a
   // "daily" default, so without this the once-date field starts hidden.
   updateScheduleFields('rm');
-  loadAppVersions();
+  loadAppVersions().catch((e) => console.error('loadAppVersions() failed', e));
   setInterval(loadAppVersions, 60000);
   // Deferred, not called directly here: renderHomeFavourites() calls
   // refreshProjectsList(), which references PROJECT_API/projectsList —
@@ -4869,10 +4890,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // those later const/let bindings exist yet (the TDZ), so calling straight
   // through would throw; setTimeout(...,0) defers to after the whole script
   // has finished its first pass, once everything is actually initialized.
-  setTimeout(renderHomeFavourites, 0);
+  setTimeout(() => renderHomeFavourites().catch((e) => console.error('renderHomeFavourites() failed', e)), 0);
   // Same TDZ reasoning as renderHomeFavourites above — loadHomeReminders
   // references TODO_API, declared later in this same script.
-  setTimeout(loadHomeReminders, 0);
+  setTimeout(() => loadHomeReminders().catch((e) => console.error('loadHomeReminders() failed', e)), 0);
   initPullToRefresh(document.querySelector('.home-hero'));
 
   // ═══════════════════════════════════════════════════════════════════════════
