@@ -2769,7 +2769,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // ═══════════════════════════════════════════════════════════════════════════
 
   const OFFLINE_DB_NAME = 'manage_dan_cache';
-  const OFFLINE_DB_VERSION = 2;
+  const OFFLINE_DB_VERSION = 3;
   // Stores keyed by a plain scalar `id` — consulted by the generic
   // remapTempId() sweep when a queued create syncs. `notes` is deliberately
   // NOT here — its local key is a composite notebook/folder/nb_id tuple (see
@@ -2818,6 +2818,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
         ensure('notebooks', { keyPath: 'name' });
         // Log entries have no id at all server-side — keyed by date+time.
         ensure('log_entries', { keyPath: '_key' });
+        // Projects: the list row and the /detail aggregate (todos/notes/
+        // logs/lists for one project) are cached separately — project ids
+        // are plain scalars, no composite-key concerns here.
+        ensure('projects', { keyPath: 'id' });
+        ensure('project_detail', { keyPath: 'id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -3016,6 +3021,24 @@ A category's overall budget cap is the sum of its allocations — split it acros
       pattern: /^\/api\/v1\/notes\/([^/]+)$/,
       mirror: (data) => idbPut('notes', Object.assign({}, data, { _key: noteKey(data.notebook, data.folder, data.nb_id) })),
       read: (m, query) => idbGet('notes', noteKey(query.get('notebook') || 'home', query.get('folder') || '', idParam(m[1]))).then(stripKey),
+    },
+    // ── Projects. create/archive/restore/permanent-delete stay online-only
+    // (real server-side data migrations — nb notebook + lists group +
+    // zip/unzip a folder — not replayable record writes), so only the list
+    // and the /detail aggregate need a read route.
+    {
+      pattern: /^\/api\/v1\/project$/,
+      mirror: (data) => replaceStore('projects', data),
+      read: () => idbGetAll('projects'),
+    },
+    {
+      // Cache-latest-response for the whole aggregate blob, same idiom as
+      // every other GET route — not a client-side re-join of the
+      // already-cached todos/notes/lists, since ProjectDetail's own
+      // rendering already tolerates a partial/best-effort payload shape.
+      pattern: /^\/api\/v1\/project\/([^/]+)\/detail$/,
+      mirror: (data, m) => idbPut('project_detail', Object.assign({}, data, { id: idParam(m[1]) })),
+      read: (m) => idbGet('project_detail', idParam(m[1])),
     },
   ];
 
@@ -3266,6 +3289,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
         await idbPut('log_entries', rec);
         return null;
       },
+    },
+    // ── Projects. Only the two trivial toggles — create/archive/restore/
+    // permanent-delete stay on plain fetch() (see the GET_ROUTES note above).
+    {
+      method: 'PATCH', pattern: /^\/api\/v1\/project\/([^/]+)\/favourite$/, creates: false,
+      handler: async (m, body) => patchRecord('projects', idParam(m[1]), { favourite: body.favourite }),
+    },
+    {
+      method: 'PATCH', pattern: /^\/api\/v1\/project\/([^/]+)\/icon$/, creates: false,
+      handler: async (m, body) => patchRecord('projects', idParam(m[1]), { icon: body.icon }),
     },
   ];
 
@@ -7087,7 +7120,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // triggered by any one of them benefits the others too, instead of each
   // maintaining its own separate fetch+parse of the same endpoint.
   async function refreshProjectsList() {
-    const r = await fetch(PROJECT_API);
+    const r = await cachedFetch(PROJECT_API);
     if (!r.ok) throw new Error('failed to fetch projects');
     projectsList = await r.json();
     projectsLoaded = true;
@@ -7133,7 +7166,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function toggleProjectFavourite(id, favourite) {
     try {
-      const r = await fetch(`${PROJECT_API}/${id}/favourite`, {
+      const r = await cachedFetch(`${PROJECT_API}/${id}/favourite`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({favourite}),
@@ -7152,7 +7185,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const icon = prompt('Emoji for this project\'s Home tile (leave blank to reset):', current || '');
     if (icon === null) return;
     try {
-      const r = await fetch(`${PROJECT_API}/${id}/icon`, {
+      const r = await cachedFetch(`${PROJECT_API}/${id}/icon`, {
         method: 'PATCH',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({icon: icon.trim() || null}),
@@ -7326,7 +7359,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       // /detail already returns the full project row (including
       // archived_at) alongside its todos/notes/logs/lists — no need for a
       // separate fetch just to check archive state first.
-      const r = await fetch(PROJECT_API + '/' + id + '/detail');
+      const r = await cachedFetch(PROJECT_API + '/' + id + '/detail');
       if (!r.ok) throw 0;
       detail = await r.json();
     } catch (_) {
