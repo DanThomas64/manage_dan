@@ -42,9 +42,13 @@ class MainActivity : AppCompatActivity() {
     // Last-successfully-loaded copy of the SPA shell (index.html), served by
     // shouldInterceptRequest below when the live server can't be reached —
     // this is what makes a fully offline cold start (app launched with zero
-    // connectivity) still show the app instead of a blank error page. Only
-    // the shell itself is cached here; Lists/Todo *data* offline caching is
-    // a separate IndexedDB-based layer inside the page's own JS.
+    // connectivity, but that's had at least one successful online load
+    // since) still show the app instead of a blank error page. A brand-new
+    // install with zero connectivity *ever* falls back further, to the
+    // build-time snapshot bundled at assets/bundled_shell.html (see
+    // shouldInterceptRequest). Only the shell itself is cached/bundled here;
+    // Lists/Todo/Notes/Log/Projects *data* offline caching is a separate
+    // IndexedDB-based layer inside the page's own JS.
     private val shellCacheFile by lazy { File(filesDir, "cached_shell.html") }
 
     /** Exposed to JavaScript as `window.AndroidVibrator`. */
@@ -150,7 +154,26 @@ class MainActivity : AppCompatActivity() {
                     if (shellCacheFile.exists()) {
                         WebResourceResponse("text/html", "UTF-8", FileInputStream(shellCacheFile))
                     } else {
-                        null
+                        // Last-resort fallback: a build-time snapshot of the
+                        // SPA bundled into the APK itself (assets/bundled_shell.html,
+                        // kept in sync by deploy-frontend.sh). Guarantees a
+                        // brand-new install works offline from the very first
+                        // launch, before shellCacheFile has ever been written —
+                        // without this, that specific case fell all the way
+                        // through to onReceivedError's static "Cannot reach
+                        // server" page instead of the real app. Same "respond
+                        // to a request for configuredUrl with different bytes"
+                        // trick as shellCacheFile above, so the page's origin
+                        // stays the real server — relative fetch('/api/v1/...')
+                        // calls and any auth cookie still resolve correctly.
+                        // May reference a CDN script (marked.js, for Notes
+                        // markdown rendering) that hasn't loaded yet on a
+                        // never-been-online install — accepted, not solved here.
+                        try {
+                            WebResourceResponse("text/html", "UTF-8", assets.open("bundled_shell.html"))
+                        } catch (e2: IOException) {
+                            null
+                        }
                     }
                 }
             }
