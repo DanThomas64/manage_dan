@@ -3048,26 +3048,41 @@ A category's overall budget cap is the sum of its allocations — split it acros
     },
   ];
 
+  // Splits a fetch URL into its path and parsed query string once, so route
+  // patterns only ever match against the path — needed because Notes' routes
+  // (added in a later phase) carry `?notebook=&folder=`, unlike every
+  // existing Lists/Todo route, which never has a query string to begin with
+  // (so this split is a no-op for them).
+  function splitUrl(url) {
+    const i = url.indexOf('?');
+    return {
+      path: i === -1 ? url : url.slice(0, i),
+      query: new URLSearchParams(i === -1 ? '' : url.slice(i + 1)),
+    };
+  }
+
   function findGetRoute(url) {
+    const { path, query } = splitUrl(url);
     for (const route of GET_ROUTES) {
-      const m = route.pattern.exec(url);
-      if (m) return { route, m };
+      const m = route.pattern.exec(path);
+      if (m) return { route, m, query };
     }
     return null;
   }
 
   function findWriteRoute(method, url) {
+    const { path, query } = splitUrl(url);
     for (const route of WRITE_ROUTES) {
       if (route.method !== method) continue;
-      const m = route.pattern.exec(url);
-      if (m) return { route, m };
+      const m = route.pattern.exec(path);
+      if (m) return { route, m, query };
     }
     return null;
   }
 
   function mirrorGet(url, data) {
     const found = findGetRoute(url);
-    if (found) found.route.mirror(data, found.m);
+    if (found) found.route.mirror(data, found.m, found.query);
   }
 
   function jsonResponse(body) {
@@ -3146,8 +3161,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
           if (entry.tempId) {
             let real = null;
             try { real = await res.clone().json(); } catch (e) { /* no body */ }
-            const realId = real && real.id != null ? real.id : null;
-            if (realId != null) await remapTempId(entry.tempId, realId, real);
+            // Routes whose local record isn't keyed by a plain scalar `id`
+            // (e.g. Notes' composite notebook/folder/nb_id key, added in a
+            // later phase) supply their own `getRealId`/`remap` on the
+            // matched WRITE_ROUTES entry; every existing route falls back to
+            // the original scalar-id behavior unchanged.
+            const found = findWriteRoute(entry.method, entry.url);
+            const getRealId = (found && found.route.getRealId) || ((r) => (r && r.id != null ? r.id : null));
+            const remapFn = (found && found.route.remap) || remapTempId;
+            const realId = getRealId(real);
+            if (realId != null) await remapFn(entry.tempId, realId, real);
           }
         } else {
           toast('A queued offline change could not be synced and was discarded', true);
@@ -3176,7 +3199,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
         const found = findGetRoute(url);
         if (!found) throw e;
         showOfflineBanner();
-        const data = await found.route.read(found.m);
+        const data = await found.route.read(found.m, found.query);
         return jsonResponse(data);
       }
     }
@@ -3190,7 +3213,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       if (!found) throw e;
       showOfflineBanner();
       const body = options.body ? JSON.parse(options.body) : null;
-      const record = await found.route.handler(found.m, body);
+      const record = await found.route.handler(found.m, body, found.query);
       await idbPut('write_queue', {
         method, url, body: options.body || null,
         tempId: found.route.creates && record ? record.id : undefined,
