@@ -2970,6 +2970,18 @@ A category's overall budget cap is the sum of its allocations — split it acros
       mirror: (data) => replaceStore('todos', data),
       read: () => idbGetAll('todos'),
     },
+    // Single-todo GET — was previously missing entirely, which silently
+    // broke todoToggleSubtaskInForm's post-PATCH refresh offline (the PATCH
+    // itself succeeded via the subtasks WRITE_ROUTES entry below, but this
+    // GET then threw with no cache fallback, showing a false failure toast).
+    // NOTE: any future literal-path GET route added under /api/v1/todo/*
+    // (e.g. recurring/reminders in a later phase) must be listed BEFORE this
+    // one — same ordering requirement as Notes' literal-path routes above.
+    {
+      pattern: /^\/api\/v1\/todo\/([^/]+)$/,
+      mirror: (data) => idbPut('todos', data),
+      read: (m) => idbGet('todos', idParam(m[1])),
+    },
     // ── Notes/Log. Literal-path routes (daily, folders, folder-tree) MUST
     // come before the generic single-note route below — they're single path
     // segments too ("daily", "folders", ...) and would otherwise be shadowed
@@ -3174,6 +3186,23 @@ A category's overall budget cap is the sum of its allocations — split it acros
     {
       method: 'DELETE', pattern: /^\/api\/v1\/todo\/([^/]+)$/, creates: false,
       handler: async (m) => { await idbDelete('todos', idParam(m[1])); return null; },
+    },
+    {
+      // Real endpoint returns 204 No Content — this route is `creates:
+      // false` so the synthetic response body here is never parsed by
+      // flushWriteQueue's replay logic either, only ever by the immediate
+      // caller (todoToggleSubtask/todoToggleSubtaskInForm), which only
+      // checks r.ok.
+      method: 'PATCH', pattern: /^\/api\/v1\/todo\/([^/]+)\/subtasks\/([^/]+)$/, creates: false,
+      handler: async (m, body) => {
+        const rec = await idbGet('todos', idParam(m[1]));
+        if (!rec) return null;
+        const subtaskId = idParam(m[2]);
+        const subtasks = (rec.subtasks || []).map((s) => (s.id === subtaskId ? Object.assign({}, s, { done: body.done }) : s));
+        const merged = Object.assign({}, rec, { subtasks });
+        await idbPut('todos', merged);
+        return merged;
+      },
     },
     // ── Notes/Log. `getLocalId`/`getRealId`/`remap` override the generic
     // scalar-`id` defaults (see the Phase 0 generalization above) since a
