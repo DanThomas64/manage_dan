@@ -72,6 +72,12 @@ echo "Deploying frontend..."
 sudo mkdir -p /var/www/manage_dan
 sudo install -m 644 "$PROJECT_DIR/frontend/index.html" /var/www/manage_dan/index.html
 
+# Keep the Android app's build-time offline-fallback snapshot in sync too —
+# see deploy-frontend.sh's matching step for why.
+ANDROID_ASSET_DIR="$PROJECT_DIR/android/app/src/main/assets"
+mkdir -p "$ANDROID_ASSET_DIR"
+cp "$PROJECT_DIR/frontend/index.html" "$ANDROID_ASSET_DIR/bundled_shell.html"
+
 sudo tee /etc/nginx/conf.d/manage_dan.conf > /dev/null << 'EOF'
 server {
     listen 80;
