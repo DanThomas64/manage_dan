@@ -2755,17 +2755,25 @@ A category's overall budget cap is the sum of its allocations — split it acros
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // OFFLINE CACHE (IndexedDB) — Lists, Todo, Notes & Log. Finances is
-  // excluded — its balances/projections are computed live by hledger
-  // server-side, not a cacheable record.
+  // OFFLINE CACHE (IndexedDB) — Lists, Todo (+ subtasks/recurring/
+  // reminders), Notes, Log, and Projects (list/detail/favourite/icon only —
+  // create/archive/restore/delete stay online-only, see their WRITE_ROUTES
+  // comment). Finances is excluded — its balances/projections are computed
+  // live by hledger server-side, not a cacheable record.
   //
-  // Every Lists/Todo/Notes/Log fetch() call below goes through cachedFetch()
+  // Every fetch() call for those domains below goes through cachedFetch()
   // instead of calling fetch() directly. On a GET, a network failure (not an
   // HTTP error status — only a real connectivity failure) falls back to the
   // last-synced copy in IndexedDB. On a mutation (POST/PUT/PATCH/DELETE), a
   // network failure applies the change optimistically to the cached copy and
   // queues it for replay once connectivity returns, so offline edits aren't
-  // lost.
+  // lost. Todo's and Notes' full-body-edit (PUT) routes additionally opt
+  // into version-check-at-reconnect (see flushWriteQueue's versionCheck
+  // handling) — a queued edit is only blindly replayed if the item's live
+  // updated_at still matches what it was when the edit began; a mismatch
+  // (something else changed it meanwhile) prompts instead of silently
+  // overwriting. Small single-field toggles (done, priority, favourite,
+  // subtask ticks, ...) stay last-write-wins, same as before.
   // ═══════════════════════════════════════════════════════════════════════════
 
   const OFFLINE_DB_NAME = 'manage_dan_cache';
@@ -3205,7 +3213,19 @@ A category's overall budget cap is the sum of its allocations — split it acros
       },
     },
     {
+      // Full-body edit (title/description/etc, not a small single-field
+      // toggle) — opts into version-check-at-reconnect (see
+      // flushWriteQueue's versionCheck handling) since this is where a real
+      // offline/online collision would actually lose meaningful content,
+      // unlike e.g. /done or /subtasks/:id which stay last-write-wins.
       method: 'PUT', pattern: /^\/api\/v1\/todo\/([^/]+)$/, creates: false,
+      conflictCheck: {
+        captureVersion: async (m) => {
+          const rec = await idbGet('todos', idParam(m[1]));
+          return rec ? rec.updated_at : null;
+        },
+        liveUrl: (m) => `/api/v1/todo/${m[1]}`,
+      },
       handler: async (m, body) => {
         const rec = Object.assign({}, body, { id: idParam(m[1]) });
         await idbPut('todos', rec);
@@ -3371,7 +3391,16 @@ A category's overall budget cap is the sum of its allocations — split it acros
       },
     },
     {
+      // Full-body edit — opts into version-check-at-reconnect, same
+      // reasoning as Todo's own PUT route above.
       method: 'PUT', pattern: /^\/api\/v1\/notes\/([^/]+)$/, creates: false,
+      conflictCheck: {
+        captureVersion: async (m, query) => {
+          const rec = await idbGet('notes', noteKey(query.get('notebook') || 'home', query.get('folder') || '', idParam(m[1])));
+          return rec ? rec.updated_at : null;
+        },
+        liveUrl: (m, query) => `/api/v1/notes/${m[1]}?notebook=${encodeURIComponent(query.get('notebook') || 'home')}&folder=${encodeURIComponent(query.get('folder') || '')}`,
+      },
       handler: async (m, body, query) => {
         const key = noteKey(query.get('notebook') || 'home', query.get('folder') || '', idParam(m[1]));
         const rec = await idbGet('notes', key);
@@ -3519,6 +3548,27 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // — once the create syncs and the server hands back a real id, patch the
   // cached record and rewrite any still-queued entries pointing at the old
   // temp id so they target the real one when their turn comes.
+  // Shared by remapTempId/remapNoteTempId below: rewrites every queued
+  // entry's url/body (and, if present, its versionCheck.liveUrl — a
+  // pre-computed string baked in at enqueue time, so it needs the same
+  // substitution or a still-queued conflict-checked edit on a just-synced
+  // create would live-check against a URL still containing the dead temp
+  // id, always missing/404ing and reading as a false conflict).
+  async function rewriteQueueTempId(tempIdStr, realIdStr) {
+    const queue = await idbGetAll('write_queue');
+    for (const entry of queue) {
+      const urlHit = entry.url.includes(tempIdStr);
+      const bodyHit = entry.body && entry.body.includes(tempIdStr);
+      const liveUrlHit = entry.versionCheck && entry.versionCheck.liveUrl && entry.versionCheck.liveUrl.includes(tempIdStr);
+      if (urlHit || bodyHit || liveUrlHit) {
+        if (urlHit) entry.url = entry.url.split(tempIdStr).join(realIdStr);
+        if (bodyHit) entry.body = entry.body.split(tempIdStr).join(realIdStr);
+        if (liveUrlHit) entry.versionCheck.liveUrl = entry.versionCheck.liveUrl.split(tempIdStr).join(realIdStr);
+        await idbPut('write_queue', entry);
+      }
+    }
+  }
+
   async function remapTempId(tempId_, realId, freshRecord) {
     for (const store of OFFLINE_STORES) {
       const rec = await idbGet(store, tempId_);
@@ -3528,16 +3578,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
         break;
       }
     }
-    const queue = await idbGetAll('write_queue');
-    for (const entry of queue) {
-      const urlHit = entry.url.includes(tempId_);
-      const bodyHit = entry.body && entry.body.includes(tempId_);
-      if (urlHit || bodyHit) {
-        if (urlHit) entry.url = entry.url.split(tempId_).join(realId);
-        if (bodyHit) entry.body = entry.body.split(tempId_).join(realId);
-        await idbPut('write_queue', entry);
-      }
-    }
+    await rewriteQueueTempId(tempId_, realId);
   }
 
   // Notes' equivalent of remapTempId() above, for its composite _key instead
@@ -3568,16 +3609,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       });
       await idbPut('notes', merged);
     }
-    const queue = await idbGetAll('write_queue');
-    for (const entry of queue) {
-      const urlHit = entry.url.includes(tempNbId);
-      const bodyHit = entry.body && entry.body.includes(tempNbId);
-      if (urlHit || bodyHit) {
-        if (urlHit) entry.url = entry.url.split(tempNbId).join(realNbId);
-        if (bodyHit) entry.body = entry.body.split(tempNbId).join(realNbId);
-        await idbPut('write_queue', entry);
-      }
-    }
+    await rewriteQueueTempId(tempNbId, realNbId);
   }
 
   async function flushWriteQueue() {
@@ -3586,6 +3618,41 @@ A category's overall budget cap is the sum of its allocations — split it acros
     try {
       const queue = (await idbGetAll('write_queue')).sort((a, b) => a.qid - b.qid);
       for (const entry of queue) {
+        // Version-check-at-reconnect (Todo/Notes full-body edits only, see
+        // conflictCheck on their WRITE_ROUTES entries): before blindly
+        // replaying an offline edit, confirm the item's live server
+        // updated_at still matches what it was when the edit started. A
+        // match means nothing else touched it in the meantime — safe to
+        // overwrite, the common case for a single-user app. A mismatch
+        // means something else changed it (or deleted it, on a 404) while
+        // this was queued — ask rather than silently clobbering.
+        if (entry.versionCheck) {
+          let liveVersion;
+          try {
+            const liveRes = await fetch(entry.versionCheck.liveUrl);
+            if (liveRes.ok) {
+              liveVersion = (await liveRes.json()).updated_at;
+            } else if (liveRes.status === 404) {
+              liveVersion = null; // deleted/moved elsewhere since the offline edit began
+            } else {
+              break; // unexpected server error — treat like still offline, retry next flush
+            }
+          } catch (e) {
+            break; // still offline — stop, preserve order, retry on next flush
+          }
+          if (liveVersion !== entry.versionCheck.expected) {
+            const keepMine = confirm(
+              'This item changed elsewhere since your offline edit.\n\n' +
+              'OK = keep your offline change (overwrite the other one)\n' +
+              'Cancel = discard your offline change (keep the other version)'
+            );
+            if (!keepMine) {
+              await idbDelete('write_queue', entry.qid);
+              continue;
+            }
+            // else: fall through and replay as normal, overwriting the live version.
+          }
+        }
         let res;
         try {
           res = await fetch(entry.url, {
@@ -3662,6 +3729,14 @@ A category's overall budget cap is the sum of its allocations — split it acros
       if (!found) throw e;
       showOfflineBanner();
       const body = options.body ? JSON.parse(options.body) : null;
+      // Capture the record's currently-cached version *before* the handler
+      // below overwrites it — this is what flushWriteQueue compares against
+      // the live server value at reconnect time (see versionCheck there).
+      // Only full-body-edit routes (Todo/Notes PUT) opt into this; small
+      // single-field toggles stay last-write-wins as before.
+      const priorVersion = found.route.conflictCheck
+        ? await found.route.conflictCheck.captureVersion(found.m, found.query)
+        : null;
       const record = await found.route.handler(found.m, body, found.query);
       // getLocalId defaults to the scalar `id` every pre-existing route uses;
       // Notes' create routes override it since their local record is keyed
@@ -3670,6 +3745,9 @@ A category's overall budget cap is the sum of its allocations — split it acros
       await idbPut('write_queue', {
         method, url, body: options.body || null,
         tempId: found.route.creates && record ? getLocalId(record) : undefined,
+        versionCheck: (found.route.conflictCheck && priorVersion != null)
+          ? { expected: priorVersion, liveUrl: found.route.conflictCheck.liveUrl(found.m, found.query) }
+          : undefined,
       });
       return jsonResponse(record);
     }
