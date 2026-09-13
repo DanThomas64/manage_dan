@@ -2769,13 +2769,15 @@ A category's overall budget cap is the sum of its allocations — split it acros
   // ═══════════════════════════════════════════════════════════════════════════
 
   const OFFLINE_DB_NAME = 'manage_dan_cache';
-  const OFFLINE_DB_VERSION = 3;
+  const OFFLINE_DB_VERSION = 4;
   // Stores keyed by a plain scalar `id` — consulted by the generic
   // remapTempId() sweep when a queued create syncs. `notes` is deliberately
   // NOT here — its local key is a composite notebook/folder/nb_id tuple (see
   // noteKey()), so it has its own remapNoteTempId() instead; folding it into
-  // this generic sweep would corrupt that key.
-  const OFFLINE_STORES = ['todos', 'list_groups', 'list_categories', 'list_items', 'list_common_items'];
+  // this generic sweep would corrupt that key. `todo_recurring`/
+  // `todo_reminders` create endpoints return a plain `{id}` like Lists/Todo
+  // already do, so they fit the generic sweep fine.
+  const OFFLINE_STORES = ['todos', 'list_groups', 'list_categories', 'list_items', 'list_common_items', 'todo_recurring', 'todo_reminders'];
   let _offlineDbPromise = null;
   let offlineMode = false;
   let _reachabilityTimer = null;
@@ -2823,6 +2825,15 @@ A category's overall budget cap is the sum of its allocations — split it acros
         // are plain scalars, no composite-key concerns here.
         ensure('projects', { keyPath: 'id' });
         ensure('project_detail', { keyPath: 'id' });
+        // Recurring tasks/reminders: scalar id, same convention as todos.
+        ensure('todo_recurring', { keyPath: 'id' });
+        ensure('todo_reminders', { keyPath: 'id' });
+        // Occurrence snapshots — the frontend only ever fetches "today"
+        // (never sends ?as_of=), so each store only ever holds one snapshot
+        // per task/reminder, keyed by the server's own task_id/reminder_id
+        // field name directly rather than a renamed/composite key.
+        ensure('todo_recurring_occurrences', { keyPath: 'task_id' });
+        ensure('todo_reminder_occurrences', { keyPath: 'reminder_id' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -2970,13 +2981,37 @@ A category's overall budget cap is the sum of its allocations — split it acros
       mirror: (data) => replaceStore('todos', data),
       read: () => idbGetAll('todos'),
     },
+    // Recurring tasks/reminders — literal-path routes, must come before the
+    // generic single-todo GET below (same ordering requirement as Notes'
+    // literal-path routes above — "recurring"/"reminders" are single path
+    // segments too and would otherwise be shadowed).
+    {
+      pattern: /^\/api\/v1\/todo\/recurring$/,
+      mirror: (data) => replaceStore('todo_recurring', data),
+      read: () => idbGetAll('todo_recurring'),
+    },
+    {
+      pattern: /^\/api\/v1\/todo\/recurring\/occurrences$/,
+      mirror: (data) => replaceStore('todo_recurring_occurrences', data),
+      read: () => idbGetAll('todo_recurring_occurrences'),
+    },
+    {
+      pattern: /^\/api\/v1\/todo\/reminders$/,
+      mirror: (data) => replaceStore('todo_reminders', data),
+      read: () => idbGetAll('todo_reminders'),
+    },
+    {
+      pattern: /^\/api\/v1\/todo\/reminders\/occurrences$/,
+      mirror: (data) => replaceStore('todo_reminder_occurrences', data),
+      read: () => idbGetAll('todo_reminder_occurrences'),
+    },
     // Single-todo GET — was previously missing entirely, which silently
     // broke todoToggleSubtaskInForm's post-PATCH refresh offline (the PATCH
     // itself succeeded via the subtasks WRITE_ROUTES entry below, but this
     // GET then threw with no cache fallback, showing a false failure toast).
-    // NOTE: any future literal-path GET route added under /api/v1/todo/*
-    // (e.g. recurring/reminders in a later phase) must be listed BEFORE this
-    // one — same ordering requirement as Notes' literal-path routes above.
+    // Must stay LAST among /api/v1/todo/* GET routes — every literal-path
+    // route above is a single path segment too and would otherwise be
+    // shadowed by this one, since findGetRoute returns the first match.
     {
       pattern: /^\/api\/v1\/todo\/([^/]+)$/,
       mirror: (data) => idbPut('todos', data),
@@ -3201,6 +3236,89 @@ A category's overall budget cap is the sum of its allocations — split it acros
         const subtasks = (rec.subtasks || []).map((s) => (s.id === subtaskId ? Object.assign({}, s, { done: body.done }) : s));
         const merged = Object.assign({}, rec, { subtasks });
         await idbPut('todos', merged);
+        return merged;
+      },
+    },
+    // ── Recurring tasks/reminders. Create routes return a plain `{id}`
+    // (same convention as Lists/Todo's own creates), so all four use the
+    // generic scalar-id remap defaults — no getLocalId/getRealId/remap
+    // overrides needed, unlike Notes.
+    {
+      method: 'POST', pattern: /^\/api\/v1\/todo\/recurring$/, creates: true,
+      handler: async (m, body) => {
+        const rec = Object.assign({}, body, { id: tempId() });
+        await idbPut('todo_recurring', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'PUT', pattern: /^\/api\/v1\/todo\/recurring\/([^/]+)$/, creates: false,
+      handler: async (m, body) => {
+        const rec = Object.assign({}, body, { id: idParam(m[1]) });
+        await idbPut('todo_recurring', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'DELETE', pattern: /^\/api\/v1\/todo\/recurring\/([^/]+)$/, creates: false,
+      handler: async (m) => {
+        const id = idParam(m[1]);
+        await idbDelete('todo_recurring', id);
+        // Mirrors the real endpoint's own cascade delete of occurrence rows.
+        await idbDelete('todo_recurring_occurrences', id);
+        return null;
+      },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/todo\/recurring\/([^/]+)\/done$/, creates: false,
+      handler: async (m, body) => {
+        const rec = {
+          task_id: idParam(m[1]), occurrence_date: body.date,
+          done: !!body.done, done_at: body.done ? new Date().toISOString() : null,
+        };
+        await idbPut('todo_recurring_occurrences', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/todo\/reminders$/, creates: true,
+      handler: async (m, body) => {
+        const rec = Object.assign({}, body, { id: tempId() });
+        await idbPut('todo_reminders', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'PUT', pattern: /^\/api\/v1\/todo\/reminders\/([^/]+)$/, creates: false,
+      handler: async (m, body) => {
+        const rec = Object.assign({}, body, { id: idParam(m[1]) });
+        await idbPut('todo_reminders', rec);
+        return rec;
+      },
+    },
+    {
+      method: 'DELETE', pattern: /^\/api\/v1\/todo\/reminders\/([^/]+)$/, creates: false,
+      handler: async (m) => {
+        const id = idParam(m[1]);
+        await idbDelete('todo_reminders', id);
+        await idbDelete('todo_reminder_occurrences', id);
+        return null;
+      },
+    },
+    {
+      // Dismiss/snooze only ever patch acknowledged/snoozed_until — merge
+      // onto whatever's already cached (fired_at/title) rather than
+      // overwriting, so a badge that depended on fired_at doesn't lose it.
+      method: 'POST', pattern: /^\/api\/v1\/todo\/reminders\/([^/]+)\/occurrences$/, creates: false,
+      handler: async (m, body) => {
+        const id = idParam(m[1]);
+        const existing = await idbGet('todo_reminder_occurrences', id);
+        const merged = Object.assign(
+          { reminder_id: id, title: '', fired_at: null },
+          existing || {},
+          { occurrence_date: body.date, acknowledged: !!body.acknowledged, snoozed_until: body.snoozed_until || null },
+        );
+        await idbPut('todo_reminder_occurrences', merged);
         return merged;
       },
     },
@@ -6100,7 +6218,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function loadRecurringTasks() {
     try {
-      const r = await fetch(`${TODO_API}/recurring`);
+      const r = await cachedFetch(`${TODO_API}/recurring`);
       if (!r.ok) throw 0;
       recurringTasks = await r.json();
       renderRecurringTaskList();
@@ -6115,7 +6233,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function loadRecurringTaskOccurrences() {
     try {
-      const r = await fetch(`${TODO_API}/recurring/occurrences`);
+      const r = await cachedFetch(`${TODO_API}/recurring/occurrences`);
       if (!r.ok) throw 0;
       const rows = await r.json();
       recurringTaskOccurrenceStatus = {};
@@ -6127,7 +6245,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   async function toggleRecurringTaskDone(id, done) {
     const date = formatDateLocal(new Date());
     try {
-      const r = await fetch(`${TODO_API}/recurring/${id}/done`, {
+      const r = await cachedFetch(`${TODO_API}/recurring/${id}/done`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date, done }),
@@ -6261,7 +6379,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     };
     const editing = recurringTaskEditingId !== null;
     try {
-      const r = await fetch(`${TODO_API}/recurring${editing ? '/' + recurringTaskEditingId : ''}`, {
+      const r = await cachedFetch(`${TODO_API}/recurring${editing ? '/' + recurringTaskEditingId : ''}`, {
         method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -6279,7 +6397,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const task = recurringTasks.find(t => t.id === id);
     if (!confirm(`Permanently delete recurring task "${task ? task.title : ''}"?\n\nThis cannot be undone.`)) return;
     try {
-      const r = await fetch(`${TODO_API}/recurring/${id}`, { method: 'DELETE' });
+      const r = await cachedFetch(`${TODO_API}/recurring/${id}`, { method: 'DELETE' });
       if (!r.ok) throw 0;
       loadRecurringTasks();
     } catch (_) {
@@ -6294,7 +6412,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function loadReminders() {
     try {
-      const r = await fetch(`${TODO_API}/reminders`);
+      const r = await cachedFetch(`${TODO_API}/reminders`);
       if (!r.ok) throw 0;
       reminderList = await r.json();
       renderReminderList();
@@ -6382,7 +6500,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     };
     const editing = reminderEditingId !== null;
     try {
-      const r = await fetch(`${TODO_API}/reminders${editing ? '/' + reminderEditingId : ''}`, {
+      const r = await cachedFetch(`${TODO_API}/reminders${editing ? '/' + reminderEditingId : ''}`, {
         method: editing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -6400,7 +6518,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const reminder = reminderList.find(r => r.id === id);
     if (!confirm(`Permanently delete reminder "${reminder ? reminder.title : ''}"?\n\nThis cannot be undone.`)) return;
     try {
-      const r = await fetch(`${TODO_API}/reminders/${id}`, { method: 'DELETE' });
+      const r = await cachedFetch(`${TODO_API}/reminders/${id}`, { method: 'DELETE' });
       if (!r.ok) throw 0;
       loadReminders();
       loadTodayReminders();
@@ -6419,7 +6537,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function loadTodayReminders() {
     try {
-      const r = await fetch(`${TODO_API}/reminders/occurrences`);
+      const r = await cachedFetch(`${TODO_API}/reminders/occurrences`);
       if (!r.ok) throw 0;
       const summaries = await r.json();
       reminderOccurrenceStatus = {};
@@ -6452,7 +6570,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function dismissReminder(id, date) {
     try {
-      const r = await fetch(`${TODO_API}/reminders/${id}/occurrences`, {
+      const r = await cachedFetch(`${TODO_API}/reminders/${id}/occurrences`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date, acknowledged: true }),
@@ -6468,7 +6586,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   async function snoozeReminder(id, date, minutes) {
     const snoozedUntil = new Date(Date.now() + minutes * 60000).toISOString();
     try {
-      const r = await fetch(`${TODO_API}/reminders/${id}/occurrences`, {
+      const r = await cachedFetch(`${TODO_API}/reminders/${id}/occurrences`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date, acknowledged: false, snoozed_until: snoozedUntil }),
@@ -6497,7 +6615,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function loadHomeReminders() {
     try {
-      const r = await fetch(`${TODO_API}/reminders/occurrences`);
+      const r = await cachedFetch(`${TODO_API}/reminders/occurrences`);
       if (!r.ok) throw 0;
       const summaries = await r.json();
       renderHomeReminders(summaries.filter(s => s.fired_at && !s.acknowledged));
