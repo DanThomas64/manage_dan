@@ -2755,18 +2755,26 @@ A category's overall budget cap is the sum of its allocations — split it acros
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // OFFLINE CACHE (IndexedDB) — Lists & Todo only, not Notes/Log/Projects.
+  // OFFLINE CACHE (IndexedDB) — Lists, Todo, Notes & Log. Finances is
+  // excluded — its balances/projections are computed live by hledger
+  // server-side, not a cacheable record.
   //
-  // Every Lists/Todo fetch() call below goes through cachedFetch() instead of
-  // calling fetch() directly. On a GET, a network failure (not an HTTP error
-  // status — only a real connectivity failure) falls back to the last-synced
-  // copy in IndexedDB. On a mutation (POST/PUT/PATCH/DELETE), a network
-  // failure applies the change optimistically to the cached copy and queues
-  // it for replay once connectivity returns, so offline edits aren't lost.
+  // Every Lists/Todo/Notes/Log fetch() call below goes through cachedFetch()
+  // instead of calling fetch() directly. On a GET, a network failure (not an
+  // HTTP error status — only a real connectivity failure) falls back to the
+  // last-synced copy in IndexedDB. On a mutation (POST/PUT/PATCH/DELETE), a
+  // network failure applies the change optimistically to the cached copy and
+  // queues it for replay once connectivity returns, so offline edits aren't
+  // lost.
   // ═══════════════════════════════════════════════════════════════════════════
 
   const OFFLINE_DB_NAME = 'manage_dan_cache';
-  const OFFLINE_DB_VERSION = 1;
+  const OFFLINE_DB_VERSION = 2;
+  // Stores keyed by a plain scalar `id` — consulted by the generic
+  // remapTempId() sweep when a queued create syncs. `notes` is deliberately
+  // NOT here — its local key is a composite notebook/folder/nb_id tuple (see
+  // noteKey()), so it has its own remapNoteTempId() instead; folding it into
+  // this generic sweep would corrupt that key.
   const OFFLINE_STORES = ['todos', 'list_groups', 'list_categories', 'list_items', 'list_common_items'];
   let _offlineDbPromise = null;
   let offlineMode = false;
@@ -2777,14 +2785,39 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (_offlineDbPromise) return _offlineDbPromise;
     _offlineDbPromise = new Promise((resolve, reject) => {
       const req = indexedDB.open(OFFLINE_DB_NAME, OFFLINE_DB_VERSION);
+      // Every store creation is guarded by an existence check so this stays
+      // additive-only regardless of which version a given browser/WebView is
+      // upgrading from — a full db.deleteObjectStore/recreate here would
+      // silently wipe every already-cached offline edit on the next app
+      // update, which is the single most realistic self-inflicted "lost my
+      // offline data" bug this cache could have.
       req.onupgradeneeded = () => {
         const db = req.result;
-        db.createObjectStore('todos', { keyPath: 'id' });
-        db.createObjectStore('list_groups', { keyPath: 'id' });
-        db.createObjectStore('list_categories', { keyPath: 'id' }).createIndex('group_id', 'group_id');
-        db.createObjectStore('list_items', { keyPath: 'id' }).createIndex('category_id', 'category_id');
-        db.createObjectStore('list_common_items', { keyPath: 'id' }).createIndex('category_id', 'category_id');
-        db.createObjectStore('write_queue', { keyPath: 'qid', autoIncrement: true });
+        const ensure = (name, opts) => db.objectStoreNames.contains(name) ? null : db.createObjectStore(name, opts);
+        ensure('todos', { keyPath: 'id' });
+        ensure('list_groups', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('list_categories')) {
+          db.createObjectStore('list_categories', { keyPath: 'id' }).createIndex('group_id', 'group_id');
+        }
+        if (!db.objectStoreNames.contains('list_items')) {
+          db.createObjectStore('list_items', { keyPath: 'id' }).createIndex('category_id', 'category_id');
+        }
+        if (!db.objectStoreNames.contains('list_common_items')) {
+          db.createObjectStore('list_common_items', { keyPath: 'id' }).createIndex('category_id', 'category_id');
+        }
+        ensure('write_queue', { keyPath: 'qid', autoIncrement: true });
+        // Notes: keyed by a synthetic composite string, not nb_id alone —
+        // `nb` numbers notes per listing scope, so the same nb_id can exist
+        // at once in different folders/notebooks (see noteKey()).
+        if (!db.objectStoreNames.contains('notes')) {
+          db.createObjectStore('notes', { keyPath: '_key' }).createIndex('notebook', 'notebook');
+        }
+        if (!db.objectStoreNames.contains('note_folders')) {
+          db.createObjectStore('note_folders', { keyPath: '_key' }).createIndex('notebook', 'notebook');
+        }
+        ensure('notebooks', { keyPath: 'name' });
+        // Log entries have no id at all server-side — keyed by date+time.
+        ensure('log_entries', { keyPath: '_key' });
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -2854,6 +2887,24 @@ A category's overall budget cap is the sum of its allocations — split it acros
     return 'local-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
   }
 
+  // Notes' local identity is a composite (notebook, folder, nb_id) tuple, not
+  // a scalar id — `nb` numbers notes per listing scope, so the same nb_id can
+  // exist at once in different folders/notebooks (CLAUDE.md "Notes tree /
+  // subfolders"). JSON-encoding the tuple as the key (rather than joining
+  // with a plain delimiter) avoids any collision risk from a notebook/folder
+  // name that happens to contain whatever delimiter was chosen.
+  function noteKey(notebook, folder, nbId) {
+    return JSON.stringify([notebook || '', folder || '', String(nbId)]);
+  }
+
+  // Strips the internal `_key` field before handing a cached record back to
+  // app code, which never expects it.
+  function stripKey(rec) {
+    if (!rec) return rec;
+    const { _key, ...rest } = rec;
+    return rest;
+  }
+
   async function replaceStore(storeName, data) {
     await idbClear(storeName);
     for (const rec of data) await idbPut(storeName, rec);
@@ -2861,9 +2912,12 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   // Mirrors a scoped GET (e.g. one group's categories) without clobbering
   // other groups'/categories' rows already cached from earlier fetches.
-  async function replaceStoreFiltered(storeName, indexName, value, data) {
+  // `keyField` defaults to 'id' (every pre-existing caller); Notes/
+  // note_folders pass '_key' since they're keyed by a composite string.
+  async function replaceStoreFiltered(storeName, indexName, value, data, keyField) {
+    keyField = keyField || 'id';
     const existing = await idbGetAllByIndex(storeName, indexName, value);
-    for (const rec of existing) await idbDelete(storeName, rec.id);
+    for (const rec of existing) await idbDelete(storeName, rec[keyField]);
     for (const rec of data) await idbPut(storeName, rec);
   }
 
@@ -2910,6 +2964,58 @@ A category's overall budget cap is the sum of its allocations — split it acros
       pattern: /^\/api\/v1\/todo$/,
       mirror: (data) => replaceStore('todos', data),
       read: () => idbGetAll('todos'),
+    },
+    // ── Notes/Log. Literal-path routes (daily, folders, folder-tree) MUST
+    // come before the generic single-note route below — they're single path
+    // segments too ("daily", "folders", ...) and would otherwise be shadowed
+    // by it, since findGetRoute returns the first pattern match. Notes'
+    // full-text search intentionally has no route here — a live-only path,
+    // same as the server-side note_cache's own documented exclusion.
+    {
+      pattern: /^\/api\/v1\/notes\/daily$/,
+      mirror: (data) => replaceStore('log_entries', data.map(e => Object.assign({}, e, { _key: e.date + 'T' + e.time }))),
+      // Server returns most-recent-first; IndexedDB getAll() on a string
+      // keyPath returns ascending key order, so reverse to restore that.
+      read: () => idbGetAll('log_entries').then(rows => rows.slice().reverse().map(stripKey)),
+    },
+    {
+      pattern: /^\/api\/v1\/notes\/folders$/,
+      // Despite the name, this route lists *notebooks*, not subfolders
+      // (that's folder-tree, below) — see CLAUDE.md "Notes tree / subfolders".
+      mirror: (data) => replaceStore('notebooks', data.map(name => ({ name }))),
+      read: () => idbGetAll('notebooks').then(rows => rows.map(r => r.name)),
+    },
+    {
+      pattern: /^\/api\/v1\/notes\/folder-tree$/,
+      mirror: (data, m, query) => {
+        const notebook = query.get('notebook') || 'home';
+        return replaceStoreFiltered('note_folders', 'notebook', notebook,
+          data.map(path => ({ _key: JSON.stringify([notebook, path]), notebook, path })), '_key');
+      },
+      read: (m, query) => idbGetAllByIndex('note_folders', 'notebook', query.get('notebook') || 'home')
+        .then(rows => rows.map(r => r.path)),
+    },
+    {
+      pattern: /^\/api\/v1\/notes$/,
+      mirror: (data, m, query) => {
+        const notebook = query.get('notebook');
+        const withKey = data.map(n => Object.assign({}, n, { _key: noteKey(n.notebook, n.folder, n.nb_id) }));
+        return notebook
+          ? replaceStoreFiltered('notes', 'notebook', notebook, withKey, '_key')
+          : replaceStore('notes', withKey);
+      },
+      read: (m, query) => {
+        const notebook = query.get('notebook');
+        return (notebook ? idbGetAllByIndex('notes', 'notebook', notebook) : idbGetAll('notes'))
+          .then(rows => rows.map(stripKey));
+      },
+    },
+    // Generic single-note GET — must stay last among /api/v1/notes/* GET
+    // routes (see the ordering note above).
+    {
+      pattern: /^\/api\/v1\/notes\/([^/]+)$/,
+      mirror: (data) => idbPut('notes', Object.assign({}, data, { _key: noteKey(data.notebook, data.folder, data.nb_id) })),
+      read: (m, query) => idbGet('notes', noteKey(query.get('notebook') || 'home', query.get('folder') || '', idParam(m[1]))).then(stripKey),
     },
   ];
 
@@ -3046,13 +3152,127 @@ A category's overall budget cap is the sum of its allocations — split it acros
       method: 'DELETE', pattern: /^\/api\/v1\/todo\/([^/]+)$/, creates: false,
       handler: async (m) => { await idbDelete('todos', idParam(m[1])); return null; },
     },
+    // ── Notes/Log. `getLocalId`/`getRealId`/`remap` override the generic
+    // scalar-`id` defaults (see the Phase 0 generalization above) since a
+    // note's local key is composite — see noteKey()/remapNoteTempId().
+    {
+      method: 'POST', pattern: /^\/api\/v1\/notes$/, creates: true,
+      getLocalId: (r) => r && r.nb_id,
+      getRealId: (r) => (r && r.nb_id != null ? r.nb_id : null),
+      remap: remapNoteTempId,
+      handler: async (m, body) => {
+        const nbId = tempId();
+        const notebook = body.notebook || 'home';
+        const folder = (body.folder || '').trim();
+        const now = new Date().toISOString();
+        const rec = {
+          _key: noteKey(notebook, folder, nbId),
+          nb_id: nbId, notebook, folder,
+          title: body.title || '', content: body.content, tags: body.tags || [],
+          url: null, created_at: now, updated_at: now,
+        };
+        await idbPut('notes', rec);
+        return stripKey(rec);
+      },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/notes\/bookmarks$/, creates: true,
+      getLocalId: (r) => r && r.nb_id,
+      getRealId: (r) => (r && r.nb_id != null ? r.nb_id : null),
+      remap: remapNoteTempId,
+      handler: async (m, body) => {
+        const nbId = tempId();
+        const notebook = body.notebook || 'home';
+        // Real bookmarks always land under the fixed BOOKMARKS_FOLDER
+        // ("Bookmarks"), optionally nested one level via body.folder — the
+        // frontend's own bookmark form always sends folder: null, but this
+        // mirrors notes::create_bookmark's rule regardless.
+        const sub = (body.folder || '').trim();
+        const folder = sub ? 'Bookmarks/' + sub : 'Bookmarks';
+        const now = new Date().toISOString();
+        const rec = {
+          _key: noteKey(notebook, folder, nbId),
+          nb_id: nbId, notebook, folder,
+          title: body.title || body.url, content: body.comment || '', tags: body.tags || [],
+          url: body.url, created_at: now, updated_at: now,
+        };
+        await idbPut('notes', rec);
+        return stripKey(rec);
+      },
+    },
+    {
+      method: 'PUT', pattern: /^\/api\/v1\/notes\/([^/]+)$/, creates: false,
+      handler: async (m, body, query) => {
+        const key = noteKey(query.get('notebook') || 'home', query.get('folder') || '', idParam(m[1]));
+        const rec = await idbGet('notes', key);
+        if (!rec) return null;
+        const merged = Object.assign({}, rec, {
+          title: body.title != null ? body.title : rec.title,
+          content: body.content != null ? body.content : rec.content,
+          tags: body.tags != null ? body.tags : rec.tags,
+          updated_at: new Date().toISOString(),
+        });
+        await idbPut('notes', merged);
+        return stripKey(merged);
+      },
+    },
+    {
+      method: 'DELETE', pattern: /^\/api\/v1\/notes\/([^/]+)$/, creates: false,
+      handler: async (m, body, query) => {
+        await idbDelete('notes', noteKey(query.get('notebook') || 'home', query.get('folder') || '', idParam(m[1])));
+        return null;
+      },
+    },
+    {
+      method: 'PATCH', pattern: /^\/api\/v1\/notes\/([^/]+)\/move$/, creates: false,
+      // Re-keys the local record to the new folder, keeping the same
+      // (possibly temp) nb_id — the real server-side re-numbering (`nb`
+      // numbers ids per folder scope) only happens once this syncs; see
+      // remapNoteTempId's doc comment for the accepted offline
+      // create-then-move ordering edge case this interacts with.
+      handler: async (m, body, query) => {
+        const notebook = query.get('notebook') || 'home';
+        const id = idParam(m[1]);
+        const oldKey = noteKey(notebook, query.get('folder') || '', id);
+        const rec = await idbGet('notes', oldKey);
+        if (!rec) return null;
+        const destFolder = body.dest_folder || '';
+        await idbDelete('notes', oldKey);
+        const moved = Object.assign({}, rec, {
+          folder: destFolder, _key: noteKey(notebook, destFolder, id), updated_at: new Date().toISOString(),
+        });
+        await idbPut('notes', moved);
+        return stripKey(moved);
+      },
+    },
+    {
+      method: 'POST', pattern: /^\/api\/v1\/notes\/folders$/, creates: false,
+      handler: async (m, body) => {
+        await idbPut('note_folders', { _key: JSON.stringify([body.notebook, body.path]), notebook: body.notebook, path: body.path });
+        return null;
+      },
+    },
+    {
+      // Log entries have no id/response body to reconcile (server returns
+      // plain text, not JSON) — no update/delete route exists since there's
+      // no edit/delete UI for log entries at all.
+      method: 'POST', pattern: /^\/api\/v1\/notes\/daily$/, creates: false,
+      handler: async (m, body) => {
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const date = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+        const time = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+        const rec = { date, time, title: body.title, content: body.content, tags: body.tags || [], _key: date + 'T' + time };
+        await idbPut('log_entries', rec);
+        return null;
+      },
+    },
   ];
 
   // Splits a fetch URL into its path and parsed query string once, so route
   // patterns only ever match against the path — needed because Notes' routes
-  // (added in a later phase) carry `?notebook=&folder=`, unlike every
-  // existing Lists/Todo route, which never has a query string to begin with
-  // (so this split is a no-op for them).
+  // carry `?notebook=&folder=`, unlike every Lists/Todo route, which never
+  // has a query string (so this split is a no-op for them).
   function splitUrl(url) {
     const i = url.indexOf('?');
     return {
@@ -3140,6 +3360,46 @@ A category's overall budget cap is the sum of its allocations — split it acros
     }
   }
 
+  // Notes' equivalent of remapTempId() above, for its composite _key instead
+  // of a plain scalar id — used via WRITE_ROUTES' `remap` override for the
+  // note-create/bookmark-create routes.
+  //
+  // Accepted edge case: an offline create immediately followed by an offline
+  // move, before either syncs. The move's handler already re-keyed the local
+  // record to its (locally) moved folder by the time this runs, but this
+  // function re-keys using `realNote.folder` — the folder the *create*
+  // landed in server-side, not wherever it's since been locally moved to —
+  // so the record can briefly show its pre-move location for the window
+  // between this create's flush and the still-queued move's flush. Both
+  // happen synchronously within the same flushWriteQueue() pass (nothing
+  // else runs between them), and the move's own queued PATCH already gets
+  // its URL's temp id substituted for the real one below, so it still fires
+  // correctly once its turn comes — this self-heals within that one pass and
+  // isn't worth engineering around further.
+  async function remapNoteTempId(tempNbId, realNbId, realNote) {
+    const all = await idbGetAll('notes');
+    const found = all.find((n) => n.nb_id === tempNbId);
+    if (found) {
+      await idbDelete('notes', found._key);
+      const notebook = (realNote && realNote.notebook) || found.notebook;
+      const folder = (realNote && realNote.folder != null) ? realNote.folder : found.folder;
+      const merged = Object.assign({}, found, realNote || {}, {
+        nb_id: realNbId, _key: noteKey(notebook, folder, realNbId),
+      });
+      await idbPut('notes', merged);
+    }
+    const queue = await idbGetAll('write_queue');
+    for (const entry of queue) {
+      const urlHit = entry.url.includes(tempNbId);
+      const bodyHit = entry.body && entry.body.includes(tempNbId);
+      if (urlHit || bodyHit) {
+        if (urlHit) entry.url = entry.url.split(tempNbId).join(realNbId);
+        if (bodyHit) entry.body = entry.body.split(tempNbId).join(realNbId);
+        await idbPut('write_queue', entry);
+      }
+    }
+  }
+
   async function flushWriteQueue() {
     if (_flushingQueue) return;
     _flushingQueue = true;
@@ -3162,10 +3422,10 @@ A category's overall budget cap is the sum of its allocations — split it acros
             let real = null;
             try { real = await res.clone().json(); } catch (e) { /* no body */ }
             // Routes whose local record isn't keyed by a plain scalar `id`
-            // (e.g. Notes' composite notebook/folder/nb_id key, added in a
-            // later phase) supply their own `getRealId`/`remap` on the
-            // matched WRITE_ROUTES entry; every existing route falls back to
-            // the original scalar-id behavior unchanged.
+            // (Notes' composite notebook/folder/nb_id key, see noteKey())
+            // supply their own `getRealId`/`remap` on the matched
+            // WRITE_ROUTES entry; every other route falls back to the
+            // original scalar-id behavior unchanged.
             const found = findWriteRoute(entry.method, entry.url);
             const getRealId = (found && found.route.getRealId) || ((r) => (r && r.id != null ? r.id : null));
             const remapFn = (found && found.route.remap) || remapTempId;
@@ -3200,6 +3460,15 @@ A category's overall budget cap is the sum of its allocations — split it acros
         if (!found) throw e;
         showOfflineBanner();
         const data = await found.route.read(found.m, found.query);
+        // A single-item route (e.g. one note) can legitimately have never
+        // been cached — null/undefined here means "not found", not "empty",
+        // so surface it as a real 404 rather than a fake 200/null that
+        // callers only check via `r.ok` would otherwise treat as success.
+        // List-returning routes never hit this (their read() always
+        // resolves an array, even an empty one).
+        if (data === null || data === undefined) {
+          return new Response(null, { status: 404 });
+        }
         return jsonResponse(data);
       }
     }
@@ -3214,9 +3483,13 @@ A category's overall budget cap is the sum of its allocations — split it acros
       showOfflineBanner();
       const body = options.body ? JSON.parse(options.body) : null;
       const record = await found.route.handler(found.m, body, found.query);
+      // getLocalId defaults to the scalar `id` every pre-existing route uses;
+      // Notes' create routes override it since their local record is keyed
+      // by nb_id, not id (see noteKey()).
+      const getLocalId = found.route.getLocalId || ((r) => r && r.id);
       await idbPut('write_queue', {
         method, url, body: options.body || null,
-        tempId: found.route.creates && record ? record.id : undefined,
+        tempId: found.route.creates && record ? getLocalId(record) : undefined,
       });
       return jsonResponse(record);
     }
@@ -4726,7 +4999,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const sel = document.getElementById('log-days-select');
     if (sel) sel.value = String(logDays);
     try {
-      const r = await fetch(NOTES_API + '/daily?days=' + logDays);
+      const r = await cachedFetch(NOTES_API + '/daily?days=' + logDays);
       const entries = await r.json();
       renderLogList(entries, null, logDays + (logDays === 1 ? ' day' : ' days'));
     } catch (_) {
@@ -4767,7 +5040,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   async function notesLoadNotebooks() {
     try {
-      const [, r] = await Promise.all([ensureProjectsLoaded(), fetch(NOTES_API + '/folders')]);
+      const [, r] = await Promise.all([ensureProjectsLoaded(), cachedFetch(NOTES_API + '/folders')]);
       notebookList = await r.json();
       renderNotebookFilters();
       populateNotebookSelect();
@@ -4880,7 +5153,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     let url = NOTES_API + '?';
     if (notesFilterNotebook) url += 'notebook=' + encodeURIComponent(notesFilterNotebook);
     try {
-      const r = await fetch(url);
+      const r = await cachedFetch(url);
       let notes = await r.json();
       // The shared "archive" notebook is only ever browsed deliberately
       // (via the view-options menu) — never mixed into "All" or filtered by.
@@ -4903,7 +5176,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
         return;
       }
 
-      notesFolderList = await fetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notesFilterNotebook))
+      notesFolderList = await cachedFetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notesFilterNotebook))
         .then(r => r.ok ? r.json() : []).catch(() => []);
       notesRenderBreadcrumb();
       notesTreeNotebook = notesFilterNotebook;
@@ -4933,8 +5206,8 @@ A category's overall budget cap is the sum of its allocations — split it acros
     notesTreeNotebook = notebook;
     try {
       const [notesJson, foldersJson] = await Promise.all([
-        fetch(NOTES_API + '?notebook=' + encodeURIComponent(notebook)).then(r => r.ok ? r.json() : []),
-        fetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notebook)).then(r => r.ok ? r.json() : []),
+        cachedFetch(NOTES_API + '?notebook=' + encodeURIComponent(notebook)).then(r => r.ok ? r.json() : []),
+        cachedFetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notebook)).then(r => r.ok ? r.json() : []),
       ]);
       notesTreeNotes = notesJson;
       notesTreeFolders = foldersJson;
@@ -5080,7 +5353,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (!name || !name.trim()) return;
     const path = notesCurrentFolder ? notesCurrentFolder + '/' + name.trim() : name.trim();
     try {
-      const r = await fetch(NOTES_API + '/folders', {
+      const r = await cachedFetch(NOTES_API + '/folders', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({notebook: notesFilterNotebook, path}),
@@ -5159,7 +5432,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
   async function notesDeleteFromList(nbId, notebook, folder) {
     if (!confirm('Delete this note? This cannot be undone.')) return;
     try {
-      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''), { method: 'DELETE' });
+      const r = await cachedFetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''), { method: 'DELETE' });
       if (!r.ok) throw 0;
       toast('Note deleted');
       if (notesCurrentTab === 'search') {
@@ -5183,7 +5456,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     // this is ever reached while a different view is current.
     showView('notes', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined);
     try {
-      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''));
+      const r = await cachedFetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''));
       if (!r.ok) throw 0;
       notesCurrentNote = await r.json();
       if (notesTreeNotebook !== notesCurrentNote.notebook) {
@@ -5292,7 +5565,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       tags: document.getElementById('edit-tags').value.split(',').map(s => s.trim()).filter(Boolean),
     };
     try {
-      const r = await fetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''), {
+      const r = await cachedFetch(NOTES_API + '/' + nbId + '?notebook=' + encodeURIComponent(notebook) + '&folder=' + encodeURIComponent(folder || ''), {
         method: 'PUT',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body),
@@ -5325,7 +5598,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (!notesCurrentNote) return;
     if (!confirm(`Delete "${notesCurrentNote.title || 'Untitled'}"? This cannot be undone.`)) return;
     try {
-      const r = await fetch(NOTES_API + '/' + notesCurrentNote.nb_id + '?notebook=' + encodeURIComponent(notesCurrentNote.notebook) + '&folder=' + encodeURIComponent(notesCurrentNote.folder || ''), {method: 'DELETE'});
+      const r = await cachedFetch(NOTES_API + '/' + notesCurrentNote.nb_id + '?notebook=' + encodeURIComponent(notesCurrentNote.notebook) + '&folder=' + encodeURIComponent(notesCurrentNote.folder || ''), {method: 'DELETE'});
       if (!r.ok) throw 0;
       notesCurrentNote = null;
       toast('Note deleted');
@@ -5342,7 +5615,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     if (!notesCurrentNote) return;
     const dropdown = document.getElementById('notes-move-dropdown');
     if (dropdown.classList.contains('open')) { closeAllMenus(); return; }
-    const folders = await fetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notesCurrentNote.notebook))
+    const folders = await cachedFetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notesCurrentNote.notebook))
       .then(r => r.ok ? r.json() : []).catch(() => []);
     const currentFolder = notesCurrentNote.folder || '';
     const rootItem = `<button class="cat-menu-item" ${currentFolder === '' ? 'disabled' : ''} onclick="notesMoveTo('')">&#128193; (notebook root)</button>`;
@@ -5365,7 +5638,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     closeAllMenus();
     if (!notesCurrentNote) return;
     try {
-      const r = await fetch(
+      const r = await cachedFetch(
         NOTES_API + '/' + notesCurrentNote.nb_id + '/move?notebook=' + encodeURIComponent(notesCurrentNote.notebook) + '&folder=' + encodeURIComponent(notesCurrentNote.folder || ''),
         { method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({dest_folder: destFolder}) },
       );
@@ -5387,7 +5660,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const name = prompt('New folder name:');
     if (!name || !name.trim()) return;
     try {
-      const r = await fetch(NOTES_API + '/folders', {
+      const r = await cachedFetch(NOTES_API + '/folders', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({notebook: notesCurrentNote.notebook, path: name.trim()}),
@@ -5412,7 +5685,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
       if (project && !tags.includes(project.tag)) tags.push(project.tag);
     }
     try {
-      const r = await fetch(NOTES_API + '/daily', {
+      const r = await cachedFetch(NOTES_API + '/daily', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({title, content, tags}),
@@ -5448,7 +5721,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const previous = sel.value;
     let folders = [];
     try {
-      const r = await fetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notebook));
+      const r = await cachedFetch(NOTES_API + '/folder-tree?notebook=' + encodeURIComponent(notebook));
       folders = r.ok ? await r.json() : [];
     } catch (_) {
       folders = [];
@@ -5498,7 +5771,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const project = projectsList.find(p => p.slug === notebookVal);
     if (project && !tags.includes(project.tag)) tags.push(project.tag);
     try {
-      const r = await fetch(NOTES_API, {
+      const r = await cachedFetch(NOTES_API, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({content, title, tags, notebook, folder}),
@@ -5539,7 +5812,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
     const project = projectsList.find(p => p.slug === notebookVal);
     if (project && !tags.includes(project.tag)) tags.push(project.tag);
     try {
-      const r = await fetch(NOTES_API + '/bookmarks', {
+      const r = await cachedFetch(NOTES_API + '/bookmarks', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({url, title, comment, tags, notebook, folder}),
