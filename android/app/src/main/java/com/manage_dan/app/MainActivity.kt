@@ -11,6 +11,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.View
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -418,8 +419,23 @@ class MainActivity : AppCompatActivity() {
         conn.connectTimeout = 5000
         conn.readTimeout = 5000
         conn.requestMethod = "GET"
+        // Forward the WebView's own session cookie (e.g. a forward_auth login
+        // cookie) — this connection has its own cookie jar (none), so without
+        // this an authenticated WebView session still fetches the shell as if
+        // logged out.
+        CookieManager.getInstance().getCookie(urlStr)?.let { conn.setRequestProperty("Cookie", it) }
         conn.connect()
         if (conn.responseCode !in 200..299) throw IOException("HTTP ${conn.responseCode}")
+        // A forward_auth gate redirects an unauthenticated/expired request to
+        // its own login page rather than returning a non-2xx status;
+        // HttpURLConnection follows that redirect and reports 200 for the
+        // login page itself. Treat a final host other than the configured
+        // server as "not the real shell" so a stale-but-real cached copy (or
+        // the offline error page, if none exists yet) is used instead of
+        // caching the login page over it.
+        if (conn.url.host != Uri.parse(urlStr).host) {
+            throw IOException("Redirected away from configured server: ${conn.url}")
+        }
         return conn.inputStream.use { it.readBytes() }
     }
 
