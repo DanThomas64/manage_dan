@@ -299,6 +299,13 @@ class MainActivity : AppCompatActivity() {
 
                 val configuredHost = prefs.getString("server_url", null)?.let { Uri.parse(it).host }
                 if (url.host != null && url.host == configuredHost) return false
+                // An auth gate in front of the server (e.g. Authelia via Caddy
+                // forward_auth) redirects to its login portal on a sibling
+                // subdomain (auth.example.com for manage.example.com). That has
+                // to load in this WebView, not an external browser — otherwise
+                // the login cookie lands in the browser's cookie jar and the
+                // app never becomes authenticated.
+                if (isSiblingHost(url.host, configuredHost)) return false
 
                 return try {
                     startActivity(Intent(Intent.ACTION_VIEW, url))
@@ -432,6 +439,20 @@ class MainActivity : AppCompatActivity() {
             }
             else -> null
         }
+    }
+
+    // True when `host` is the configured server's parent domain or another
+    // subdomain under it — e.g. auth.example.com vs. manage.example.com, parent
+    // example.com. Only applies when the configured host has 3+ labels, so a
+    // bare example.com (parent would be just "com") or an IP address/localhost
+    // never widens to match unrelated hosts.
+    private fun isSiblingHost(host: String?, configuredHost: String?): Boolean {
+        if (host == null || configuredHost == null) return false
+        if (configuredHost.all { it.isDigit() || it == '.' }) return false
+        val labels = configuredHost.split('.')
+        if (labels.size < 3) return false
+        val parent = labels.drop(1).joinToString(".")
+        return host.equals(parent, ignoreCase = true) || host.endsWith(".$parent", ignoreCase = true)
     }
 
     // Blocking GET, used only from shouldInterceptRequest (already called on a
