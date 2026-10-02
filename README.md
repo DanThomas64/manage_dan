@@ -29,7 +29,7 @@ A personal management system built in Rust. Manages todos (backed by [nb](https:
 |---|---|
 | [Rust](https://rustup.rs) ≥ 1.87 | For building from source |
 | [nb](https://xwmx.github.io/nb/) | For todos and notes — the `todo`/`notes` subsystems will show `Nogo` without it |
-| [hledger](https://hledger.org/) | For the Finances feature — the `finances` subsystem will show `Nogo` without it |
+| [hledger](https://hledger.org/) ≥ 1.52 | For the Finances feature — the `finances` subsystem will show `Nogo` without it. Older distro packages (Debian/Ubuntu) can't parse the journal the app writes; `deploy.sh` installs the official release binary when needed |
 | nb's `daily` plugin | For the Log feature — install with `nb plugins install https://raw.githubusercontent.com/xwmx/nb/master/plugins/daily.nb-plugin` |
 | A USB ESC/POS thermal printer | Optional — the app runs fine without one in `terminal` mode |
 | nginx | Only needed if deploying as a service (see [Deploy as a service](#deploy-as-a-service)) |
