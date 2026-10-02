@@ -16,9 +16,11 @@
 # libraries the Rust build links against (libudev, openssl, libusb) plus
 # zip/unzip (project archiving) ARE also auto-installed, same detection.
 #
-# The app's runtime CLIs ARE also auto-installed: hledger (finances), git +
-# curl via the package manager, and nb (todos/notes/log) plus its `daily`
-# plugin via nb's own download, since nb isn't in most distro repos.
+# The app's runtime CLIs ARE also auto-installed: git + curl via the package
+# manager; hledger (finances) as its official release binary when missing or
+# older than HLEDGER_MIN, since distro packages are often too old to parse the
+# app's journal; and nb (todos/notes/log) plus its `daily` plugin via nb's own
+# download, since nb isn't in most distro repos.
 #
 # Rust/cargo IS also auto-installed below (via rustup, into the invoking
 # user's ~/.cargo). rustup's installer only adds cargo to PATH for *future*
@@ -75,22 +77,62 @@ if ! command -v cc &> /dev/null \
   fi
 fi
 
-# ── Ensure runtime CLIs (hledger, git, curl) are installed ────────────────────
-# The app shells out to `hledger` for finances (subsystem goes Nogo without
-# it) and to `nb` for todos/notes/log; nb itself requires git, and the nb
-# install step below downloads it with curl.
-if ! command -v hledger &> /dev/null \
-  || ! command -v git &> /dev/null \
-  || ! command -v curl &> /dev/null; then
-  echo "hledger/git/curl missing — installing..."
+# ── Ensure runtime CLIs (git, curl) are installed ─────────────────────────────
+# nb (todos/notes/log) requires git, and the nb and hledger install steps
+# below download with curl.
+if ! command -v git &> /dev/null || ! command -v curl &> /dev/null; then
+  echo "git/curl missing — installing..."
   if command -v pacman &> /dev/null; then
-    sudo pacman -Sy --needed --noconfirm hledger git curl
+    sudo pacman -Sy --needed --noconfirm git curl
   elif command -v apt-get &> /dev/null; then
-    sudo apt-get update && sudo apt-get install -y hledger git curl
+    sudo apt-get update && sudo apt-get install -y git curl
   elif command -v dnf &> /dev/null; then
-    sudo dnf install -y hledger git curl
+    sudo dnf install -y git curl
   else
-    echo "Unrecognized package manager — install hledger, git and curl manually, then re-run." >&2
+    echo "Unrecognized package manager — install git and curl manually, then re-run." >&2
+    exit 1
+  fi
+fi
+
+# ── Ensure a recent-enough hledger is installed ───────────────────────────────
+# The app shells out to `hledger` for finances. Distro packages (Debian/Ubuntu
+# especially) can be far too old: they fail to parse journal syntax the app
+# writes (e.g. `~ every 2 weeks from <date>` periodic rules), so every
+# finances request errors even though the subsystem reports Go (startup only
+# checks hledger exists). So rather than trusting the distro package, check the
+# version and, if missing or too old, install hledger's official static release
+# binary to /usr/local/bin (ahead of /usr/bin on PATH, so it wins over any
+# leftover distro copy). HLEDGER_MIN is the oldest version actually verified
+# against this app — lower it only after testing an older one.
+HLEDGER_MIN="1.52"
+HLEDGER_PIN="1.52.4"
+hledger_version() {
+  hledger --version 2> /dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1
+}
+hledger_ok() {
+  local v
+  v="$(hledger_version)"
+  [ -n "$v" ] && [ "$(printf '%s\n%s\n' "$HLEDGER_MIN" "$v" | sort -V | head -1)" = "$HLEDGER_MIN" ]
+}
+if ! hledger_ok; then
+  echo "hledger $(hledger_version || true) missing or older than $HLEDGER_MIN — installing $HLEDGER_PIN..."
+  if [ "$(uname -m)" = "x86_64" ]; then
+    HLEDGER_TMP="$(mktemp -d)"
+    curl -fsSL --connect-timeout 15 --max-time 300 \
+      "https://github.com/hledgerorg/hledger/releases/download/$HLEDGER_PIN/hledger-linux-x64.tar.gz" \
+      | tar xz -C "$HLEDGER_TMP" hledger
+    sudo install -m 755 "$HLEDGER_TMP/hledger" /usr/local/bin/hledger
+    rm -rf "$HLEDGER_TMP"
+    hash -r
+  else
+    # hledger publishes no Linux build for other architectures (e.g. arm64).
+    echo "No official hledger binary for $(uname -m). Install hledger >= $HLEDGER_MIN" >&2
+    echo "yourself (e.g. a newer distro package, or build via stack/cabal), then re-run." >&2
+    exit 1
+  fi
+  if ! hledger_ok; then
+    echo "hledger on PATH is still $(hledger_version || echo missing) ($(command -v hledger || true))," >&2
+    echo "expected >= $HLEDGER_MIN. Remove the old copy (e.g. sudo apt-get remove hledger), then re-run." >&2
     exit 1
   fi
 fi
@@ -253,5 +295,22 @@ sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
 sudo systemctl enable nginx
 sudo systemctl reload nginx || sudo systemctl start nginx
+
+# ── Point the hledger CLI at the app's journal ────────────────────────────────
+# A bare `hledger ...` (no -f, no LEDGER_FILE) reads ~/.hledger.journal, never
+# the app's own journal, so terminal queries silently showed a different (or
+# empty) ledger. Symlinking it makes the CLI and the app share one file. Uses
+# the default `[finances] journal_path` — if that's overridden in config, point
+# LEDGER_FILE at the real path instead. Never replaces an existing file or a
+# symlink pointing elsewhere.
+JOURNAL="$PROJECT_DIR/data/finances.journal"
+HLEDGER_DEFAULT="$HOME/.hledger.journal"
+if [ ! -e "$HLEDGER_DEFAULT" ] && [ ! -L "$HLEDGER_DEFAULT" ]; then
+  ln -s "$JOURNAL" "$HLEDGER_DEFAULT"
+  echo "Linked $HLEDGER_DEFAULT -> $JOURNAL"
+elif [ "$(readlink -f "$HLEDGER_DEFAULT")" != "$(readlink -f "$JOURNAL")" ]; then
+  echo "Note: $HLEDGER_DEFAULT already exists and isn't the app's journal — left" >&2
+  echo "      untouched. The hledger CLI will read it, not $JOURNAL." >&2
+fi
 
 echo "Done. App running natively on this machine."
