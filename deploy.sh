@@ -4,8 +4,8 @@
 #
 # ── One-time setup (still manual — package names/steps vary too much to
 #    safely automate) ─────────────────────────────────────────────────────────
-#   Debian/Ubuntu: sudo apt-get install -y libudev1 zip unzip
-#   Arch/CachyOS:  sudo pacman -S --needed zip unzip
+#   Debian/Ubuntu: sudo apt-get install -y build-essential pkg-config libudev-dev libssl-dev zip unzip
+#   Arch/CachyOS:  sudo pacman -S --needed base-devel pkgconf systemd-libs openssl zip unzip
 #   bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
 #   sudo usermod -aG plugdev "$USER"    # USB printer access
 #   sudo cp 99-printer.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
@@ -14,6 +14,11 @@
 # machine with no nginx package at all previously failed confusingly deep
 # inside `sudo tee /etc/nginx/conf.d/manage_dan.conf` ("No such file or
 # directory", since neither nginx nor its conf.d existed yet).
+#
+# Rust/cargo IS also auto-installed below (via rustup, into the invoking
+# user's ~/.cargo). rustup's installer only adds cargo to PATH for *future*
+# login shells, so this script sources ~/.cargo/env itself rather than
+# requiring a new shell before the build step can find `cargo`.
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,6 +42,26 @@ fi
 # Defensive even after a fresh install: some distros' base nginx package
 # doesn't ship an empty conf.d/ (or it was previously removed by hand).
 sudo mkdir -p /etc/nginx/conf.d
+
+# ── Ensure cargo is available ─────────────────────────────────────────────────
+# A non-login shell (e.g. ssh "cmd", or the same shell rustup was just
+# installed from) may not have ~/.cargo/bin on PATH yet even when Rust is
+# installed, so try sourcing rustup's env file before deciding it's missing.
+CARGO_ENV="${CARGO_HOME:-$HOME/.cargo}/env"
+if ! command -v cargo &> /dev/null && [ -f "$CARGO_ENV" ]; then
+  # shellcheck source=/dev/null
+  . "$CARGO_ENV"
+fi
+if ! command -v cargo &> /dev/null; then
+  echo "cargo not found — installing Rust via rustup..."
+  if ! command -v curl &> /dev/null; then
+    echo "curl is required to install Rust — install curl, then re-run this script." >&2
+    exit 1
+  fi
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+  # shellcheck source=/dev/null
+  . "$CARGO_ENV"
+fi
 
 # ── Build ──────────────────────────────────────────────────────────────────────
 echo "Building release binary..."
