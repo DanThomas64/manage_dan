@@ -29,7 +29,8 @@ A personal management system built in Rust. Manages todos (backed by [nb](https:
 |---|---|
 | [Rust](https://rustup.rs) ≥ 1.87 | For building from source |
 | [nb](https://xwmx.github.io/nb/) | For todos and notes — the `todo`/`notes` subsystems will show `Nogo` without it |
-| nb's `daily` plugin | For the Log feature — install with `nb plugin install https://github.com/xwmx/nb/blob/master/plugins/daily.nb-plugin` |
+| [hledger](https://hledger.org/) | For the Finances feature — the `finances` subsystem will show `Nogo` without it |
+| nb's `daily` plugin | For the Log feature — install with `nb plugins install https://raw.githubusercontent.com/xwmx/nb/master/plugins/daily.nb-plugin` |
 | A USB ESC/POS thermal printer | Optional — the app runs fine without one in `terminal` mode |
 | nginx | Only needed if deploying as a service (see [Deploy as a service](#deploy-as-a-service)) |
 
@@ -199,13 +200,11 @@ To run the app as an always-on native systemd service (auto-start on boot, resta
 
 This builds a release binary, installs it to `/usr/local/bin/manage_dan`, installs a `manage_dan` systemd unit (`WorkingDirectory` is the project root, so it reads `config/local.toml` and writes `app.sqlite` / `data/logs/app.log` in place, same as `cargo run -p app`), and installs an nginx reverse proxy that serves `frontend/index.html` on port 80 and proxies `/api/` and `/todo/` to the app on `127.0.0.1:8080`.
 
-`deploy.sh` installs nginx, the build toolchain and native libraries above (C compiler/linker, pkg-config, libudev, openssl, libusb, plus zip/unzip), and Rust (via rustup) itself if they're missing, and loads `~/.cargo/env` into its own shell so the build works straight after a fresh Rust install — no new terminal needed. Run it as your normal user, not with `sudo` (it calls `sudo` itself where needed; under `sudo` Rust would be installed for root instead).
+`deploy.sh` installs nginx, the build toolchain and native libraries above (C compiler/linker, pkg-config, libudev, openssl, libusb, plus zip/unzip), hledger, nb (to `/usr/local/bin/nb`) and its `daily` plugin, and Rust (via rustup) itself if they're missing, and loads `~/.cargo/env` into its own shell so the build works straight after a fresh Rust install — no new terminal needed. Run it as your normal user, not with `sudo` (it calls `sudo` itself where needed; under `sudo` Rust would be installed for root instead).
 
 Remaining one-time setup before the first run — see the comment block at the top of `deploy.sh`:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
-nb plugin install https://github.com/xwmx/nb/blob/master/plugins/daily.nb-plugin
 sudo usermod -aG plugdev "$USER"    # USB printer access
 ```
 

@@ -4,7 +4,6 @@
 #
 # ── One-time setup (still manual — package names/steps vary too much to
 #    safely automate) ─────────────────────────────────────────────────────────
-#   bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
 #   sudo usermod -aG plugdev "$USER"    # USB printer access
 #   sudo cp 99-printer.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
 #
@@ -16,6 +15,10 @@
 # The build toolchain (C compiler/linker, pkg-config) and the native
 # libraries the Rust build links against (libudev, openssl, libusb) plus
 # zip/unzip (project archiving) ARE also auto-installed, same detection.
+#
+# The app's runtime CLIs ARE also auto-installed: hledger (finances), git +
+# curl via the package manager, and nb (todos/notes/log) plus its `daily`
+# plugin via nb's own download, since nb isn't in most distro repos.
 #
 # Rust/cargo IS also auto-installed below (via rustup, into the invoking
 # user's ~/.cargo). rustup's installer only adds cargo to PATH for *future*
@@ -70,6 +73,42 @@ if ! command -v cc &> /dev/null \
     echo "libudev / openssl / libusb-1.0 development packages manually, then re-run." >&2
     exit 1
   fi
+fi
+
+# ── Ensure runtime CLIs (hledger, git, curl) are installed ────────────────────
+# The app shells out to `hledger` for finances (subsystem goes Nogo without
+# it) and to `nb` for todos/notes/log; nb itself requires git, and the nb
+# install step below downloads it with curl.
+if ! command -v hledger &> /dev/null \
+  || ! command -v git &> /dev/null \
+  || ! command -v curl &> /dev/null; then
+  echo "hledger/git/curl missing — installing..."
+  if command -v pacman &> /dev/null; then
+    sudo pacman -Sy --needed --noconfirm hledger git curl
+  elif command -v apt-get &> /dev/null; then
+    sudo apt-get update && sudo apt-get install -y hledger git curl
+  elif command -v dnf &> /dev/null; then
+    sudo dnf install -y hledger git curl
+  else
+    echo "Unrecognized package manager — install hledger, git and curl manually, then re-run." >&2
+    exit 1
+  fi
+fi
+
+# ── Ensure nb + its `daily` plugin are installed ──────────────────────────────
+# nb isn't packaged by most distros' main repos, so it's installed the way its
+# own README describes: the single `nb` script downloaded onto PATH.
+if ! command -v nb &> /dev/null; then
+  echo "nb not found — installing to /usr/local/bin/nb..."
+  sudo curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb -o /usr/local/bin/nb
+  sudo chmod +x /usr/local/bin/nb
+fi
+# Plugins live under the invoking user's own nb dir (~/.nb/.plugins), which is
+# the same user the systemd unit runs as (RUN_USER) — so this must NOT run via
+# sudo. The Log feature (`nb log:daily`) fails without this plugin.
+if ! nb plugins daily &> /dev/null; then
+  echo "nb daily plugin not found — installing..."
+  nb plugins install https://raw.githubusercontent.com/xwmx/nb/master/plugins/daily.nb-plugin --force
 fi
 
 # ── Ensure cargo is available ─────────────────────────────────────────────────
