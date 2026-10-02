@@ -51,6 +51,13 @@ class MainActivity : AppCompatActivity() {
     // IndexedDB-based layer inside the page's own JS.
     private val shellCacheFile by lazy { File(filesDir, "cached_shell.html") }
 
+    // Host of an auth gate's login portal (e.g. Authelia's auth.example.com in
+    // front of manage.example.com), learned the first time the configured
+    // server redirects a main-frame load to it — see shouldOverrideUrlLoading.
+    // Only this one host (plus the server itself) stays in the WebView; every
+    // other host, sibling subdomains included, still opens externally.
+    @Volatile private var authHost: String? = null
+
     /** Exposed to JavaScript as `window.AndroidVibrator`. */
     private inner class VibrationBridge {
         @JavascriptInterface
@@ -150,6 +157,14 @@ class MainActivity : AppCompatActivity() {
                     val bytes = fetchShellBytes(configuredUrl)
                     shellCacheFile.writeBytes(bytes)
                     WebResourceResponse("text/html", "UTF-8", ByteArrayInputStream(bytes))
+                } catch (e: ShellRedirectException) {
+                    // The server answered but redirected (an auth gate sending
+                    // a logged-out/expired session to its login page). That's
+                    // not "offline" — serving the cached shell here would hide
+                    // the login page forever, every API call then failing
+                    // behind the gate. Let the WebView load the URL itself so
+                    // it follows the redirect to the login page.
+                    null
                 } catch (e: IOException) {
                     if (shellCacheFile.exists()) {
                         WebResourceResponse("text/html", "UTF-8", FileInputStream(shellCacheFile))
@@ -300,12 +315,21 @@ class MainActivity : AppCompatActivity() {
                 val configuredHost = prefs.getString("server_url", null)?.let { Uri.parse(it).host }
                 if (url.host != null && url.host == configuredHost) return false
                 // An auth gate in front of the server (e.g. Authelia via Caddy
-                // forward_auth) redirects to its login portal on a sibling
-                // subdomain (auth.example.com for manage.example.com). That has
-                // to load in this WebView, not an external browser — otherwise
-                // the login cookie lands in the browser's cookie jar and the
-                // app never becomes authenticated.
-                if (isSiblingHost(url.host, configuredHost)) return false
+                // forward_auth) answers a logged-out load with a redirect to its
+                // login portal on another host. That has to load in this
+                // WebView, not an external browser — otherwise the login cookie
+                // lands in the browser's cookie jar and the app never becomes
+                // authenticated. A redirect can only reach here from a load
+                // already inside the WebView (a tapped external link goes to the
+                // browser on its first, non-redirect hop), i.e. from the
+                // configured server itself, so the redirect target is trusted
+                // and remembered so the portal's own later page loads stay
+                // in-app too.
+                if (url.host != null && request.isRedirect) {
+                    authHost = url.host
+                    return false
+                }
+                if (url.host != null && url.host == authHost) return false
 
                 return try {
                     startActivity(Intent(Intent.ACTION_VIEW, url))
@@ -441,20 +465,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // True when `host` is the configured server's parent domain or another
-    // subdomain under it — e.g. auth.example.com vs. manage.example.com, parent
-    // example.com. Only applies when the configured host has 3+ labels, so a
-    // bare example.com (parent would be just "com") or an IP address/localhost
-    // never widens to match unrelated hosts.
-    private fun isSiblingHost(host: String?, configuredHost: String?): Boolean {
-        if (host == null || configuredHost == null) return false
-        if (configuredHost.all { it.isDigit() || it == '.' }) return false
-        val labels = configuredHost.split('.')
-        if (labels.size < 3) return false
-        val parent = labels.drop(1).joinToString(".")
-        return host.equals(parent, ignoreCase = true) || host.endsWith(".$parent", ignoreCase = true)
-    }
-
     // Blocking GET, used only from shouldInterceptRequest (already called on a
     // background thread by WebView, so blocking here is fine — this is the
     // documented way to intercept-and-serve a resource).
@@ -463,23 +473,21 @@ class MainActivity : AppCompatActivity() {
         conn.connectTimeout = 5000
         conn.readTimeout = 5000
         conn.requestMethod = "GET"
+        // Redirects are reported (ShellRedirectException) rather than followed
+        // — a forward_auth gate redirects a logged-out request to its login
+        // page, and the caller must let the WebView follow that itself rather
+        // than treat it as offline or cache the login page as the shell.
+        conn.instanceFollowRedirects = false
         // Forward the WebView's own session cookie (e.g. a forward_auth login
         // cookie) — this connection has its own cookie jar (none), so without
         // this an authenticated WebView session still fetches the shell as if
         // logged out.
         CookieManager.getInstance().getCookie(urlStr)?.let { conn.setRequestProperty("Cookie", it) }
         conn.connect()
-        if (conn.responseCode !in 200..299) throw IOException("HTTP ${conn.responseCode}")
-        // A forward_auth gate redirects an unauthenticated/expired request to
-        // its own login page rather than returning a non-2xx status;
-        // HttpURLConnection follows that redirect and reports 200 for the
-        // login page itself. Treat a final host other than the configured
-        // server as "not the real shell" so a stale-but-real cached copy (or
-        // the offline error page, if none exists yet) is used instead of
-        // caching the login page over it.
-        if (conn.url.host != Uri.parse(urlStr).host) {
-            throw IOException("Redirected away from configured server: ${conn.url}")
+        if (conn.responseCode in 300..399) {
+            throw ShellRedirectException("HTTP ${conn.responseCode} -> ${conn.getHeaderField("Location")}")
         }
+        if (conn.responseCode !in 200..299) throw IOException("HTTP ${conn.responseCode}")
         return conn.inputStream.use { it.readBytes() }
     }
 
@@ -517,3 +525,8 @@ class MainActivity : AppCompatActivity() {
         else super.onBackPressed()
     }
 }
+
+// Thrown by fetchShellBytes when the server answers with a redirect (e.g. an
+// auth gate's login redirect) — distinct from a plain IOException, which
+// means the server couldn't be reached and the cached shell should be used.
+private class ShellRedirectException(message: String) : IOException(message)
