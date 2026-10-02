@@ -56,11 +56,16 @@ Check with `cargo --version`. (`deploy.sh` does this automatically — see [Depl
 
 ```bash
 # Debian / Ubuntu
-sudo apt install build-essential pkg-config libudev-dev libssl-dev
+sudo apt install build-essential pkg-config libudev-dev libssl-dev libusb-1.0-0-dev
 
 # Arch Linux
-sudo pacman -S --needed base-devel pkgconf systemd-libs openssl
+sudo pacman -S --needed base-devel pkgconf systemd-libs openssl libusb
+
+# Fedora
+sudo dnf install gcc make pkgconf-pkg-config systemd-devel openssl-devel libusb1-devel
 ```
+
+`build-essential` / `base-devel` / `gcc` provide the C compiler that cargo uses as its linker — without it every build fails with ``linker `cc` not found``.
 
 ### 3. Clone and configure
 
@@ -194,13 +199,11 @@ To run the app as an always-on native systemd service (auto-start on boot, resta
 
 This builds a release binary, installs it to `/usr/local/bin/manage_dan`, installs a `manage_dan` systemd unit (`WorkingDirectory` is the project root, so it reads `config/local.toml` and writes `app.sqlite` / `data/logs/app.log` in place, same as `cargo run -p app`), and installs an nginx reverse proxy that serves `frontend/index.html` on port 80 and proxies `/api/` and `/todo/` to the app on `127.0.0.1:8080`.
 
-`deploy.sh` installs nginx and Rust (via rustup) itself if they're missing, and loads `~/.cargo/env` into its own shell so the build works straight after a fresh Rust install — no new terminal needed. Run it as your normal user, not with `sudo` (it calls `sudo` itself where needed; under `sudo` Rust would be installed for root instead).
+`deploy.sh` installs nginx, the build toolchain and native libraries above (C compiler/linker, pkg-config, libudev, openssl, libusb, plus zip/unzip), and Rust (via rustup) itself if they're missing, and loads `~/.cargo/env` into its own shell so the build works straight after a fresh Rust install — no new terminal needed. Run it as your normal user, not with `sudo` (it calls `sudo` itself where needed; under `sudo` Rust would be installed for root instead).
 
 Remaining one-time setup before the first run — see the comment block at the top of `deploy.sh`:
 
 ```bash
-# Debian / Ubuntu (Arch: sudo pacman -S --needed base-devel pkgconf systemd-libs openssl zip unzip)
-sudo apt-get install -y build-essential pkg-config libudev-dev libssl-dev zip unzip
 bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
 nb plugin install https://github.com/xwmx/nb/blob/master/plugins/daily.nb-plugin
 sudo usermod -aG plugdev "$USER"    # USB printer access

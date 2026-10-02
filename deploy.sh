@@ -4,8 +4,6 @@
 #
 # ── One-time setup (still manual — package names/steps vary too much to
 #    safely automate) ─────────────────────────────────────────────────────────
-#   Debian/Ubuntu: sudo apt-get install -y build-essential pkg-config libudev-dev libssl-dev zip unzip
-#   Arch/CachyOS:  sudo pacman -S --needed base-devel pkgconf systemd-libs openssl zip unzip
 #   bash <(curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb) install
 #   sudo usermod -aG plugdev "$USER"    # USB printer access
 #   sudo cp 99-printer.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
@@ -14,6 +12,10 @@
 # machine with no nginx package at all previously failed confusingly deep
 # inside `sudo tee /etc/nginx/conf.d/manage_dan.conf` ("No such file or
 # directory", since neither nginx nor its conf.d existed yet).
+#
+# The build toolchain (C compiler/linker, pkg-config) and the native
+# libraries the Rust build links against (libudev, openssl, libusb) plus
+# zip/unzip (project archiving) ARE also auto-installed, same detection.
 #
 # Rust/cargo IS also auto-installed below (via rustup, into the invoking
 # user's ~/.cargo). rustup's installer only adds cargo to PATH for *future*
@@ -42,6 +44,33 @@ fi
 # Defensive even after a fresh install: some distros' base nginx package
 # doesn't ship an empty conf.d/ (or it was previously removed by hand).
 sudo mkdir -p /etc/nginx/conf.d
+
+# ── Ensure build toolchain + native libraries are installed ───────────────────
+# cargo needs a C linker (`cc`) to link anything at all, and several crates
+# (libudev-sys, openssl-sys, libusb1-sys via escpos's native_usb) build
+# against system libraries found via pkg-config. rustup installs none of
+# this, so a fresh machine fails at link time with "linker `cc` not found".
+# Checked first (rather than always reinstalling) so routine redeploys don't
+# hit the package manager every run.
+if ! command -v cc &> /dev/null \
+  || ! command -v pkg-config &> /dev/null \
+  || ! pkg-config --exists libudev openssl libusb-1.0 \
+  || ! command -v zip &> /dev/null \
+  || ! command -v unzip &> /dev/null; then
+  echo "Build dependencies missing — installing..."
+  if command -v pacman &> /dev/null; then
+    sudo pacman -Sy --needed --noconfirm base-devel pkgconf systemd-libs openssl libusb zip unzip
+  elif command -v apt-get &> /dev/null; then
+    sudo apt-get update && sudo apt-get install -y \
+      build-essential pkg-config libudev-dev libssl-dev libusb-1.0-0-dev zip unzip
+  elif command -v dnf &> /dev/null; then
+    sudo dnf install -y gcc make pkgconf-pkg-config systemd-devel openssl-devel libusb1-devel zip unzip
+  else
+    echo "Unrecognized package manager — install a C compiler (cc), pkg-config, and the" >&2
+    echo "libudev / openssl / libusb-1.0 development packages manually, then re-run." >&2
+    exit 1
+  fi
+fi
 
 # ── Ensure cargo is available ─────────────────────────────────────────────────
 # A non-login shell (e.g. ssh "cmd", or the same shell rustup was just
