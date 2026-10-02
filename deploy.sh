@@ -100,15 +100,38 @@ fi
 # own README describes: the single `nb` script downloaded onto PATH.
 if ! command -v nb &> /dev/null; then
   echo "nb not found — installing to /usr/local/bin/nb..."
-  sudo curl -fsSL https://raw.githubusercontent.com/xwmx/nb/master/nb -o /usr/local/bin/nb
+  sudo curl -fsSL --connect-timeout 15 --max-time 120 \
+    https://raw.githubusercontent.com/xwmx/nb/master/nb -o /usr/local/bin/nb
   sudo chmod +x /usr/local/bin/nb
+fi
+# nb refuses to run until git has a global user.name/user.email: on first use
+# it prompts for both in an endless `while true; read` loop. With output sent
+# to /dev/null (as below) that prompt is invisible and deploy just hangs — and
+# the systemd unit runs nb as this same user, so the app's own nb calls would
+# stall the same way. Set an identity up front (asked for if this is an
+# interactive terminal, otherwise a user@host default) so nb never prompts.
+if [ -z "$(git config --global user.name || true)" ]; then
+  GIT_NAME="$RUN_USER"
+  if [ -t 0 ]; then
+    read -r -p "git user.name for nb's commits [$GIT_NAME]: " reply
+    GIT_NAME="${reply:-$GIT_NAME}"
+  fi
+  git config --global user.name "$GIT_NAME"
+fi
+if [ -z "$(git config --global user.email || true)" ]; then
+  GIT_EMAIL="$RUN_USER@${HOSTNAME:-localhost}"
+  if [ -t 0 ]; then
+    read -r -p "git user.email for nb's commits [$GIT_EMAIL]: " reply
+    GIT_EMAIL="${reply:-$GIT_EMAIL}"
+  fi
+  git config --global user.email "$GIT_EMAIL"
 fi
 # Plugins live under the invoking user's own nb dir (~/.nb/.plugins), which is
 # the same user the systemd unit runs as (RUN_USER) — so this must NOT run via
 # sudo. The Log feature (`nb log:daily`) fails without this plugin.
-if ! nb plugins daily &> /dev/null; then
+if ! nb plugins daily < /dev/null &> /dev/null; then
   echo "nb daily plugin not found — installing..."
-  nb plugins install https://raw.githubusercontent.com/xwmx/nb/master/plugins/daily.nb-plugin --force
+  nb plugins install https://raw.githubusercontent.com/xwmx/nb/master/plugins/daily.nb-plugin --force < /dev/null
 fi
 
 # ── Ensure cargo is available ─────────────────────────────────────────────────
