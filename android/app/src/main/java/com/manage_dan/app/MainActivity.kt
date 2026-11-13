@@ -56,7 +56,11 @@ class MainActivity : AppCompatActivity() {
     // server redirects a main-frame load to it — see shouldOverrideUrlLoading.
     // Only this one host (plus the server itself) stays in the WebView; every
     // other host, sibling subdomains included, still opens externally.
-    @Volatile private var authHost: String? = null
+    // Persisted in prefs so it survives the activity being recreated mid-login
+    // (e.g. after switching to an authenticator/password-manager app for 2FA).
+    private var authHost: String?
+        get() = prefs.getString("auth_host", null)
+        set(value) { prefs.edit().putString("auth_host", value).apply() }
 
     /** Exposed to JavaScript as `window.AndroidVibrator`. */
     private inner class VibrationBridge {
@@ -312,8 +316,25 @@ class MainActivity : AppCompatActivity() {
                 if (!request.isForMainFrame) return false
                 if (url.scheme != "http" && url.scheme != "https") return false
 
-                val configuredHost = prefs.getString("server_url", null)?.let { Uri.parse(it).host }
+                val configuredUrl = prefs.getString("server_url", null)
+                val configuredHost = configuredUrl?.let { Uri.parse(it).host }
                 if (url.host != null && url.host == configuredHost) return false
+                // Leaving the auth portal for a host that is neither the portal
+                // nor the server: the login just finished and the portal is
+                // sending us onward — but to a host we don't recognise (its
+                // default_redirection_url because `rd` was lost, or the server
+                // under a different hostname/alias). Handing that to an external
+                // browser strands the user outside the app right after logging
+                // in; the session cookie now lives in this WebView, so just load
+                // the app itself here instead.
+                val fromHost = view.url?.let { Uri.parse(it).host }
+                val currentAuthHost = authHost
+                if (currentAuthHost != null && fromHost == currentAuthHost &&
+                    url.host != currentAuthHost && configuredUrl != null
+                ) {
+                    view.loadUrl(configuredUrl)
+                    return true
+                }
                 // An auth gate in front of the server (e.g. Authelia via Caddy
                 // forward_auth) answers a logged-out load with a redirect to its
                 // login portal on another host. That has to load in this
