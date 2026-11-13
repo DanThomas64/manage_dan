@@ -1948,8 +1948,8 @@
     <div class="cat-menu-wrap">
       <button class="cat-menu-btn" onclick="toggleMenu('notes-menu-dropdown', event)" title="View options">&#9776;</button>
       <div class="cat-menu-dropdown align-right" id="notes-menu-dropdown">
-        <button class="cat-menu-item" onclick="notesToggleShowProject()">
-          Show Project Items <span class="menu-check" id="notes-show-project-check"></span>
+        <button class="cat-menu-item" onclick="notesToggleDefaultNotebook()">
+          Default Notebook <span class="menu-check" id="notes-default-notebook-check"></span>
         </button>
         <button class="cat-menu-item" onclick="notesNewFolder()">&#128193; New Folder</button>
         <button class="cat-menu-item" onclick="notesOpenArchive()">&#128193; Archive</button>
@@ -2017,7 +2017,6 @@
   <!-- Browse panel -->
   <div class="notes-panel active" id="npanel-browse">
     <div class="notes-filters" id="notebook-filters">
-      <button class="filter-pill active" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>
     </div>
     <div class="notes-breadcrumb" id="notes-breadcrumb" style="display:none;"></div>
     <div class="notes-list" id="notes-list">
@@ -5120,7 +5119,7 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   const NOTES_API = '/api/v1/notes';
   let notesCurrentTab = 'browse';
-  let notesFilterNotebook = '';
+  let notesFilterNotebook = notesDefaultNotebook();
   let notesCurrentNote = null;
   let notesViewerFromTab = 'browse';
   let notesSearchTimer = null;
@@ -5165,7 +5164,6 @@ A category's overall budget cap is the sum of its allocations — split it acros
   let notesTreeHighlight = { type: null };
 
   function notesOnOpen() {
-    updateNotesProjectCheck();
     notesLoadNotebooks();
     notesUpdateTreeVisibility();
     if (pendingProjectNotesEntry) {
@@ -5187,6 +5185,11 @@ A category's overall budget cap is the sum of its allocations — split it acros
       notesShowTab('add');
       return;
     }
+    // Every fresh entry into Notes (e.g. the Home tile) lands on the
+    // user's chosen default notebook, not whichever one was last browsed.
+    notesFilterNotebook = notesDefaultNotebook();
+    notesCurrentFolder = '';
+    updateNotesDefaultCheck();
     if (notesCurrentTab === 'browse') notesLoadBrowse();
     if (notesCurrentTab === 'add') {
       notesLoadNotebooks();
@@ -5326,22 +5329,53 @@ A category's overall budget cap is the sum of its allocations — split it acros
     } catch (_) {}
   }
 
-  // Rebuilds the notebook filter pill row, dropping project notebooks
-  // (named exactly after their project's slug) while Hide Project Items is
-  // on, and always dropping the shared "archive" notebook — that one is only
-  // reachable via the view-options menu's "Archive" entry.
+  // Rebuilds the notebook filter pill row — every notebook, project ones
+  // included, except the shared "archive" notebook (only reachable via the
+  // view-options menu's "Archive" entry). There's no cross-notebook "All"
+  // pill; the user's default notebook (notesDefaultNotebook) is marked ★.
   function renderNotebookFilters() {
     const filtersEl = document.getElementById('notebook-filters');
-    const projectSlugs = new Set(projectsList.map(p => p.slug));
     let visible = notebookList.filter(nb => nb !== 'archive');
-    if (notesHideProjectItems) visible = visible.filter(nb => !projectSlugs.has(nb));
-    // Reset off "archive" on a fresh visit to Notes — it's a deliberate,
-    // one-off detour, not a filter that should silently stick around.
-    if (notesFilterNotebook === 'archive' || (notesHideProjectItems && projectSlugs.has(notesFilterNotebook))) {
-      notesFilterNotebook = '';
+    // Never leave Browse with no notebook selected (there's no "All" mode
+    // any more) — fall back to the default, or home if that's gone.
+    if (!notesFilterNotebook || (visible.length && notesFilterNotebook !== 'archive' && !visible.includes(notesFilterNotebook))) {
+      const def = notesDefaultNotebook();
+      notesFilterNotebook = visible.includes(def) ? def : 'home';
     }
-    filtersEl.innerHTML = `<button class="filter-pill ${notesFilterNotebook === '' ? 'active' : ''}" data-notebook="" onclick="notesSetNotebook(this,'')">All</button>` +
-      visible.map(nb => `<button class="filter-pill ${nb === notesFilterNotebook ? 'active' : ''}" data-notebook="${esc(nb)}" onclick="notesSetNotebook(this,'${esc(nb)}')">${esc(nb)}</button>`).join('');
+    const def = notesDefaultNotebook();
+    // Default notebook always leads the row, leftmost; the rest keep nb's order.
+    if (visible.includes(def)) visible = [def, ...visible.filter(nb => nb !== def)];
+    filtersEl.innerHTML = visible.map(nb => `<button class="filter-pill ${nb === notesFilterNotebook ? 'active' : ''}" data-notebook="${esc(nb)}" onclick="notesSetNotebook(this,'${esc(nb)}')">${nb === def ? '&#9733; ' : ''}${esc(nb)}</button>`).join('');
+    updateNotesDefaultCheck();
+  }
+
+  // Which notebook Notes opens to from Home — a persistent user preference,
+  // so localStorage (same convention as pdTodoDefaultView), default "home".
+  // Key is a literal in both functions (not a shared const): the
+  // notesFilterNotebook initializer calls this during the script's first
+  // pass, before a const declared down here would be initialized (TDZ).
+  function notesDefaultNotebook() {
+    try { return localStorage.getItem('notesDefaultNotebook') || 'home'; }
+    catch (_) { return 'home'; }
+  }
+
+  function updateNotesDefaultCheck() {
+    const check = document.getElementById('notes-default-notebook-check');
+    if (check) check.textContent = notesFilterNotebook === notesDefaultNotebook() ? '✓' : '';
+  }
+
+  // Makes the currently-selected notebook the default (or, if it already
+  // is, resets the default back to "home").
+  function notesToggleDefaultNotebook() {
+    closeAllMenus();
+    if (!notesFilterNotebook || notesFilterNotebook === 'archive') {
+      toast('Pick a notebook first', true);
+      return;
+    }
+    const next = notesFilterNotebook === notesDefaultNotebook() ? 'home' : notesFilterNotebook;
+    try { localStorage.setItem('notesDefaultNotebook', next); } catch (_) {}
+    toast(`Default notebook: ${next}`);
+    renderNotebookFilters();
   }
 
   // Opens the shared "archive" notebook (deliberately not in the pill row —
@@ -5411,23 +5445,6 @@ A category's overall budget cap is the sum of its allocations — split it acros
     notesCreateRefreshFolders();
   }
 
-  // Project notes/notebooks are hidden by default — only shown once "Show
-  // Project Items" is switched on from the view-options menu.
-  let notesHideProjectItems = true;
-
-  function updateNotesProjectCheck() {
-    const check = document.getElementById('notes-show-project-check');
-    if (check) check.textContent = notesHideProjectItems ? '' : '✓';
-  }
-
-  async function notesToggleShowProject() {
-    notesHideProjectItems = !notesHideProjectItems;
-    updateNotesProjectCheck();
-    await ensureProjectsLoaded();
-    renderNotebookFilters();
-    notesLoadBrowse();
-  }
-
   async function notesLoadBrowse() {
     let url = NOTES_API + '?';
     if (notesFilterNotebook) url += 'notebook=' + encodeURIComponent(notesFilterNotebook);
@@ -5438,9 +5455,6 @@ A category's overall budget cap is the sum of its allocations — split it acros
       // (via the view-options menu) — never mixed into "All" or filtered by.
       if (notesFilterNotebook !== 'archive') {
         notes = notes.filter(n => n.notebook !== 'archive');
-      }
-      if (notesHideProjectItems) {
-        notes = notes.filter(n => !(n.tags || []).some(t => t.startsWith('project-')));
       }
 
       const crumbEl = document.getElementById('notes-breadcrumb');
@@ -5648,8 +5662,9 @@ A category's overall budget cap is the sum of its allocations — split it acros
   function notesSetNotebook(btn, notebook) {
     notesFilterNotebook = notebook;
     notesCurrentFolder = '';
-    document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('#notebook-filters .filter-pill').forEach(p => p.classList.remove('active'));
     btn.classList.add('active');
+    updateNotesDefaultCheck();
     notesLoadBrowse();
   }
 
@@ -7706,17 +7721,13 @@ A category's overall budget cap is the sum of its allocations — split it acros
 
   // The Notes row navigates straight to the Notes overlay filtered to this
   // project's own notebook, rather than previewing notes inline — mirrors
-  // the "☰ → Archive" shortcut pattern. Project items are tag-filtered out
-  // of Notes by default, so that has to be switched off here or the filter
-  // would strip out every note in the very notebook being requested.
+  // the "☰ → Archive" shortcut pattern.
   function openProjectNotes(slug) {
     pendingProjectReturnId = currentProjectDetailId;
     pendingProjectNotesEntry = true;
-    notesHideProjectItems = false;
     notesFilterNotebook = slug;
     notesCurrentFolder = '';
     showView('notes', false, currentProjectDetailId != null ? { projectId: currentProjectDetailId } : undefined);
-    updateNotesProjectCheck();
     notesShowTab('browse');
   }
 
